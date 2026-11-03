@@ -8,7 +8,6 @@ import math
 import os
 import sys
 import time
-import audioop
 import threading
 import random
 import wave
@@ -63,6 +62,40 @@ except Exception:
 # 只编译了 tasks API，访问 mp.solutions 会直接 AttributeError，必须改走新 API。
 MEDIAPIPE_HAS_SOLUTIONS = MEDIAPIPE_AVAILABLE and hasattr(mp, "solutions")
 MEDIAPIPE_HAS_TASKS = MEDIAPIPE_AVAILABLE and hasattr(mp, "tasks")
+
+# audioop 替代函数（Python 3.13+ 已移除 audioop 模块）
+def audio_multiply_volume(pcm_data: bytes, sample_width: int, factor: float) -> bytes:
+    """
+    使用 numpy 实现音量调整，替代 audioop.mul
+
+    Args:
+        pcm_data: PCM 音频数据
+        sample_width: 采样宽度（字节），2 = 16-bit
+        factor: 音量调整系数
+
+    Returns:
+        调整后的 PCM 数据
+    """
+    if not pcm_data or np is None:
+        return pcm_data
+
+    # 根据采样宽度选择 numpy 数据类型
+    if sample_width == 2:
+        dtype = np.int16
+    elif sample_width == 4:
+        dtype = np.int32
+    else:
+        return pcm_data
+
+    # 转换为 numpy 数组
+    audio_array = np.frombuffer(pcm_data, dtype=dtype)
+
+    # 调整音量
+    audio_array = (audio_array * factor).astype(dtype)
+
+    # 转换回字节
+    return audio_array.tobytes()
+
 
 try:
     from PIL import Image, ImageDraw, ImageFont  # type: ignore
@@ -2103,7 +2136,7 @@ async def start_ai_with_text(user_text: str):
                         await _send_ui_expression(current_emotion)
                 if piece.audio_b64:
                     pcm24 = base64.b64decode(piece.audio_b64)
-                    pcm16 = audioop.mul(pcm24, 2, 0.80)
+                    pcm16 = audio_multiply_volume(pcm24, 2, 0.80)
                     if pcm16:
                         await broadcast_pcm16_realtime(pcm16)
         except asyncio.CancelledError:
@@ -2191,7 +2224,7 @@ async def start_tts_repeat(user_text: str):
             await ui_broadcast_partial("[复述] " + "".join(text_buf))
 
         async def on_output_audio(audio_bytes: bytes):
-            pcm16 = audioop.mul(audio_bytes, 2, 0.80)
+            pcm16 = audio_multiply_volume(audio_bytes, 2, 0.80)
             if pcm16:
                 audio_buf.append(pcm16)
 
@@ -2588,7 +2621,7 @@ async def ws_audio(ws: WebSocket):
             print(f"[REALTIME] audio bytes received before text len={len(audio_bytes)}", flush=True)
         # 0.65：realtime 输出峰值接近满幅，固件端还有 speakerVolume 增益，
         # 系数过大时累积增益会把功放推饱和，产生"电音"失真
-        pcm16 = audioop.mul(audio_bytes, 2, 0.65)
+        pcm16 = audio_multiply_volume(audio_bytes, 2, 0.65)
         if pcm16 and stream_clients:
             await broadcast_pcm16_realtime(pcm16)
 

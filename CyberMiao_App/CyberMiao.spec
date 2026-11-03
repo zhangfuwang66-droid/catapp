@@ -40,6 +40,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='D:\Github\cat\catapp\CyberMiao_App\assets\icon.ico',
+    icon=r'D:\Github\cat\catapp\CyberMiao_App\assets\icon.ico',
     version_file=None,
 )

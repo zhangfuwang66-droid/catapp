@@ -131,9 +131,13 @@ def generate_spec_file():
     """生成 .spec 文件"""
     spec_path = Path(__file__).parent / f"{APP_NAME}.spec"
 
-    # 检查图标是否存在
+    # 检查图标是否存在，使用正斜杠（跨平台兼容）
     icon_path = Path(__file__).parent / 'assets' / 'icon.ico'
-    icon_str = f"icon='{icon_path}'" if icon_path.exists() else "icon=None"
+    if icon_path.exists():
+        # 转换为 POSIX 路径（使用正斜杠）
+        icon_str = f"icon=r'{str(icon_path)}'"
+    else:
+        icon_str = "icon=None"
 
     # 生成内容（替换 icon 部分）
     content = spec_template.strip().replace(

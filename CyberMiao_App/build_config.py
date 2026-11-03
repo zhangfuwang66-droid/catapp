@@ -15,19 +15,32 @@ APP_AUTHOR = "Cyber Miao Team"
 PROJECT_ROOT = Path(__file__).parent.parent
 SERVER_ROOT = PROJECT_ROOT / "esp32_servo_control" / "server"
 
-# 需要包含的数据文件
-datas = [
-    # 服务器核心文件
-    (str(SERVER_ROOT / "app.py"), "server"),
-    (str(SERVER_ROOT / "asr_core.py"), "server"),
-    (str(SERVER_ROOT / "audio_stream.py"), "server"),
-    (str(SERVER_ROOT / "cat_motion.py"), "server"),
-    (str(SERVER_ROOT / "emotion_parser.py"), "server"),
-    (str(SERVER_ROOT / "index_html.py"), "server"),
-    (str(SERVER_ROOT / "omni_client.py"), "server"),
-    (str(SERVER_ROOT / "omni_realtime_client.py"), "server"),
-    (str(SERVER_ROOT / "voice_command.py"), "server"),
-]
+# 需要包含的数据文件（只添加存在的文件）
+def collect_server_files():
+    """收集服务器文件"""
+    files = [
+        "app.py",
+        "asr_core.py",
+        "audio_stream.py",
+        "cat_motion.py",
+        "emotion_parser.py",
+        "index_html.py",
+        "omni_client.py",
+        "omni_realtime_client.py",
+        "voice_command.py",
+    ]
+
+    datas = []
+    for filename in files:
+        filepath = SERVER_ROOT / filename
+        if filepath.exists():
+            datas.append((str(filepath), "server"))
+        else:
+            print(f"⚠️ 警告: 文件不存在 - {filepath}")
+
+    return datas
+
+datas = collect_server_files()
 
 # 隐藏导入（PyInstaller 可能检测不到的模块）
 hiddenimports = [
@@ -117,8 +130,20 @@ exe = EXE(
 def generate_spec_file():
     """生成 .spec 文件"""
     spec_path = Path(__file__).parent / f"{APP_NAME}.spec"
+
+    # 检查图标是否存在
+    icon_path = Path(__file__).parent / 'assets' / 'icon.ico'
+    icon_str = f"icon='{icon_path}'" if icon_path.exists() else "icon=None"
+
+    # 生成内容（替换 icon 部分）
+    content = spec_template.strip().replace(
+        "icon='assets/icon.ico' if Path('assets/icon.ico').exists() else None",
+        icon_str
+    )
+
     with open(spec_path, 'w', encoding='utf-8') as f:
-        f.write(spec_template.strip())
+        f.write(content)
+
     print(f"✅ 已生成 {spec_path}")
     return spec_path
 

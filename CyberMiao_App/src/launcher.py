@@ -238,4 +238,7 @@ def main():
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
+    if len(sys.argv) == 3 and sys.argv[1] == "--check-runtime":
+        from bundle_check import run_check
+        sys.exit(run_check(sys.argv[2]))
     main()

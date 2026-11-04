@@ -151,9 +151,16 @@ def main():
     executable = destination / ("CyberMiaoDebug.exe" if args.debug else "CyberMiao.exe")
     report = build_dir / "runtime-check.json"
     with tempfile.TemporaryDirectory(prefix="小喵 exe 工作目录 ") as unrelated_directory:
-        subprocess.run([str(executable), "--check-runtime", str(report)], cwd=unrelated_directory,
-                       check=True, timeout=180,
-                       creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        try:
+            subprocess.run([str(executable), "--check-runtime", str(report)], cwd=unrelated_directory,
+                           check=True, timeout=180,
+                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            for diagnostic in (report, report.with_suffix(".log")):
+                if diagnostic.is_file():
+                    print(f"EXE 运行检查诊断：{diagnostic}", file=sys.stderr, flush=True)
+                    print(diagnostic.read_text(encoding="utf-8"), file=sys.stderr, flush=True)
+            raise
     result = json.loads(report.read_text(encoding="utf-8"))
     if not result["ok"]:
         raise RuntimeError(f"EXE 运行检查失败，请查看 {report}")

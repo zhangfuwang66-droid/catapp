@@ -10,3 +10,5 @@ aiohttp>=3.9.0
 opencv-python>=4.9.0
 Pillow>=10.0.0
 mediapipe>=0.10.14
+numpy>=1.26.0
+matplotlib>=3.8.0

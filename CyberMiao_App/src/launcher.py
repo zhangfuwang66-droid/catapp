@@ -1,6 +1,7 @@
 """赛博小喵桌面控制台。Tk 控件只在主线程访问。"""
 import multiprocessing
 import os
+import queue
 from pathlib import Path
 import sys
 import tkinter as tk
@@ -11,6 +12,7 @@ import webbrowser
 from app_paths import resource_root, user_data_dir
 from config import CyberMiaoConfig
 from server_manager import NetworkUtils, ServerManager
+from system_tray import SystemTray
 
 
 class CyberMiaoGUI:
@@ -33,6 +35,14 @@ class CyberMiaoGUI:
         if self.icon_path.is_file():
             self.root.iconbitmap(str(self.icon_path))
         self.create_widgets()
+        self.commands = queue.Queue()
+        self.tray = SystemTray(self.icon_path, self.commands)
+        try:
+            self.tray.start()
+        except Exception as exc:
+            self.commands.put(("tray_error", str(exc)))
+        self.tray_btn = ttk.Button(self.tray_controls, text="收起到托盘", command=self.hide_to_tray, state="disabled")
+        self.tray_btn.pack(side="right")
         self.server_manager.set_log_callback(self.append_log)
         self.root.report_callback_exception = self.report_error
         self.append_log("欢迎使用赛博小喵。填写 API Key 后即可启动本地服务器。")
@@ -155,10 +165,34 @@ class CyberMiaoGUI:
         self.server_manager.stop_server()
         self.status_var.set("正在退出…")
 
+    def hide_to_tray(self):
+        if self.tray.available and self.tray.ready.is_set() and not self.closing:
+            self.root.withdraw()
+
+    def show_window(self):
+        self.root.deiconify()
+        self.root.lift()
+
+    def handle_tray_commands(self):
+        actions = {"show": self.show_window, "start": self.start_server_action,
+                   "stop": self.stop_server_action, "exit": self.exit_action}
+        for _ in range(30):
+            try:
+                command, value = self.commands.get_nowait()
+            except queue.Empty:
+                break
+            if command == "tray_error":
+                self.server_manager.log(value)
+                self.show_window()
+            elif command in actions:
+                actions[command]()
+
     def tick(self):
+        self.handle_tray_commands()
         self.server_manager.poll()
         state = self.server_manager.state
         if self.closing and self.server_manager.process is None:
+            self.tray.stop()
             self.server_manager.close()
             self.root.destroy()
             return
@@ -177,6 +211,7 @@ class CyberMiaoGUI:
         self.stop_btn.configure(state="normal" if state in {"starting", "running"} and not self.closing else "disabled")
         self.restart_btn.configure(state="normal" if state == "running" and not self.closing else "disabled")
         self.browser_btn.configure(state="normal" if state == "running" and not self.closing else "disabled")
+        self.tray_btn.configure(state="normal" if self.tray.available and self.tray.ready.is_set() and not self.closing else "disabled")
         self.root.after(100, self.tick)
 
     def report_error(self, exc_type, value, tb):

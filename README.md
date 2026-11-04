@@ -1,53 +1,65 @@
 # 赛博小喵 Cyber Miao
 
-ESP32 AI 桌面猫，包含桌面控制台、Python 服务器、固件、PCB 和 3D 外壳。
+赛博小喵是一只基于 ESP32 的 AI 桌面猫，包含设备固件、FastAPI 服务、Windows 桌面控制台、PCB 和 3D 外壳。
 
-双击根目录带猫咪图标的 **`CyberMiao.exe`**，在配置页保存自己的 DashScope API Key，再到主控制台启动服务器。
+当前服务默认在本机 `8081` 端口运行。ESP32 与运行服务的电脑需要处于可互通的局域网；云端语音对话需要有效的 DashScope API Key 和互联网连接。
 
-默认网页地址为 `http://127.0.0.1:8081`。连接 ESP32 时使用主控制台显示的局域网 IP 和端口。
+## 功能
 
-## 目录
+- 流式语音对话与中英同声传译
+- ESP32 摄像头实时画面、视觉问答
+- 表情动画、舵机动作和手势追随
+- Windows 控制台配置 API Key、启动和管理本地服务
+- Wi-Fi 配网时设置设备要连接的服务地址
 
-```text
-catapp/
-├── CyberMiao.exe              带猫咪图标的主程序，双击启动
-├── README.md                 项目导航
-├── desktop/                  桌面 GUI、图标、测试、开发启动与打包脚本
-├── server/                   FastAPI 服务器、依赖与本地虚拟环境
-├── firmware/                 ESP32 主程序和资源烧录工具
-├── hardware/
-│   ├── pcb/                  PCB 图片和物料清单
-│   └── enclosure/            3D 打印文件
-├── docs/                     使用、烧录和发布说明
-│   ├── archive/              历史排障记录
-│   └── tools/                文档生成脚本
-└── artifacts/                本地生成文件，不提交 Git
-    ├── release/              正式版 exe 和使用说明
-    ├── debug/                调试版 exe
-    ├── build/                构建缓存和运行检查报告
-    └── archive/              整理前的构建文件和误放文件
-```
+## 快速开始
 
-## 使用与开发
+### 使用正式版
 
-- [软件使用说明](docs/使用手册.md)
-- [ESP32 烧录与硬件使用](docs/硬件使用说明.md)
-- [桌面代码结构、开发和构建](desktop/README.md)
-- [发布验证流程](docs/打包检查清单.md)
+如果手边已有正式版，双击项目根目录的 `CyberMiao.exe`，在“连接设置”中保存 DashScope API Key，然后在“工作台”启动服务器。正式版 exe 是本地构建产物，不包含在 Git 源码仓库中。
 
-在仓库根目录执行：
+服务器启动后，把控制台显示的局域网 IP 和端口填入 ESP32 配网页面。浏览器可打开 `http://127.0.0.1:8081`；设备和其他局域网客户端使用电脑的局域网 IP。
+
+### 从源码运行
+
+Windows 下使用 Python 3.10 或更高版本，在仓库根目录执行：
 
 ```powershell
 python desktop/setup.py
 python desktop/src/launcher.py
+```
+
+也可运行 `desktop/run_dev.ps1` 进入开发模式。需要单独运行 FastAPI 服务时，在 `server/.env` 配置 `DASHSCOPE_API_KEY`，再运行 `server/start-server.ps1`。
+
+## 构建与测试
+
+```powershell
 python -m unittest discover -s desktop/tests -v
 python desktop/build.py
 ```
 
-服务器开发环境位于 `server/.venv`；也可使用已安装依赖的系统 Python。只启动服务器可运行 `server/start-server.ps1`，此方式需要配置 `server/.env` 中的 `DASHSCOPE_API_KEY`。
+构建会执行依赖检查、打包和本地运行检查；通过后更新根目录的 `CyberMiao.exe`，完整发布包和记录放在 `artifacts/release/`，构建缓存放在 `artifacts/build/`。PyInstaller 及项目依赖需安装在执行构建的 Python 环境中。
 
-尚未打包时可运行 `desktop/run.bat`，或用 `desktop/run_dev.ps1` 进入开发模式。正式打包通过运行检查后，会自动更新根目录的 `CyberMiao.exe`；完整发布包和构建记录保存在 `artifacts/release/`。exe 是本地构建产物，不提交 Git。
+## 项目结构
 
-配置、日志和录制数据默认存放在 `%LOCALAPPDATA%\CyberMiao`，升级 exe 不会覆盖这些文件。真实 Key 不应提交进 Git。
+```text
+catapp/
+├── desktop/       Windows 桌面控制台、图标、测试和构建脚本
+├── server/        FastAPI 服务及依赖说明
+├── firmware/      ESP32 主程序和烧录工具
+├── hardware/
+│   ├── pcb/       PCB 文件与物料清单
+│   └── enclosure/ 3D 外壳文件
+├── docs/          使用、硬件和发布文档
+└── artifacts/     本地构建产物（Git 忽略）
+```
 
-固件草图目录保留与 `.ino` 文件一致的名称，方便 Arduino IDE 打开。历史日志保留旧路径，仅供追溯；当前路径以本文为准。本地服务检查与真实云端、硬件联调应分别验证。
+## 文档
+
+- [软件使用说明](docs/使用手册.md)
+- [ESP32 烧录与硬件使用](docs/硬件使用说明.md)
+- [桌面开发与构建](desktop/README.md)
+- [打包检查清单](docs/打包检查清单.md)
+- [Python 服务器说明](server/README.md)
+
+配置、日志和录制数据默认保存在 `%LOCALAPPDATA%\CyberMiao`。API Key 不应提交到 Git。当前架构面向本地单实例使用；公网多用户和多设备隔离尚未实现。

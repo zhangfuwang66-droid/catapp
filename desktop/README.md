@@ -2,7 +2,7 @@
 
 Windows GUI 用于配置 DashScope API Key，并管理 `../server` 中的 FastAPI 服务器。根目录导航见 [项目 README](../README.md)。
 
-用户入口是 `../artifacts/release/CyberMiao.exe`，操作说明见 [使用手册](../docs/使用手册.md)。
+用户入口是根目录的 `CyberMiao.exe`，操作说明见 [使用手册](../docs/使用手册.md)。`run.bat` 优先运行根目录 exe，未打包时启动源码；`run_dev.ps1` 直接进入开发模式。
 
 ## 代码结构
 
@@ -33,14 +33,14 @@ python desktop/build.py
 
 构建前会检查依赖，并下载固定版本的 MediaPipe 手部模型、核对 SHA-256。构建后会启动生成的 exe，验证原生推理、HTTP、WebSocket、停止和重启。运行检查通过后才更新正式发布目录。
 
-调试版输出到根目录的 `artifacts/debug/`，正式版输出到 `artifacts/release/`，构建缓存和运行检查报告存放在 `artifacts/build/desktop/<debug或release>/`。正式版先在缓存目录构建和检查，通过后才复制到发布目录。不会在源码目录中再生成 `dist/` 或 `build/`。构建日志中的 `Hidden import not found` 和缺少运行时 DLL 必须排查；`warn-CyberMiao.txt` 也会包含只适用于其他操作系统的可选模块，不能把整份警告直接当作失败或通过的依据。
+调试版输出到根目录的 `artifacts/debug/`，完整正式发布包输出到 `artifacts/release/`，构建缓存和运行检查报告存放在 `artifacts/build/desktop/<debug或release>/`。正式版先在缓存目录构建和检查，通过后发布，并校验 SHA-256、原子更新根目录的 `CyberMiao.exe`。猫咪图标嵌入在 exe 的 Windows 资源中。不会在源码目录中再生成 `dist/` 或 `build/`。构建日志中的 `Hidden import not found` 和缺少运行时 DLL 必须排查；`warn-CyberMiao.txt` 也会包含只适用于其他操作系统的可选模块，不能把整份警告直接当作失败或通过的依据。
 
 构建记录保存在 `BUILD-INFO.json`，包含 Python/依赖版本、exe 大小、SHA-256 和运行检查结果。详细检查日志位于 `../artifacts/build/desktop/<debug或release>/runtime-check.log`。
 
 开发者可单独执行已实现的检查入口：
 
 ```powershell
-& .\artifacts\release\CyberMiao.exe --check-runtime "$PWD\runtime-check.json"
+& .\CyberMiao.exe --check-runtime "$PWD\runtime-check.json"
 ```
 
 该命令使用临时目录和无效测试 Key，不读取用户的正式配置。返回码 0 表示本地运行检查通过，报告中的 `cloud_api_tested` 和 `hardware_tested` 仍为 false。

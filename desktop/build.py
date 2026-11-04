@@ -25,6 +25,33 @@ def check_dependencies():
     return versions
 
 
+def publish_release(package_dir):
+    """发布通过检查的包，并原子更新根目录的用户启动入口。"""
+    package_dir = Path(package_dir).resolve()
+    info = json.loads((package_dir / "BUILD-INFO.json").read_text(encoding="utf-8"))
+    executable = package_dir / "CyberMiao.exe"
+    if not info.get("runtime_check", {}).get("ok"):
+        raise RuntimeError("运行检查未通过，不能发布主程序")
+    if hashlib.sha256(executable.read_bytes()).hexdigest() != info["exe_sha256"]:
+        raise RuntimeError("EXE 与构建记录的哈希不一致，不能发布主程序")
+    release = PROJECT_ROOT / "artifacts" / "release"
+    release.mkdir(parents=True, exist_ok=True)
+    if package_dir != release.resolve():
+        for filename in ("CyberMiao.exe", "BUILD-INFO.json"):
+            shutil.copy2(package_dir / filename, release / filename)
+    guide = PROJECT_ROOT / "docs" / "使用手册.md"
+    shutil.copy2(guide, release / "使用说明.md")
+    shutil.copy2(guide, release / "README.txt")
+    entry = PROJECT_ROOT / "CyberMiao.exe"
+    temporary = release / "CyberMiao-root.exe"
+    try:
+        shutil.copy2(release / "CyberMiao.exe", temporary)
+        os.replace(temporary, entry)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return entry
+
+
 def main():
     parser = argparse.ArgumentParser(description="构建赛博小喵桌面程序")
     parser.add_argument("--debug", action="store_true", help="构建带控制台的调试版")
@@ -54,13 +81,7 @@ def main():
             "runtime_check": result}
     (destination / "BUILD-INFO.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
     if not args.debug:
-        release = PROJECT_ROOT / "artifacts" / "release"
-        release.mkdir(parents=True, exist_ok=True)
-        for filename in ("CyberMiao.exe", "BUILD-INFO.json"):
-            shutil.copy2(destination / filename, release / filename)
-        guide = PROJECT_ROOT / "docs" / "使用手册.md"
-        shutil.copy2(guide, release / "使用说明.md")
-        shutil.copy2(guide, release / "README.txt")
+        executable = publish_release(destination)
     print(f"构建和运行检查通过：{executable}")
 
 

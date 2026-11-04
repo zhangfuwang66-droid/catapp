@@ -44,4 +44,5 @@ models/
 dist/
 desktop/config/settings.ini
 artifacts/
+/CyberMiao.exe
 *.spec.bak

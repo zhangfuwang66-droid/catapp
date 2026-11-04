@@ -2,12 +2,13 @@
 chcp 65001 >nul
 title 赛博小喵 Cyber Miao
 setlocal
-set "APP_ROOT=%~dp0desktop"
-if exist "%~dp0artifacts\release\CyberMiao.exe" (
-    start "" "%~dp0artifacts\release\CyberMiao.exe"
+set "APP_ROOT=%~dp0"
+set "PROJECT_ROOT=%~dp0.."
+if exist "%PROJECT_ROOT%\CyberMiao.exe" (
+    start "" "%PROJECT_ROOT%\CyberMiao.exe"
     exit /b 0
 )
-set "PYTHON_EXE=%~dp0server\.venv\Scripts\python.exe"
+set "PYTHON_EXE=%PROJECT_ROOT%\server\.venv\Scripts\python.exe"
 if not exist "%PYTHON_EXE%" set "PYTHON_EXE=python"
 "%PYTHON_EXE%" "%APP_ROOT%\src\launcher.py"
 if errorlevel 1 (

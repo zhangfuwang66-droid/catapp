@@ -2,7 +2,7 @@
 
 ESP32 AI 桌面猫，包含桌面控制台、Python 服务器、固件、PCB 和 3D 外壳。
 
-双击根目录的 **`启动_赛博小喵.bat`**，在配置页保存自己的 DashScope API Key，再到主控制台启动服务器。已有正式版时直接运行 `artifacts/release/CyberMiao.exe`；没有正式版时启动开发模式。
+双击根目录带猫咪图标的 **`CyberMiao.exe`**，在配置页保存自己的 DashScope API Key，再到主控制台启动服务器。
 
 默认网页地址为 `http://127.0.0.1:8081`。连接 ESP32 时使用主控制台显示的局域网 IP 和端口。
 
@@ -10,9 +10,9 @@ ESP32 AI 桌面猫，包含桌面控制台、Python 服务器、固件、PCB 和
 
 ```text
 catapp/
-├── 启动_赛博小喵.bat          双击启动入口
+├── CyberMiao.exe              带猫咪图标的主程序，双击启动
 ├── README.md                 项目导航
-├── desktop/                  桌面 GUI、图标、测试与打包脚本
+├── desktop/                  桌面 GUI、图标、测试、开发启动与打包脚本
 ├── server/                   FastAPI 服务器、依赖与本地虚拟环境
 ├── firmware/                 ESP32 主程序和资源烧录工具
 ├── hardware/
@@ -45,6 +45,8 @@ python desktop/build.py
 ```
 
 服务器开发环境位于 `server/.venv`；也可使用已安装依赖的系统 Python。只启动服务器可运行 `server/start-server.ps1`，此方式需要配置 `server/.env` 中的 `DASHSCOPE_API_KEY`。
+
+尚未打包时可运行 `desktop/run.bat`，或用 `desktop/run_dev.ps1` 进入开发模式。正式打包通过运行检查后，会自动更新根目录的 `CyberMiao.exe`；完整发布包和构建记录保存在 `artifacts/release/`。exe 是本地构建产物，不提交 Git。
 
 配置、日志和录制数据默认存放在 `%LOCALAPPDATA%\CyberMiao`，升级 exe 不会覆盖这些文件。真实 Key 不应提交进 Git。
 

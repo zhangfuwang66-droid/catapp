@@ -11,14 +11,18 @@
 
 赛博小喵把 ESP32 硬件、Python FastAPI 服务和 Windows 桌面控制台组合在一起。桌面程序负责保存配置、启动服务和查看运行状态；ESP32 通过 Wi-Fi 连接服务，完成语音、摄像头、表情和动作交互。
 
-当前发布为 `v0.1.0`，定位是本地单实例和可信局域网内使用。公网多用户、多设备隔离和云端托管还没有纳入当前版本。
+`v0.2.0` 带来重新设计的桌面控制台。当前定位是本地单实例和可信局域网内使用，公网多用户、多设备隔离和云端托管还没有纳入当前版本。
+
+<p align="center">
+  <img src="docs/images/desktop-overview.png" width="960" alt="赛博小喵 v0.2.0 工作台：服务卡片、连接地址与运行日志">
+</p>
 
 ## 下载
 
-前往 [GitHub Releases](https://github.com/zhangfuwang66-droid/catapp/releases/tag/v0.1.0) 下载 Windows x64 版本：
+前往 [GitHub Releases](https://github.com/zhangfuwang66-droid/catapp/releases/latest) 下载 Windows x64 版本：
 
-- [CyberMiao-Setup-x64.exe](https://github.com/zhangfuwang66-droid/catapp/releases/download/v0.1.0/CyberMiao-Setup-x64.exe)：安装版，提供开始菜单入口、可选桌面快捷方式和卸载程序。
-- [CyberMiao-Portable-x64.exe](https://github.com/zhangfuwang66-droid/catapp/releases/download/v0.1.0/CyberMiao-Portable-x64.exe)：便携版，下载后直接运行，无需安装。
+- [CyberMiao-Setup-x64.exe](https://github.com/zhangfuwang66-droid/catapp/releases/latest/download/CyberMiao-Setup-x64.exe)：安装版，提供开始菜单入口、可选桌面快捷方式和卸载程序。
+- [CyberMiao-Portable-x64.exe](https://github.com/zhangfuwang66-droid/catapp/releases/latest/download/CyberMiao-Portable-x64.exe)：便携版，下载后直接运行，无需安装。
 
 GitHub 还会自动生成源码 ZIP 和 tar.gz。源码包包含 PCB、3D 外壳和固件目录；两个 exe 只包含运行软件所需的程序文件，不包含这些开发资料。
 
@@ -44,7 +48,7 @@ GitHub 还会自动生成源码 ZIP 和 tar.gz。源码包包含 PCB、3D 外壳
 
 ### 3. 启动服务
 
-切换到“工作台”，点击“启动服务器”。默认端口为 `8081`，服务就绪后可以访问：
+切换到“工作台”，点击“启动服务”。默认端口为 `8081`，服务就绪后可以访问：
 
 ```text
 http://127.0.0.1:8081
@@ -112,10 +116,10 @@ python -m unittest discover -s desktop/tests -v
 正式构建需要 Windows x64、Inno Setup 6，以及当前 Python 环境中的项目依赖：
 
 ```powershell
-python desktop/build.py --version 1.0.0
+python desktop/build.py
 ```
 
-构建过程会检查依赖、准备固定版本的 MediaPipe 模型、运行 PyInstaller，并验证生成的 exe 是否能够完成本地 HTTP、WebSocket、服务停止和重启检查。通过后生成：
+版本默认读取 `desktop/VERSION`。构建过程检查依赖、准备固定版本的 MediaPipe 模型、运行 PyInstaller，并验证生成的 exe 的界面资源、配置保存、GUI 启停、本地 HTTP、WebSocket 和服务重启。通过后生成：
 
 ```text
 artifacts/release/CyberMiao-Portable-x64.exe
@@ -128,7 +132,7 @@ artifacts/release/CyberMiao-Setup-x64.exe
 python desktop/build.py --debug
 ```
 
-推送 `v` 开头的标签会触发 GitHub Actions 的 Windows x64 发布流程：
+更新 `desktop/VERSION` 并提交同版本的中文公告后，推送 `v` 开头的标签会触发 GitHub Actions 的 Windows x64 发布流程：
 
 ```powershell
 git tag v0.2.0
@@ -157,6 +161,7 @@ catapp/
 - [硬件使用说明](docs/硬件使用说明.md)
 - [桌面端开发与构建](desktop/README.md)
 - [打包检查清单](docs/打包检查清单.md)
+- [中文版本发布流程](docs/发布流程.md)
 - [Python 服务器说明](server/README.md)
 
 ## 当前边界

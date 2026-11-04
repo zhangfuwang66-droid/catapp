@@ -29,7 +29,8 @@ def close_gui(gui):
 def run_check(report_path):
     report_path = Path(report_path).resolve()
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report = {"ok": False, "checks": [], "cloud_api_tested": False, "hardware_tested": False}
+    report = {"ok": False, "checks": [], "frozen": bool(getattr(sys, "frozen", False)),
+              "cloud_api_tested": False, "hardware_tested": False}
     output = report_path.with_suffix(".log").open("w", encoding="utf-8")
     sys.stdout = sys.stderr = output
     manager = None
@@ -41,7 +42,8 @@ def run_check(report_path):
             os.environ["CYBERMIAO_DATA_DIR"] = str(data_dir)
             os.environ["DASHSCOPE_API_KEY"] = "local-bundle-check-only"
             os.environ["MPLBACKEND"] = "Agg"
-            from app_paths import server_root
+            from app_paths import app_version, server_root
+            report["version"] = app_version()
             sys.path.insert(0, str(server_root()))
             import app as server_app
             import cv2

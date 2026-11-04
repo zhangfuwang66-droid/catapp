@@ -1,4 +1,4 @@
-name: Build Windows x64 release
+name: 构建并发布 Windows x64 版本
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version (for example v0.1.0)
+        description: 发布版本（例如 v0.2.0，须与 desktop/VERSION 一致）
         required: true
         type: string
 
@@ -28,34 +28,83 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install Inno Setup
+      - name: 检查版本与中文公告
+        id: release_info
+        shell: pwsh
+        env:
+          RELEASE_REF: ${{ inputs.version || github.ref_name }}
+        run: |
+          $releaseVersion = $env:RELEASE_REF -replace '^v', ''
+          if ($releaseVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+            throw '版本格式不正确，请使用 v0.2.0 这样的版本号。'
+          }
+          $declaredVersion = (Get-Content desktop/VERSION -Raw).Trim()
+          if ($releaseVersion -ne $declaredVersion) {
+            throw "标签版本与 desktop/VERSION 不一致：$releaseVersion / $declaredVersion"
+          }
+          $notes = "docs/releases/v$releaseVersion.md"
+          if (!(Test-Path -LiteralPath $notes)) { throw "缺少中文发布公告：$notes" }
+          if ((Get-Content -LiteralPath $notes -Raw) -notmatch '[\u4e00-\u9fff]') {
+            throw '发布公告须使用中文。'
+          }
+          "tag=v$releaseVersion" >> $env:GITHUB_OUTPUT
+          "notes=$notes" >> $env:GITHUB_OUTPUT
+
+      - name: 安装 Inno Setup
         shell: pwsh
         run: choco install innosetup --version=6.7.1 --yes --no-progress
 
-      - name: Install Python dependencies
+      - name: 安装 Python 依赖
         run: python desktop/setup.py
 
-      - name: Run desktop and server integration tests
+      - name: 验证桌面界面和服务集成
         run: python -m unittest discover -s desktop/tests -v
 
-      - name: Build and check Windows x64 packages
+      - name: 构建并检查 Windows x64 软件包
         env:
           INNO_SETUP_COMPILER: C:\Program Files (x86)\Inno Setup 6\ISCC.exe
-        run: python desktop/build.py --version "${{ inputs.version || github.ref_name }}"
+          RELEASE_TAG: ${{ steps.release_info.outputs.tag }}
+        run: python desktop/build.py --version "$env:RELEASE_TAG"
 
-      - name: Publish GitHub release
+      - name: 检查安装内容与安装后运行
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'CyberMiao-install-check'
+          $installer = (Resolve-Path artifacts/release/CyberMiao-Setup-x64.exe).Path
+          $report = Join-Path $env:RUNNER_TEMP 'CyberMiao-installed-runtime.json'
+          $install = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOICONS', "/DIR=`"$installDir`"") -PassThru -Wait -WindowStyle Hidden
+          try {
+            if ($install.ExitCode -ne 0) { throw "安装失败：$($install.ExitCode)" }
+            $unexpected = Get-ChildItem -LiteralPath $installDir -Recurse | Where-Object {
+              $_.PSIsContainer -or $_.Name -notmatch '^(CyberMiao\.exe|unins\d{3}\.(exe|dat|msg))$'
+            }
+            if ($unexpected) { throw '安装目录出现了预期之外的文件。' }
+            $installedExe = Join-Path $installDir 'CyberMiao.exe'
+            if ((Get-FileHash -LiteralPath $installedExe).Hash -ne (Get-FileHash artifacts/release/CyberMiao-Portable-x64.exe).Hash) {
+              throw '安装后的主程序与便携版不一致。'
+            }
+            $runtime = Start-Process -FilePath $installedExe -ArgumentList @('--check-runtime', "`"$report`"") -WorkingDirectory $env:RUNNER_TEMP -PassThru -WindowStyle Hidden
+            if (!$runtime.WaitForExit(300000)) { $runtime.Kill(); throw '安装后的运行检查超时。' }
+            if ($runtime.ExitCode -ne 0 -or !(Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).ok) {
+              throw '安装后的运行检查失败。'
+            }
+          } finally {
+            $uninstaller = Join-Path $installDir 'unins000.exe'
+            if (Test-Path -LiteralPath $uninstaller) {
+              $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -PassThru -Wait -WindowStyle Hidden
+              if ($uninstall.ExitCode -ne 0) { throw "卸载失败：$($uninstall.ExitCode)" }
+            }
+          }
+          if (Test-Path -LiteralPath (Join-Path $installDir 'CyberMiao.exe')) { throw '卸载后主程序仍然存在。' }
+
+      - name: 发布中文版本公告与软件包
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.version || github.ref_name }}
-          name: Cyber Miao ${{ inputs.version || github.ref_name }}
-          generate_release_notes: true
+          tag_name: ${{ steps.release_info.outputs.tag }}
+          name: 赛博小喵 ${{ steps.release_info.outputs.tag }}
+          generate_release_notes: false
+          body_path: ${{ steps.release_info.outputs.notes }}
           fail_on_unmatched_files: true
           files: |
             artifacts/release/CyberMiao-Setup-x64.exe
             artifacts/release/CyberMiao-Portable-x64.exe
-          body: |
-            Windows x64 downloads:
-            - `CyberMiao-Setup-x64.exe`: per-user installer with an uninstall entry.
-            - `CyberMiao-Portable-x64.exe`: portable single-file app.
-
-            GitHub provides the source ZIP and tar.gz automatically. Local runtime checks do not verify DashScope credentials or ESP32 hardware.

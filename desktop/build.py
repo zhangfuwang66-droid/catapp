@@ -50,7 +50,7 @@ def find_inno_compiler(explicit_path=None):
 
 
 def normalize_version(version):
-    value = (version or "0.0.0").strip()
+    value = version.strip()
     if value[:1].lower() == "v":
         value = value[1:]
     if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}", value):
@@ -132,12 +132,15 @@ def publish_release(package_dir, version, compiler):
 def main():
     parser = argparse.ArgumentParser(description="构建赛博小喵桌面程序")
     parser.add_argument("--debug", action="store_true", help="构建带控制台的调试版")
-    parser.add_argument("--version", default="0.0.0", help="安装器显示的版本号，例如 1.0.0 或 v1.0.0")
+    parser.add_argument("--version", help="版本号，须与 desktop/VERSION 一致；省略时从该文件读取")
     parser.add_argument("--inno-compiler", help="Inno Setup 6 的 ISCC.exe 路径")
     args = parser.parse_args()
     if os.name != "nt" or sys.maxsize <= 2**32:
         raise SystemExit("正式发行包仅支持在 Windows x64 Python 环境中构建。")
-    version = normalize_version(args.version)
+    declared_version = normalize_version((APP_ROOT / "VERSION").read_text(encoding="utf-8"))
+    version = normalize_version(args.version) if args.version else declared_version
+    if version != declared_version:
+        raise SystemExit(f"构建版本 {version} 与 desktop/VERSION 的 {declared_version} 不一致，请先统一版本。")
     compiler = None if args.debug else find_inno_compiler(args.inno_compiler)
     versions = check_dependencies()
     prepare_model()
@@ -151,10 +154,11 @@ def main():
     ], cwd=APP_ROOT, env=environment, check=True)
     executable = destination / ("CyberMiaoDebug.exe" if args.debug else "CyberMiao.exe")
     report = build_dir / "runtime-check.json"
+    report.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix="小喵 exe 工作目录 ") as unrelated_directory:
         try:
             subprocess.run([str(executable), "--check-runtime", str(report)], cwd=unrelated_directory,
-                           check=True, timeout=180,
+                           check=True, timeout=300,
                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             for diagnostic in (report, report.with_suffix(".log")):
@@ -165,6 +169,8 @@ def main():
     result = json.loads(report.read_text(encoding="utf-8"))
     if not result["ok"]:
         raise RuntimeError(f"EXE 运行检查失败，请查看 {report}")
+    if result["version"] != version:
+        raise RuntimeError("生成的 EXE 内置版本与构建版本不一致")
     info = {"python": sys.version, "mode": mode, "version": version, "architecture": "x64",
             "dependencies": versions,
             "exe_bytes": executable.stat().st_size,

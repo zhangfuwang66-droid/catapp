@@ -1,4 +1,4 @@
-"""同一套 exe 内验证原生推理、HTTP、WebSocket 与服务重启；不调用云端。"""
+"""同一套 exe 内验证桌面交互、原生推理与服务启停；不调用云端。"""
 import json
 import os
 from pathlib import Path
@@ -10,6 +10,22 @@ import traceback
 from urllib.request import urlopen
 
 
+def close_gui(gui):
+    import tkinter as tk
+
+    gui.exit_action()
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        try:
+            if not gui.root.winfo_exists():
+                return
+            gui.root.update()
+        except tk.TclError:
+            return
+        time.sleep(0.025)
+    raise TimeoutError("桌面窗口未正常退出")
+
+
 def run_check(report_path):
     report_path = Path(report_path).resolve()
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -17,6 +33,7 @@ def run_check(report_path):
     output = report_path.with_suffix(".log").open("w", encoding="utf-8")
     sys.stdout = sys.stderr = output
     manager = None
+    gui = None
     try:
         with tempfile.TemporaryDirectory(prefix="小喵 exe 数据 ") as directory:
             # Windows runner 的临时目录可能使用 8.3 短路径；与服务端统一为规范路径。
@@ -95,10 +112,63 @@ def run_check(report_path):
             report["checks"].append("启动中取消")
             manager.close()
             manager = None
+
+            # 必须在冻结后的解释器中创建实际界面，验证主题、字体和图标资源。
+            from launcher import CyberMiaoGUI
+            gui = CyberMiaoGUI()
+            manager = gui.server_manager
+            gui.root.update()
+            errors = []
+            gui.root.report_callback_exception = lambda *args: errors.append(str(args[1]))
+            gui.nav_buttons["settings"].invoke()
+            gui.api_key_entry.delete(0, "end")
+            gui.api_key_entry.insert(0, "local-bundle-gui-check")
+            gui.port_entry.delete(0, "end")
+            gui.port_entry.insert(0, str(port))
+            gui.auto_browser_var.set(False)
+            gui.settings_save_btn.invoke()
+            assert "配置已保存" in gui.save_result.get()
+            gui.visibility_btn.invoke()
+            assert not gui.api_key_entry.cget("show")
+            gui.visibility_btn.invoke()
+            gui.show_logs()
+            gui.root.update()
+            assert gui.logs_panel.winfo_ismapped()
+            gui.nav_buttons["about"].invoke()
+            gui.root.update()
+            gui.nav_buttons["home"].invoke()
+            report["checks"].append("新版界面、主题字体图标、页面切换和配置保存")
+
+            def wait_for_gui(condition, timeout=70):
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    gui.root.update()
+                    assert not errors, errors
+                    if condition():
+                        return
+                    if manager.state == "error":
+                        raise RuntimeError(manager.log_path.read_text(encoding="utf-8"))
+                    time.sleep(0.025)
+                raise TimeoutError("桌面操作等待超时：" + manager.state)
+
+            gui.start_btn.invoke()
+            wait_for_gui(lambda: manager.server_running)
+            with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as response:
+                assert response.read() == b"OK"
+            gui.stop_btn.invoke()
+            wait_for_gui(lambda: manager.process is None, timeout=20)
+            assert NetworkUtils.is_port_available(port)
+            assert not errors, errors
+            report["checks"].append("GUI 按钮启动、HTTP 健康检查和停止释放端口")
+            close_gui(gui)
+            gui = None
+            manager = None
         report["ok"] = True
     except BaseException:
         report["error"] = traceback.format_exc()
     finally:
+        if gui:
+            close_gui(gui)
         if manager:
             manager.stop_server()
             deadline = time.monotonic() + 20

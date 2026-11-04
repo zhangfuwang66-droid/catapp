@@ -22,7 +22,8 @@ def check_dependencies():
     modules = {"PyInstaller": "pyinstaller", "fastapi": "fastapi", "uvicorn": "uvicorn",
                "numpy": "numpy", "cv2": "opencv-python", "mediapipe": "mediapipe",
                "matplotlib": "matplotlib", "PIL": "Pillow", "dotenv": "python-dotenv",
-               "openai": "openai", "websockets": "websockets", "pystray": "pystray"}
+               "openai": "openai", "websockets": "websockets", "pystray": "pystray",
+               "customtkinter": "customtkinter"}
     versions = {}
     for module, distribution in modules.items():
         import_module(module)  # 缺库、DLL 或导入错误均立即失败。

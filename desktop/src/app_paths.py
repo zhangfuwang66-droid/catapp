@@ -16,6 +16,10 @@ def server_root() -> Path:
     return Path(__file__).resolve().parents[2] / "server"
 
 
+def app_version() -> str:
+    return (resource_root() / "VERSION").read_text(encoding="utf-8").strip()
+
+
 def user_data_dir() -> Path:
     override = os.getenv("CYBERMIAO_DATA_DIR")
     if override:

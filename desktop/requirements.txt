@@ -3,6 +3,7 @@
 pyinstaller>=6.0.0
 pillow>=10.0.0
 pystray>=0.19.5
+customtkinter==5.2.2
 
-# 可选：系统托盘支持（Windows）
+# 系统托盘支持（Windows）
 # pystray 在 Windows 上需要 PIL 支持

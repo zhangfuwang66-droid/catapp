@@ -27,7 +27,7 @@ def prepare_model():
 
 
 def collect_bundle_files():
-    from PyInstaller.utils.hooks import collect_all
+    from PyInstaller.utils.hooks import collect_all, collect_data_files
 
     def runtime_module(name):
         return not any(part in {"test", "tests"} or part.endswith("_test") for part in name.split("."))
@@ -38,7 +38,10 @@ def collect_bundle_files():
     )
     datas += [(str(APP_ROOT / "assets" / "icon.ico"), "assets"),
               (str(APP_ROOT / "assets" / "icon.png"), "assets"),
+              (str(APP_ROOT / "VERSION"), "."),
               (str(prepare_model()), "server/models")]
+    # CustomTkinter 的字体和主题 JSON 必须随单文件 exe 一同打包。
+    datas += collect_data_files("customtkinter")
     hiddenimports += [
         "app", "runtime_paths", "pystray._win32", "PIL.IcoImagePlugin",
         "uvicorn.logging", "uvicorn.loops.asyncio", "uvicorn.lifespan.on",

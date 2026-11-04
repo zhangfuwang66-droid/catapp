@@ -59,6 +59,7 @@ def main():
         for filename in ("CyberMiao.exe", "BUILD-INFO.json"):
             shutil.copy2(destination / filename, release / filename)
         shutil.copy2(APP_ROOT / "使用手册.md", release / "使用说明.md")
+        shutil.copy2(APP_ROOT / "使用手册.md", release / "README.txt")
     print(f"构建和运行检查通过：{executable}")
 
 

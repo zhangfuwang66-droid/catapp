@@ -19,7 +19,8 @@ def run_check(report_path):
     manager = None
     try:
         with tempfile.TemporaryDirectory(prefix="小喵 exe 数据 ") as directory:
-            data_dir = Path(directory)
+            # Windows runner 的临时目录可能使用 8.3 短路径；与服务端统一为规范路径。
+            data_dir = Path(directory).resolve()
             os.environ["CYBERMIAO_DATA_DIR"] = str(data_dir)
             os.environ["DASHSCOPE_API_KEY"] = "local-bundle-check-only"
             os.environ["MPLBACKEND"] = "Agg"
@@ -44,7 +45,9 @@ def run_check(report_path):
             elif hasattr(tracker, "_hands"):
                 tracker._hands.close()
             report["checks"].append("MediaPipe 模型初始化及空白帧推理")
-            assert Path(server_app.RECORDS_DIR) == data_dir / "records"
+            assert Path(server_app.RECORDS_DIR) == data_dir / "records", (
+                f"录音目录不匹配：实际 {server_app.RECORDS_DIR}，预期 {data_dir / 'records'}"
+            )
             report["checks"].append("中文及空格数据目录")
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))

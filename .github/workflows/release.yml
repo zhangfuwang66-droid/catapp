@@ -1,0 +1,59 @@
+name: Build Windows x64 release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (for example v0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --version=6.7.3 --yes --no-progress
+
+      - name: Install Python dependencies
+        run: python desktop/setup.py
+
+      - name: Run desktop and server integration tests
+        run: python -m unittest discover -s desktop/tests -v
+
+      - name: Build and check Windows x64 packages
+        env:
+          INNO_SETUP_COMPILER: C:\Program Files (x86)\Inno Setup 6\ISCC.exe
+        run: python desktop/build.py --version "${{ inputs.version || github.ref_name }}"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version || github.ref_name }}
+          name: Cyber Miao ${{ inputs.version || github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/release/CyberMiao-Setup-x64.exe
+            artifacts/release/CyberMiao-Portable-x64.exe
+          body: |
+            Windows x64 downloads:
+            - `CyberMiao-Setup-x64.exe`: per-user installer with an uninstall entry.
+            - `CyberMiao-Portable-x64.exe`: portable single-file app.
+
+            GitHub provides the source ZIP and tar.gz automatically. Local runtime checks do not verify DashScope credentials or ESP32 hardware.

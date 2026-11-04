@@ -16,7 +16,9 @@
 
 ### 使用正式版
 
-如果手边已有正式版，双击项目根目录的 `CyberMiao.exe`，在“连接设置”中保存 DashScope API Key，然后在“工作台”启动服务器。正式版 exe 是本地构建产物，不包含在 Git 源码仓库中。
+Windows x64 用户可在 GitHub Releases 选择安装版 `CyberMiao-Setup-x64.exe`，或免安装版 `CyberMiao-Portable-x64.exe`。安装版提供开始菜单快捷方式和可选桌面快捷方式；便携版下载后直接运行。GitHub 会自动附上源码 ZIP 和 tar.gz。
+
+启动桌面程序后，在“连接设置”中保存 DashScope API Key，再到“工作台”启动服务器。安装版和便携版共用 `%LOCALAPPDATA%\CyberMiao` 中的配置和数据；卸载安装版不会删除这些用户数据。
 
 服务器启动后，把控制台显示的局域网 IP 和端口填入 ESP32 配网页面。浏览器可打开 `http://127.0.0.1:8081`；设备和其他局域网客户端使用电脑的局域网 IP。
 
@@ -35,10 +37,17 @@ python desktop/src/launcher.py
 
 ```powershell
 python -m unittest discover -s desktop/tests -v
-python desktop/build.py
+python desktop/build.py --version 1.0.0
 ```
 
-构建会执行依赖检查、打包和本地运行检查；通过后更新根目录的 `CyberMiao.exe`，完整发布包和记录放在 `artifacts/release/`，构建缓存放在 `artifacts/build/`。PyInstaller 及项目依赖需安装在执行构建的 Python 环境中。
+正式构建需要安装 Inno Setup 6，并执行 `python desktop/build.py --version 1.0.0`。构建会执行依赖检查、打包和本地运行检查；通过后生成 `CyberMiao-Portable-x64.exe` 与 `CyberMiao-Setup-x64.exe`，并尝试更新根目录的开发启动入口 `CyberMiao.exe`。如果该程序仍在运行，构建会保留正在使用的入口文件，发行文件仍可正常使用。构建信息和使用说明保存在 `artifacts/release/`，构建缓存放在 `artifacts/build/`。调试版 `python desktop/build.py --debug` 不需要 Inno Setup。
+
+推送 `v` 开头的版本标签会自动运行 Windows x64 构建、运行检查并创建 GitHub Release，只上传安装版和便携版两个 exe；源码 ZIP 和 tar.gz 由 GitHub 自动生成。例如：
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ## 项目结构
 

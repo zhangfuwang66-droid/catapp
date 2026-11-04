@@ -26,16 +26,16 @@ python desktop/setup.py
 python desktop/src/launcher.py
 python -m unittest discover -s desktop/tests -v
 python desktop/build.py --debug
-python desktop/build.py
+python desktop/build.py --version 1.0.0
 ```
 
-代码需要 Python 3.10 或更新版本；本次验证环境为 Windows、Python 3.13.14 和 PyInstaller 6.22.3。发行版目标为 Windows x64；其他机器和系统版本需要另行验证。
+代码需要 Python 3.10 或更新版本；正式发行版需要 Windows x64、Inno Setup 6，以及同一个 Python 环境中的项目依赖和 PyInstaller。本次验证环境为 Windows、Python 3.13.14 和 PyInstaller 6.22.3。其他机器和系统版本需要另行验证。
 
 构建前会检查依赖，并下载固定版本的 MediaPipe 手部模型、核对 SHA-256。构建后会启动生成的 exe，验证原生推理、HTTP、WebSocket、停止和重启。运行检查通过后才更新正式发布目录。
 
-调试版输出到根目录的 `artifacts/debug/`，完整正式发布包输出到 `artifacts/release/`，构建缓存和运行检查报告存放在 `artifacts/build/desktop/<debug或release>/`。正式版先在缓存目录构建和检查，通过后发布，并校验 SHA-256、原子更新根目录的 `CyberMiao.exe`。猫咪图标嵌入在 exe 的 Windows 资源中。不会在源码目录中再生成 `dist/` 或 `build/`。构建日志中的 `Hidden import not found` 和缺少运行时 DLL 必须排查；`warn-CyberMiao.txt` 也会包含只适用于其他操作系统的可选模块，不能把整份警告直接当作失败或通过的依据。
+调试版输出到根目录的 `artifacts/debug/`，正式版在 `artifacts/release/` 输出 `CyberMiao-Portable-x64.exe` 和 `CyberMiao-Setup-x64.exe`。便携版是直接运行的单文件程序；安装版使用 Inno Setup 安装到当前用户目录，简体中文安装向导会创建开始菜单快捷方式，可选创建桌面快捷方式，并提供卸载入口。卸载不会删除 `%LOCALAPPDATA%\CyberMiao` 中的用户数据。构建缓存和运行检查报告存放在 `artifacts/build/desktop/<debug或release>/`。正式版先在缓存目录构建和检查，通过后校验 SHA-256，并尝试更新根目录的 `CyberMiao.exe`；若该程序正在运行，会保留当前入口而不影响两个发行文件。猫咪图标嵌入在程序和安装器中。不会在源码目录中再生成 `dist/` 或 `build/`。构建日志中的 `Hidden import not found` 和缺少运行时 DLL 必须排查；`warn-CyberMiao.txt` 也会包含只适用于其他操作系统的可选模块，不能把整份警告直接当作失败或通过的依据。
 
-构建记录保存在 `BUILD-INFO.json`，包含 Python/依赖版本、exe 大小、SHA-256 和运行检查结果。详细检查日志位于 `../artifacts/build/desktop/<debug或release>/runtime-check.log`。
+构建记录保存在 `BUILD-INFO.json`，包含版本、架构、Python/依赖版本、两个发行文件的大小与 SHA-256，以及运行检查结果。GitHub Release 只需上传上述两个 x64 exe；源码 ZIP 和 tar.gz 由 GitHub 自动生成。详细检查日志位于 `../artifacts/build/desktop/<debug或release>/runtime-check.log`。
 
 开发者可单独执行已实现的检查入口：
 

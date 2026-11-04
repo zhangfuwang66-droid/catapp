@@ -37,6 +37,7 @@ def collect_bundle_files():
         "mediapipe", include_py_files=False, filter_submodules=runtime_module, on_error="raise",
     )
     datas += [(str(APP_ROOT / "assets" / "icon.ico"), "assets"),
+              (str(APP_ROOT / "assets" / "icon.png"), "assets"),
               (str(prepare_model()), "server/models")]
     hiddenimports += [
         "app", "runtime_paths", "pystray._win32", "PIL.IcoImagePlugin",

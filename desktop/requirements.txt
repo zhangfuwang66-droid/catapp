@@ -1,5 +1,5 @@
 # GUI 启动器依赖
--r ../esp32_servo_control/server/requirements.txt
+-r ../server/requirements.txt
 pyinstaller>=6.0.0
 pillow>=10.0.0
 pystray>=0.19.5

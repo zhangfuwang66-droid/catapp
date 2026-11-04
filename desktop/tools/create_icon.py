@@ -99,7 +99,7 @@ def save_icon_sizes(img, output_path):
 
 def main():
     """主函数"""
-    assets_dir = Path(__file__).parent / 'assets'
+    assets_dir = Path(__file__).resolve().parents[1] / 'assets'
     assets_dir.mkdir(exist_ok=True)
 
     print("🎨 正在生成应用图标...")

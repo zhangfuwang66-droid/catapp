@@ -1,3 +1,5 @@
+> 历史排障记录：保留原始内容和旧路径，仅供追溯；当前路径以根目录 README 为准。
+
 Windows PowerShell
 版权所有 (C) Microsoft Corporation。保留所有权利。
 

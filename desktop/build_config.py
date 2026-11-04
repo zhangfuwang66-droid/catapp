@@ -5,7 +5,7 @@ import urllib.request
 
 APP_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_ROOT.parent
-SERVER_ROOT = PROJECT_ROOT / "esp32_servo_control" / "server"
+SERVER_ROOT = PROJECT_ROOT / "server"
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 MODEL_SHA256 = "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1"
 

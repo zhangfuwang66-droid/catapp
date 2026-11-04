@@ -341,6 +341,6 @@ P.append(_table(
     widths=[1, 3, 5],
 ))
 
-out = os.path.join(os.path.dirname(__file__), "招标技术参数-整机完整版.docx")
+out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "招标技术参数-整机完整版.docx")
 save_docx(out, P)
 print("已生成:", out)

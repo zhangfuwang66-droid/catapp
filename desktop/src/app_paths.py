@@ -13,7 +13,7 @@ def resource_root() -> Path:
 def server_root() -> Path:
     if getattr(sys, "frozen", False):
         return resource_root() / "server"
-    return Path(__file__).resolve().parents[2] / "esp32_servo_control" / "server"
+    return Path(__file__).resolve().parents[2] / "server"
 
 
 def user_data_dir() -> Path:

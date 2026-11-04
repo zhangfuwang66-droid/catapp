@@ -42,5 +42,6 @@ models/
 
 # Desktop app packages and private settings
 dist/
-CyberMiao_App/config/settings.ini
+desktop/config/settings.ini
+artifacts/
 *.spec.bak

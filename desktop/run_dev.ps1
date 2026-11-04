@@ -3,7 +3,7 @@ Write-Host "🚀 启动赛博小喵 (开发模式)" -ForegroundColor Cyan
 Write-Host ""
 
 # 检查虚拟环境
-$venvPath = Join-Path $PSScriptRoot '..\esp32_servo_control\server\.venv'
+$venvPath = Join-Path $PSScriptRoot '..\server\.venv'
 if (Test-Path -LiteralPath (Join-Path $venvPath 'Scripts\python.exe')) {
     Write-Host "✅ 使用虚拟环境: $venvPath" -ForegroundColor Green
     $pythonExe = Join-Path $venvPath "Scripts\python.exe"

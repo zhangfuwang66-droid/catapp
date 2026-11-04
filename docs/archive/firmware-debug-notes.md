@@ -1,3 +1,5 @@
+> 历史排障记录：保留原始内容和旧路径，仅供追溯；当前路径以根目录 README 为准。
+
 In file included from c:\Users\DNUI\Documents\Arduino\libraries\ESP32Servo\src/ESP32PWM.h:52,
                  from c:\Users\DNUI\Documents\Arduino\libraries\ESP32Servo\src/ESP32Servo.h:84,
                  from C:\Users\DNUI\Desktop\AI_DesktopCat_Qwen3.5Omni-mainone\AI_DesktopCat_Qwen3.5Omni-main\esp32_servo_control\esp32_servo_control\esp32_servo_control.ino:5:

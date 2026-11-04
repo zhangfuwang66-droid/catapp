@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from build_config import APP_ROOT, prepare_model
+from build_config import APP_ROOT, PROJECT_ROOT, prepare_model
 
 
 def check_dependencies():
@@ -32,8 +32,8 @@ def main():
     versions = check_dependencies()
     prepare_model()
     mode = "debug" if args.debug else "release"
-    destination = APP_ROOT / "dist" / mode
-    build_dir = APP_ROOT / "build" / mode
+    build_dir = PROJECT_ROOT / "artifacts" / "build" / "desktop" / mode
+    destination = PROJECT_ROOT / "artifacts" / "debug" if args.debug else build_dir / "package"
     environment = dict(os.environ, CYBERMIAO_BUILD_CONSOLE="1" if args.debug else "0")
     subprocess.run([
         sys.executable, "-m", "PyInstaller", str(APP_ROOT / "CyberMiao.spec"),
@@ -54,12 +54,13 @@ def main():
             "runtime_check": result}
     (destination / "BUILD-INFO.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
     if not args.debug:
-        release = APP_ROOT / "dist" / "CyberMiao_Release"
+        release = PROJECT_ROOT / "artifacts" / "release"
         release.mkdir(parents=True, exist_ok=True)
         for filename in ("CyberMiao.exe", "BUILD-INFO.json"):
             shutil.copy2(destination / filename, release / filename)
-        shutil.copy2(APP_ROOT / "使用手册.md", release / "使用说明.md")
-        shutil.copy2(APP_ROOT / "使用手册.md", release / "README.txt")
+        guide = PROJECT_ROOT / "docs" / "使用手册.md"
+        shutil.copy2(guide, release / "使用说明.md")
+        shutil.copy2(guide, release / "README.txt")
     print(f"构建和运行检查通过：{executable}")
 
 

@@ -1,102 +1,47 @@
-# 赛博小喵 Cyber Miao - EXE 打包版
+# 赛博小喵桌面程序
 
-## 项目说明
+Windows GUI 用于配置 DashScope API Key，并管理已有的 FastAPI 服务器。固件、PCB 和外壳继续保留在原目录。
 
-本目录包含将赛博小喵服务器打包成 Windows EXE 可执行文件的完整解决方案。
+用户入口是 `dist/CyberMiao_Release/CyberMiao.exe`，操作说明见 [使用手册](使用手册.md)。
 
-## 目录结构
+## 代码结构
 
-```
-CyberMiao_App/
-├── src/
-│   └── launcher.py         # GUI 启动器主程序
-├── assets/                  # 资源文件（图标等）
-├── config/                  # 配置文件目录
-├── resources/               # 其他资源
-├── build_config.py          # PyInstaller 打包配置
-├── build.py                 # 一键打包脚本
-└── README.md                # 本文件
-```
+- `src/launcher.py`：Tk 界面和主线程事件轮询。
+- `src/config.py`、`src/app_paths.py`：配置校验、保存和资源路径。
+- `src/server_manager.py`：服务进程状态、停止超时回收、日志脱敏和轮转。
+- `src/server_entry.py`：服务子进程入口，普通 import 使 PyInstaller 能分析服务器依赖。
+- `src/system_tray.py`：托盘线程向 GUI 投递命令。
+- `src/bundle_check.py`：打包后运行检查，不访问云端或摄像头。
+- `tests/test_runtime.py`：源码集成测试。
+- `CyberMiao.spec`、`build_config.py`、`build.py`：可迁移的构建配置和构建检查。
+- `config/settings.example.ini`：无密钥示例；真实配置存于用户目录。
 
-## 打包步骤
+## 开发与构建
 
-### 1. 安装依赖
+在仓库根目录执行，使用同一个 Python 环境安装、运行和打包：
 
 ```powershell
-cd CyberMiao_App
-python -m pip install pyinstaller
+python CyberMiao_App/setup.py
+python CyberMiao_App/src/launcher.py
+python -m unittest discover -s CyberMiao_App/tests -v
+python CyberMiao_App/build.py --debug
+python CyberMiao_App/build.py
 ```
 
-### 2. 运行打包脚本
+代码需要 Python 3.10 或更新版本；本次验证环境为 Windows、Python 3.13.14 和 PyInstaller 6.22.3。发行版目标为 Windows x64；其他机器和系统版本需要另行验证。
+
+构建前会检查依赖，并下载固定版本的 MediaPipe 手部模型、核对 SHA-256。构建后会启动生成的 exe，验证原生推理、HTTP、WebSocket、停止和重启。运行检查通过后才更新正式发布目录。
+
+调试版输出到 `dist/debug/`，正式构建输出到 `dist/release/` 并复制到 `dist/CyberMiao_Release/`。构建日志中的 `Hidden import not found` 和缺少运行时 DLL 必须排查；`warn-CyberMiao.txt` 也会包含只适用于其他操作系统的可选模块，不能把整份警告直接当作失败或通过的依据。
+
+构建记录保存在 `BUILD-INFO.json`，包含 Python/依赖版本、exe 大小、SHA-256 和运行检查结果。详细检查日志位于 `build/<debug或release>/runtime-check.log`。
+
+开发者可单独执行已实现的检查入口：
 
 ```powershell
-python build.py
+& .\CyberMiao_App\dist\CyberMiao_Release\CyberMiao.exe --check-runtime "$PWD\runtime-check.json"
 ```
 
-打包脚本会自动：
-- 检查并安装 PyInstaller
-- 生成 .spec 配置文件
-- 打包成单个 EXE 文件
-- 创建发布包（包含 README 和配置目录）
+该命令使用临时目录和无效测试 Key，不读取用户的正式配置。返回码 0 表示本地运行检查通过，报告中的 `cloud_api_tested` 和 `hardware_tested` 仍为 false。
 
-### 3. 输出文件
-
-打包完成后，在 `dist/CyberMiao_Release/` 目录下会生成：
-- `CyberMiao.exe` - 主程序
-- `config/` - 配置文件目录
-- `README.txt` - 用户使用说明
-
-## 开发测试
-
-在打包前测试程序：
-
-```powershell
-python src/launcher.py
-```
-
-## 特性
-
-✅ **一键启动**：双击 EXE 即可运行，无需安装 Python 环境
-✅ **图形界面**：友好的 GUI 配置和控制界面
-✅ **自动配置**：首次运行引导配置 API Key
-✅ **系统托盘**：后台运行，最小化到托盘
-✅ **日志显示**：实时查看服务器运行状态
-✅ **自动打开**：启动后自动打开浏览器
-
-## 技术栈
-
-- **GUI 框架**: tkinter（Python 标准库）
-- **打包工具**: PyInstaller
-- **服务器**: FastAPI + Uvicorn
-- **AI 模型**: Qwen 3.5 Omni (DashScope)
-
-## 文件大小优化
-
-当前打包文件约 200-400MB，主要包含：
-- OpenCV (图像处理)
-- MediaPipe (手势识别)
-- NumPy (数值计算)
-- AI SDK (DashScope)
-
-可通过以下方式优化：
-1. 移除不需要的模块（如 MediaPipe 手势功能）
-2. 使用 UPX 压缩
-3. 排除测试和文档文件
-
-## 常见问题
-
-### Q: 打包失败怎么办？
-A: 检查是否安装了所有依赖，可以运行 `pip install -r ../esp32_servo_control/server/requirements.txt`
-
-### Q: EXE 文件太大？
-A: 这是正常的，因为包含了 AI 和图像处理库。可以考虑在线安装版本。
-
-### Q: 启动报错找不到模块？
-A: 检查 `build_config.py` 中的 `hiddenimports` 是否包含所有需要的模块。
-
-### Q: 如何添加自定义图标？
-A: 将 `.ico` 文件放到 `assets/icon.ico`，重新打包即可。
-
-## 许可证
-
-© 2024 Cyber Miao Project
+手部模型来源：[Google MediaPipe hand_landmarker float16/1](https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task)。构建使用的校验值见 `build_config.py`。该模型只用于本地手部识别，云端对话模型通过 API 调用。

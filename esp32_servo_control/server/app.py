@@ -20,6 +20,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from starlette.websockets import WebSocketState
 import uvicorn
+from runtime_paths import DATA_ROOT, model_path
 
 if sys.platform.startswith("win"):
     try:
@@ -30,11 +31,9 @@ if sys.platform.startswith("win"):
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(DATA_ROOT / ".env")
 except Exception:
     pass
-
-os.environ.setdefault("DASHSCOPE_API_KEY", "sk-fake-placeholder")
 
 try:
     import cv2  # type: ignore
@@ -274,7 +273,7 @@ CAMERA_ON_DEMAND_TIMEOUT_SEC = float(os.getenv("CAMERA_ON_DEMAND_TIMEOUT_SEC", "
 CAMERA_FRAME_FRESHNESS_SEC = float(os.getenv("CAMERA_FRAME_FRESHNESS_SEC", "1.4"))
 
 # 记录分析（Record Analysis）全局状态
-RECORDS_DIR = os.path.join(os.path.dirname(__file__), "records")
+RECORDS_DIR = str(DATA_ROOT / "records")
 os.makedirs(RECORDS_DIR, exist_ok=True)
 RECORD_INTERVAL_SEC = float(os.getenv("RECORD_INTERVAL_SEC", "10.0"))
 RECORD_MAX_ENTRIES = int(os.getenv("RECORD_MAX_ENTRIES", "600"))  # 最多保留条目数（防止无限增长）
@@ -1751,9 +1750,7 @@ HAND_LANDMARKER_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
     "hand_landmarker/float16/latest/hand_landmarker.task"
 )
-HAND_LANDMARKER_MODEL_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "models", "hand_landmarker.task"
-)
+HAND_LANDMARKER_MODEL_PATH = str(model_path("hand_landmarker.task"))
 _hand_landmarker_download_attempted = False
 _hand_landmarker_unavailable_logged = False
 

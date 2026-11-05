@@ -11,7 +11,7 @@
 
 赛博小喵把 ESP32 硬件、Python FastAPI 服务和 Windows 桌面控制台组合在一起。桌面程序负责保存配置、启动服务和查看运行状态；ESP32 通过 Wi-Fi 连接服务，完成语音、摄像头、表情和动作交互。
 
-`v0.2.0` 带来重新设计的桌面控制台。当前定位是本地单实例和可信局域网内使用，公网多用户、多设备隔离和云端托管还没有纳入当前版本。
+`v0.2.0` 带来重新设计的桌面控制台。当前仍以本地单实例和可信局域网为主；第一阶段已经加入本地 SQLite 聊天记忆和空闲总结，但公网登录、设备配对、多设备隔离和云端托管还没有完成。
 
 <p align="center">
   <img src="docs/images/desktop-overview.png" width="960" alt="赛博小喵 v0.2.0 工作台：服务卡片、连接地址与运行日志">
@@ -34,6 +34,7 @@ GitHub 还会自动生成源码 ZIP 和 tar.gz。源码包包含 PCB、3D 外壳
 - Windows 图形界面配置 DashScope API Key
 - 一键启动、停止和重启本地 FastAPI 服务
 - 系统托盘、运行日志和服务状态显示
+- 聊天记录持久化、空闲总结和重启后的记忆恢复（第一阶段测试身份）
 - Wi-Fi 配网后连接到电脑上的服务
 
 ## 快速开始
@@ -90,6 +91,7 @@ Windows 电脑上的 Cyber Miao
 - `settings.ini`：API Key、服务端口和自动打开网页设置。
 - `logs/CyberMiao.log`：运行日志，包含 API Key 的脱敏输出。
 - `records/`：录制和分析产生的图片等数据。
+- `memory.sqlite3`：第一阶段聊天记录、摘要和长期记忆，请勿公开分享。
 - `models/`：用户侧模型缓存；发行版已经内置手部识别模型。
 
 卸载安装版不会自动删除这个用户数据目录，以保留配置和录制数据。API Key 当前以普通配置文本保存，请不要把 `settings.ini` 分享给其他人。
@@ -107,6 +109,7 @@ python desktop/src/launcher.py
 
 ```powershell
 python -m unittest discover -s desktop/tests -v
+python -m unittest discover -s server/tests -v
 ```
 
 如果只需要运行独立服务器，可在 `server/.env` 中配置 `DASHSCOPE_API_KEY`，然后运行 `server/start-server.ps1`。

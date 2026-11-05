@@ -60,6 +60,9 @@ jobs:
       - name: 验证桌面界面和服务集成
         run: python -m unittest discover -s desktop/tests -v
 
+      - name: 验证聊天记忆模块
+        run: python -m unittest discover -s server/tests -v
+
       - name: 构建并检查 Windows x64 软件包
         env:
           INNO_SETUP_COMPILER: C:\Program Files (x86)\Inno Setup 6\ISCC.exe

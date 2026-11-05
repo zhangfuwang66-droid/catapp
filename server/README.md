@@ -51,6 +51,18 @@ python server/tools/memory_database.py backup --database artifacts/data/memory.s
 
 创建数据库只是部署准备。实际保存聊天还需要运行后端，并把 `CYBERMIAO_MEMORY_DB_PATH` 指向该数据库；公网设备认证和账号绑定见[第二阶段计划](../docs/第二阶段开发计划.md)。
 
+## 旧测试记忆迁移
+
+旧测试身份的数据不会自动交给首个账号。`tools/migrate_memory.py` 默认以只读方式核对源身份、目标账号和设备绑定，仅显示数量，不输出聊天。先创建真实账号、完成设备绑定，并在设备开始产生新聊天前决定是否迁移。目标已有会话、归属不符、源为真实账号或数据引用异常时都会拒绝。
+
+以下从仓库根目录运行，把 `usr_实际账号编号`、设备编号和路径替换为实际值；账号编号通过前述 `users` 命令查看：
+
+```powershell
+python server/tools/migrate_memory.py --database artifacts/data/memory.sqlite3 --source-user test-user-001 --source-device test-cat-001 --target-user usr_实际账号编号 --target-device cat-example
+```
+
+确认数据归属并停止后端后，在同一命令末尾加上 `--apply --confirm-service-stopped --backup artifacts/backups/memory-before-identity.sqlite3` 才会执行。工具先取得写锁、再次检查并创建包含 WAL 的独立备份，再用事务更新会话及长期记忆的归属；保留原消息、摘要、编号和总结进度。备份存在则拒绝覆盖；中途失败回滚，已成功创建的备份保留。迁移结束后才能重新启动服务。空库无需迁移；目前未对云端数据库执行此操作。
+
 ## 第二阶段：账号基础（开发中）
 
 服务器状态已按设备拆分，`app.py` 管理路由，`device_runtime.py` 管理单台设备的会话与任务。默认 `CYBERMIAO_ACCESS_MODE=local` 保留原固件使用方式，访问范围限制在本机和私有局域网。账号模式使用 `accounts`，设备接口已经接入凭证、登录和归属检查；账号网页、固件及 TLS 联调尚未完成，正式部署仍按第二阶段计划执行。

@@ -16,7 +16,7 @@
 
 ## 第一阶段聊天记忆
 
-服务器会把当前测试身份 `test-user-001` / `test-cat-001` 的用户消息和小喵回复保存到 `memory.sqlite3`。默认位置是运行数据目录，也可以通过 `CYBERMIAO_MEMORY_DB_PATH` 指定。
+服务器把用户消息和小喵回复保存到 `memory.sqlite3`。账号模式使用已认证的主人与设备身份；本地兼容模式仍默认使用 `test-user-001` / `test-cat-001`。默认位置是运行数据目录，也可以通过 `CYBERMIAO_MEMORY_DB_PATH` 指定。
 
 每次聊天结束后会重新计时；默认连续空闲 5 分钟，后台任务调用 DashScope 文本模型生成一段摘要，并提取少量稳定事实和未完成话题。下次建立实时会话时只加载摘要、长期记忆和尚未总结的近期消息，不会把完整历史全部塞进模型上下文。
 
@@ -24,7 +24,7 @@
 
 突然断电、系统强制结束进程时无法在断电瞬间调用模型，但已经落库的消息不会丢失，下一次启动仍会自动恢复。只有已经写入 SQLite 的消息才能被恢复；尚未写入数据库的内存内容无法补回。
 
-当前阶段还没有登录、真实设备身份或配对协议。可以用以下环境变量区分测试数据：
+本地兼容模式可以用以下环境变量区分测试数据；账号模式的归属由登录和设备绑定决定：
 
 ```powershell
 $env:CYBERMIAO_MEMORY_USER_ID = 'test-user-001'
@@ -33,9 +33,9 @@ $env:CYBERMIAO_MEMORY_IDLE_SECONDS = '300'
 $env:CYBERMIAO_MEMORY_SHUTDOWN_TIMEOUT_SECONDS = '4'
 ```
 
-本地调试时，`GET /api/memory` 可以查看当前测试身份的摘要、长期记忆和未总结消息；`DELETE /api/memory` 会清除这些测试数据。两个接口默认开启，只能在本机或可信局域网使用。部署到公网前必须关闭 `CYBERMIAO_MEMORY_DEBUG_API=0`，并在登录鉴权后重新提供用户级接口。
+本地调试时，`GET /api/memory` 查看当前测试身份的摘要、长期记忆和未总结消息；`DELETE /api/memory` 清除测试数据。可设置 `CYBERMIAO_MEMORY_DEBUG_API=0` 关闭本地记忆调试。账号模式关闭旧入口，主人通过 `/api/devices/{device_id}/memory` 访问；清除时需通过 CSRF 校验并提交 `{"confirm_device_id":"实际设备编号"}`。清除会结束该设备会话后重新连接，避免旧任务写回；不会删除账号、凭证或活动图片。
 
-记忆数据库和原始聊天内容包含个人信息，请纳入备份、删除和访问控制策略。第一阶段使用 SQLite 是为了不改动现有环境；多用户部署前会迁移到 PostgreSQL。
+数据库和原始聊天内容请纳入备份、删除和访问控制策略。目前使用 SQLite 与一个 Uvicorn worker；多人部署先评估实际负载，再决定是否迁移 PostgreSQL。
 
 ## 数据库初始化与备份
 

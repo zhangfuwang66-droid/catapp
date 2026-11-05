@@ -10,6 +10,7 @@ from pathlib import Path
 import sqlite3
 import threading
 from typing import Awaitable, Callable, Dict, Iterable, List, Optional, Set
+from async_helpers import run_blocking
 
 
 ROLES = {"user", "assistant", "system"}
@@ -28,7 +29,7 @@ class MemoryStore:
     """使用 SQLite 保存会话、消息、摘要和长期记忆。
 
     每个操作独立建立连接，配合 WAL 和进程内锁，既能被 FastAPI 事件循环
-    通过 ``asyncio.to_thread`` 调用，也不会把 sqlite 连接跨线程复用。
+    通过 ``run_blocking`` 调用，也不会把 sqlite 连接跨线程复用。
     """
 
     _SCHEMA = """
@@ -173,7 +174,7 @@ class MemoryStore:
             finally:
                 connection.close()
 
-    def pending_messages(self, conversation_id: int) -> List[Dict[str, object]]:
+    def pending_messages(self, conversation_id: int, limit: Optional[int] = None) -> List[Dict[str, object]]:
         with self._lock:
             connection = self._connect()
             try:
@@ -191,9 +192,9 @@ class MemoryStore:
                     SELECT id, conversation_id, role, content, created_at
                     FROM messages
                     WHERE conversation_id = ? AND id > ?
-                    ORDER BY id
+                    ORDER BY id LIMIT ?
                     """,
-                    (conversation_id, row[0]),
+                    (conversation_id, row[0], -1 if limit is None else max(1, int(limit))),
                 ).fetchall()
                 return [self._row_dict(item) for item in messages]
             finally:
@@ -372,6 +373,16 @@ class MemoryStore:
     def list_memories(self, user_id: str, device_id: str, limit: int = 100) -> List[Dict[str, object]]:
         return self.context_for(user_id, device_id, message_limit=1, summary_limit=1, memory_limit=limit)["memories"]
 
+    def owner_conversation_ids(self, user_id: str, device_id: str) -> List[int]:
+        with self._lock:
+            connection = self._connect()
+            try:
+                return [row[0] for row in connection.execute(
+                    "SELECT id FROM conversations WHERE user_id=? AND device_id=?", (user_id, device_id),
+                )]
+            finally:
+                connection.close()
+
     def clear_owner(self, user_id: str, device_id: str) -> None:
         with self._lock:
             connection = self._connect()
@@ -437,6 +448,7 @@ class MemoryManager:
         self.on_error = on_error
         self._summary_tasks: Dict[int, asyncio.Task] = {}
         self._summarizing: Set[int] = set()
+        self._active_summaries: Dict[int, asyncio.Task] = {}
         self._maintenance_task: Optional[asyncio.Task] = None
         self._closed = False
 
@@ -448,7 +460,7 @@ class MemoryManager:
 
     async def recover_pending(self) -> None:
         """服务重新启动后立即安排所有未总结会话，不依赖上次空闲计时器。"""
-        conversation_ids = await asyncio.to_thread(self.store.pending_conversation_ids)
+        conversation_ids = await run_blocking(self.store.pending_conversation_ids)
         for conversation_id in conversation_ids:
             self._schedule_summary(conversation_id, 0)
 
@@ -458,7 +470,7 @@ class MemoryManager:
 
     async def flush_pending(self, timeout: float = 4.0) -> None:
         """在正常关机的短窗口内冲刷未总结消息；超时则留给下次启动恢复。"""
-        conversation_ids = await asyncio.to_thread(self.store.pending_conversation_ids)
+        conversation_ids = await run_blocking(self.store.pending_conversation_ids)
         if not conversation_ids:
             return
         to_cancel = []
@@ -488,12 +500,13 @@ class MemoryManager:
 
     async def close(self) -> None:
         self._closed = True
-        tasks = list(self._summary_tasks.values())
+        tasks = list(set(self._summary_tasks.values()) | set(self._active_summaries.values()))
         if self._maintenance_task is not None:
             self._maintenance_task.cancel()
             tasks.append(self._maintenance_task)
             self._maintenance_task = None
         self._summary_tasks.clear()
+        tasks = [task for task in tasks if task is not asyncio.current_task()]
         for task in tasks:
             if task is not asyncio.current_task() and not task.done():
                 task.cancel()
@@ -501,13 +514,13 @@ class MemoryManager:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def start_conversation(self, user_id: str, device_id: str) -> int:
-        return await asyncio.to_thread(self.store.create_conversation, user_id, device_id)
+        return await run_blocking(self.store.create_conversation, user_id, device_id)
 
     async def context_for(self, user_id: str, device_id: str) -> Dict[str, List[Dict[str, object]]]:
-        return await asyncio.to_thread(self.store.context_for, user_id, device_id)
+        return await run_blocking(self.store.context_for, user_id, device_id)
 
     async def record_message(self, conversation_id: int, role: str, content: str) -> int:
-        message_id = await asyncio.to_thread(self.store.append_message, conversation_id, role, content)
+        message_id = await run_blocking(self.store.append_message, conversation_id, role, content)
         self._schedule_summary(conversation_id, self.idle_seconds)
         return message_id
 
@@ -515,27 +528,45 @@ class MemoryManager:
         if conversation_id in self._summarizing:
             return False
         self._summarizing.add(conversation_id)
+        self._active_summaries[conversation_id] = asyncio.current_task()
+        summarized = False
         try:
-            pending = await asyncio.to_thread(self.store.pending_messages, conversation_id)
-            if not pending:
-                return False
-            through_message_id = int(pending[-1]["id"])
-            result = await self.summarize(pending)
-            if not isinstance(result, SummaryResult):
-                raise TypeError("总结回调必须返回 SummaryResult")
-            if not result.summary.strip() and not result.memories and not result.open_topics:
-                return False
-            await asyncio.to_thread(
-                self.store.save_summary,
-                conversation_id,
-                through_message_id,
-                result.summary,
-                result.memories,
-                result.open_topics,
-            )
-            return True
+            while True:
+                # 从最早的未总结消息开始，只有实际交给模型的批次才会标记完成。
+                pending = await run_blocking(self.store.pending_messages, conversation_id, 40)
+                if not pending:
+                    return summarized
+                through_message_id = int(pending[-1]["id"])
+                result = await self.summarize(pending)
+                if not isinstance(result, SummaryResult):
+                    raise TypeError("总结回调必须返回 SummaryResult")
+                if not result.summary.strip() and not result.memories and not result.open_topics:
+                    return summarized
+                await run_blocking(
+                    self.store.save_summary, conversation_id, through_message_id,
+                    result.summary, result.memories, result.open_topics,
+                )
+                summarized = True
         finally:
             self._summarizing.discard(conversation_id)
+            self._active_summaries.pop(conversation_id, None)
+
+    async def clear_owner(self, user_id: str, device_id: str):
+        """调用方先结束设备会话，取消总结后删除；旧回调不能恢复已删除的会话。"""
+        conversation_ids = await run_blocking(self.store.owner_conversation_ids, user_id, device_id)
+        tasks = set()
+        for conversation_id in conversation_ids:
+            task = self._summary_tasks.pop(conversation_id, None)
+            if task is not None:
+                tasks.add(task)
+            task = self._active_summaries.get(conversation_id)
+            if task is not None:
+                tasks.add(task)
+        tasks.discard(asyncio.current_task())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await run_blocking(self.store.clear_owner, user_id, device_id)
 
     def _schedule_summary(self, conversation_id: int, delay: float) -> None:
         if self._closed:
@@ -564,7 +595,7 @@ class MemoryManager:
     async def _maintenance_loop(self) -> None:
         try:
             while not self._closed:
-                due = await asyncio.to_thread(self.store.due_conversation_ids, self.idle_seconds)
+                due = await run_blocking(self.store.due_conversation_ids, self.idle_seconds)
                 for conversation_id in due:
                     if conversation_id not in self._summary_tasks or self._summary_tasks[conversation_id].done():
                         self._schedule_summary(conversation_id, 0)

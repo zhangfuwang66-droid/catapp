@@ -212,6 +212,9 @@ def _memory_context_prompt(base_prompt: str, context: Dict[str, List[Dict[str, o
         sections.append("【过去对话摘要】\n" + "\n".join(
             f"- {item.get('summary', '')}" for item in summaries if item.get("summary")
         ))
+        topics = [str(topic) for item in summaries for topic in item.get("open_topics", [])]
+        if topics:
+            sections.append("【可以继续的话题】\n" + "\n".join(f"- {topic}" for topic in topics[-12:]))
     if messages:
         lines = []
         for item in messages:
@@ -723,6 +726,7 @@ class DeviceRuntime:
         self._background_tasks: Set[asyncio.Task] = set()
         self._ui_memory_lock = asyncio.Lock()
         self._closed = False
+        self._close_task: Optional[asyncio.Task] = None
         self.audio = AudioStream()
         self.ui_memory_conversation_id: Optional[int] = None
         self.ui_clients: Dict[int, WebSocket] = {}
@@ -809,7 +813,7 @@ class DeviceRuntime:
         try:
             await task
         except asyncio.CancelledError:
-            if asyncio.current_task().cancelling():
+            if not self._closed:
                 raise
         finally:
             self._client_tasks.discard(task)
@@ -826,8 +830,12 @@ class DeviceRuntime:
             self.hand_tracking_thread_local.hands = None
 
     async def close(self):
-        if self._closed:
-            return
+        if (self._close_task is None or self._close_task.cancelled()
+                or (self._close_task.done() and self._close_task.exception() is not None)):
+            self._close_task = asyncio.create_task(self._close_resources())
+        await asyncio.shield(self._close_task)
+
+    async def _close_resources(self):
         self._closed = True
         # 先终止设备上行，旧模型回调完成清理后再结束浏览器和后台任务。
         connections = await asyncio.gather(
@@ -2343,9 +2351,7 @@ class DeviceRuntime:
         self.audio.current_ai_task = task
 
     async def memory_overview(self):
-        """返回当前测试身份的记忆；公网部署前应关闭此调试接口并加入登录鉴权。"""
-        if not MEMORY_DEBUG_API_ENABLED:
-            raise HTTPException(status_code=404, detail="memory debug api disabled")
+        """接口层验证身份后，返回当前设备所属账号的记忆。"""
         context = await self.memory_manager.context_for(self.user_id, self.device_id)
         return {
             "ok": True,
@@ -2355,14 +2361,6 @@ class DeviceRuntime:
             "memories": context["memories"],
             "recent_messages": context["messages"],
         }
-
-    async def clear_memory(self):
-        """清除当前测试身份的记忆，仅用于本地第一阶段调试。"""
-        if not MEMORY_DEBUG_API_ENABLED:
-            raise HTTPException(status_code=404, detail="memory debug api disabled")
-        await asyncio.to_thread(self.memory_manager.store.clear_owner, self.user_id, self.device_id)
-        self.ui_memory_conversation_id = None
-        return {"ok": True}
 
     def repeat_wav(self):
         if not self.latest_repeat_wav:
@@ -2563,10 +2561,11 @@ class DeviceRuntime:
                     pass
 
         async def start_realtime_session() -> bool:
-            nonlocal session, streaming
+            nonlocal session, streaming, memory_context
             if self.translation_active:
                 init_prompt = build_translation_prompt(self.translation_pair)
             else:
+                memory_context = await self.memory_manager.context_for(self.user_id, self.device_id)
                 base_prompt = VISUAL_DIALOG_SYSTEM_PROMPT if self.vision_dialogue_active else SYSTEM_PROMPT
                 init_prompt = _memory_context_prompt(base_prompt, memory_context)
             try:

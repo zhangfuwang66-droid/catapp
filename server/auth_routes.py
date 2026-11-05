@@ -1,6 +1,6 @@
 """网页登录接口。账号通过本机管理工具创建，不提供公开注册。"""
 
-import asyncio
+from async_helpers import run_blocking
 from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -26,7 +26,7 @@ async def mode(request: Request):
 async def login(payload: LoginRequest, request: Request, response: Response):
     require_origin(request)
     try:
-        grant = await asyncio.to_thread(
+        grant = await run_blocking(
             request.app.state.identities.login, payload.username, payload.password,
             client_key=request.client.host if request.client else "unknown",
         )
@@ -36,7 +36,7 @@ async def login(payload: LoginRequest, request: Request, response: Response):
         raise HTTPException(status_code=401, detail="账号或密码错误")
     previous = request.cookies.get(SESSION_COOKIE)
     if previous:
-        await asyncio.to_thread(request.app.state.identities.revoke_session, previous)
+        await run_blocking(request.app.state.identities.revoke_session, previous)
         await request.app.state.connections.revoke_session(previous)
     response.set_cookie(SESSION_COOKIE, grant.token, max_age=7 * 86400, httponly=True,
                         secure=request.url.scheme == "https", samesite="strict", path="/")
@@ -52,7 +52,7 @@ async def session(request: Request, response: Response, user: User = Depends(req
 
 @router.post("/logout")
 async def logout(request: Request, response: Response, user: User = Depends(require_session_write)):
-    await asyncio.to_thread(request.app.state.identities.revoke_session, request.cookies[SESSION_COOKIE])
+    await run_blocking(request.app.state.identities.revoke_session, request.cookies[SESSION_COOKIE])
     await request.app.state.connections.revoke_session(request.cookies[SESSION_COOKIE])
     response.delete_cookie(SESSION_COOKIE, path="/", secure=request.url.scheme == "https", httponly=True, samesite="strict")
     response.headers["Cache-Control"] = "no-store"

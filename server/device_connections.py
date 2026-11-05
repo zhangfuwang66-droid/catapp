@@ -12,6 +12,7 @@ class DeviceConnectionSlot:
         self._lock = asyncio.Lock()
         self._task: Optional[asyncio.Task] = None
         self._closed = False
+        self._stopping: set[asyncio.Task] = set()
         self.cleanup_timeout = cleanup_timeout
 
     async def _stop_previous(self) -> bool:
@@ -19,7 +20,8 @@ class DeviceConnectionSlot:
         if task is None:
             return True
         if not task.done():
-            if not task.cancelling():
+            if task not in self._stopping:
+                self._stopping.add(task)
                 task.cancel()
             done, _ = await asyncio.wait({task}, timeout=self.cleanup_timeout)
             if not done:
@@ -40,11 +42,12 @@ class DeviceConnectionSlot:
             await task
         except asyncio.CancelledError:
             # 被下一条连接替换属于正常退出；服务关闭的取消继续向外传播。
-            if asyncio.current_task().cancelling():
+            if task not in self._stopping:
                 raise
         finally:
             if self._task is task and task.done():
                 self._task = None
+            self._stopping.discard(task)
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(ws.close(code=1000), timeout=1.0)
 

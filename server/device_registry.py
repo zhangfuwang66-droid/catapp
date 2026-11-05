@@ -1,16 +1,30 @@
 """在单个服务进程内管理设备实例；身份认证由接口层执行。"""
 
 import asyncio
+from contextlib import asynccontextmanager
 from typing import Dict
 
 from device_runtime import DeviceRuntime
 from device_identity import validate_device_id
 from memory_store import MemoryManager
 
+
 class DeviceRegistry:
     def __init__(self, memory_manager: MemoryManager):
         self.memory_manager = memory_manager
         self.devices: Dict[str, DeviceRuntime] = {}
+        self._locks: Dict[str, asyncio.Lock] = {}
+
+    @asynccontextmanager
+    async def locked(self, device_id: str):
+        validate_device_id(device_id)
+        lock = self._locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            yield
+
+    async def resolve(self, device_id: str, user_id: str) -> DeviceRuntime:
+        async with self.locked(device_id):
+            return self.get(device_id, user_id)
 
     def get(self, device_id: str, user_id: str) -> DeviceRuntime:
         validate_device_id(device_id)
@@ -20,9 +34,16 @@ class DeviceRegistry:
             self.devices[device_id] = runtime
         elif runtime.user_id != user_id:
             raise ValueError("设备运行身份与当前归属不一致")
+        elif runtime._closed:
+            raise ValueError("设备正在清理，请稍后重试")
         return runtime
 
     async def retire(self, device_id: str):
+        async with self.locked(device_id):
+            await self.retire_locked(device_id)
+
+    async def retire_locked(self, device_id: str):
+        """调用方已持有对应设备锁时使用，避免重连抢先建立新会话。"""
         runtime = self.devices.get(device_id)
         if runtime is not None:
             await runtime.close()

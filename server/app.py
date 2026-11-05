@@ -2,12 +2,14 @@
 
 from contextlib import asynccontextmanager
 import asyncio
+from async_helpers import run_blocking
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field
 from starlette.requests import HTTPConnection
 import uvicorn
 
@@ -17,6 +19,7 @@ from device_runtime import (
     MEMORY_DB_PATH, MEMORY_USER_ID, MEMORY_DEVICE_ID, MEMORY_IDLE_SECONDS,
     MEMORY_POLL_SECONDS, MEMORY_SHUTDOWN_TIMEOUT_SECONDS, RECORDS_DIR,
     DeviceRuntime, summarize_memory_messages, _log_memory_error,
+    MEMORY_DEBUG_API_ENABLED,
 )
 from device_registry import DeviceRegistry
 from index_html import INDEX_HTML
@@ -33,7 +36,7 @@ router = APIRouter()
 async def resolve_runtime(connection: HTTPConnection, *, hardware=False, playback=False) -> DeviceRuntime:
     device_id, user_id = await authorize_runtime(connection, hardware=hardware, playback=playback)
     try:
-        return connection.app.state.devices.get(device_id, user_id)
+        return await connection.app.state.devices.resolve(device_id, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -75,14 +78,30 @@ async def stream_wav(request: Request, runtime: DeviceRuntime = Depends(get_play
 
 @router.get("/api/memory")
 @router.get("/api/devices/{device_id}/memory")
-async def memory_overview(runtime: DeviceRuntime = Depends(get_device_runtime)):
+async def memory_overview(request: Request, runtime: DeviceRuntime = Depends(get_device_runtime)):
+    if request.app.state.access.mode == "local" and not MEMORY_DEBUG_API_ENABLED:
+        raise HTTPException(status_code=404, detail="memory debug api disabled")
     return await runtime.memory_overview()
+
+
+class ClearMemoryRequest(BaseModel):
+    confirm_device_id: str = Field(min_length=1, max_length=64)
 
 
 @router.delete("/api/memory")
 @router.delete("/api/devices/{device_id}/memory")
-async def clear_memory(runtime: DeviceRuntime = Depends(get_device_runtime)):
-    return await runtime.clear_memory()
+async def clear_memory(request: Request, payload: Optional[ClearMemoryRequest] = None,
+                       runtime: DeviceRuntime = Depends(get_device_runtime)):
+    if request.app.state.access.mode == "local" and not MEMORY_DEBUG_API_ENABLED:
+        raise HTTPException(status_code=404, detail="memory debug api disabled")
+    if request.path_params.get("device_id") and (payload is None or payload.confirm_device_id != runtime.device_id):
+        raise HTTPException(status_code=400, detail="请确认要清除记忆的设备编号")
+    registry = request.app.state.devices
+    async with registry.locked(runtime.device_id):
+        await request.app.state.connections.revoke_device(runtime.device_id, code=1012, reason="记忆已清除，请重新连接")
+        await registry.retire_locked(runtime.device_id)
+        await request.app.state.memory_manager.clear_owner(runtime.user_id, runtime.device_id)
+    return {"ok": True, "device_id": runtime.device_id}
 
 
 @router.get("/repeat.wav")
@@ -229,7 +248,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
             await asyncio.sleep(1)
             for device in list(devices.devices.values()):
                 try:
-                    if await asyncio.to_thread(identities.owned_device, device.device_id, device.user_id) is None:
+                    if await run_blocking(identities.owned_device, device.device_id, device.user_id) is None:
                         await connections.revoke_device(device.device_id)
                         await devices.retire(device.device_id)
                 except Exception as exc:

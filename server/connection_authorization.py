@@ -1,6 +1,7 @@
 """持续检查长连接权限，退出或停用后结束相应订阅与音频流。"""
 
 import asyncio
+from async_helpers import run_blocking
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -20,12 +21,12 @@ class DeviceAuthorization:
 
     async def is_valid(self, store: IdentityStore) -> bool:
         if self.kind == "device":
-            device = await asyncio.to_thread(store.credential_device, self.device_id, self.token)
+            device = await run_blocking(store.credential_device, self.device_id, self.token)
             return bool(device and device["owner_user_id"] == self.user_id)
-        user = await asyncio.to_thread(store.session_user, self.token)
+        user = await run_blocking(store.session_user, self.token)
         if user is None or user.id != self.user_id:
             return False
-        return await asyncio.to_thread(store.owned_device, self.device_id, self.user_id) is not None
+        return await run_blocking(store.owned_device, self.device_id, self.user_id) is not None
 
 
 @dataclass(eq=False)
@@ -33,6 +34,7 @@ class ConnectionLease:
     authorization: DeviceAuthorization
     task: asyncio.Task
     ws: Optional[WebSocket] = None
+    stopping: bool = False
 
 
 class ConnectionAuthorizer:
@@ -41,10 +43,11 @@ class ConnectionAuthorizer:
         self.poll_seconds = poll_seconds
         self.leases: set[ConnectionLease] = set()
 
-    async def _stop(self, lease: ConnectionLease):
+    async def _stop(self, lease: ConnectionLease, *, code=4401, reason="连接权限已失效"):
+        lease.stopping = True
         if lease.ws is not None:
             with suppress(Exception):
-                await asyncio.wait_for(lease.ws.close(code=4401, reason="连接权限已失效"), timeout=1)
+                await asyncio.wait_for(lease.ws.close(code=code, reason=reason), timeout=1)
         if not lease.task.done():
             lease.task.cancel()
         await asyncio.gather(lease.task, return_exceptions=True)
@@ -75,7 +78,7 @@ class ConnectionAuthorizer:
         try:
             return await task
         except asyncio.CancelledError:
-            if asyncio.current_task().cancelling():
+            if not lease.stopping:
                 raise
         finally:
             self.leases.discard(lease)
@@ -88,9 +91,9 @@ class ConnectionAuthorizer:
                   and token_digest(lease.authorization.token) == digest]
         await asyncio.gather(*(self._stop(lease) for lease in leases))
 
-    async def revoke_device(self, device_id: str):
+    async def revoke_device(self, device_id: str, *, code=4401, reason="连接权限已失效"):
         leases = [lease for lease in self.leases if lease.authorization.device_id == device_id]
-        await asyncio.gather(*(self._stop(lease) for lease in leases))
+        await asyncio.gather(*(self._stop(lease, code=code, reason=reason) for lease in leases))
 
     async def close(self):
         await asyncio.gather(*(self._stop(lease) for lease in list(self.leases)))

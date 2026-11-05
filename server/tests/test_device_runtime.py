@@ -121,7 +121,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         )
         session._message_task = asyncio.current_task()
         await session.close()
-        self.assertFalse(asyncio.current_task().cancelling())
+        self.assertFalse(getattr(asyncio.current_task(), "cancelling", lambda: 0)())
         child = asyncio.create_task(asyncio.Event().wait())
         session._message_task = child
         await session.close()

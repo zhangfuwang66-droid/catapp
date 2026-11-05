@@ -1,6 +1,6 @@
 """本地兼容范围、服务端登录会话与同源写操作校验。"""
 
-import asyncio
+from async_helpers import run_blocking
 from dataclasses import dataclass
 import ipaddress
 import os
@@ -96,7 +96,7 @@ def require_origin(connection: HTTPConnection):
 
 async def require_session(connection: HTTPConnection) -> User:
     token = connection.cookies.get(SESSION_COOKIE, "")
-    user = await asyncio.to_thread(connection.app.state.identities.session_user, token)
+    user = await run_blocking(connection.app.state.identities.session_user, token)
     if user is None:
         reject(connection, status=401, detail="请先登录，或重新登录已过期的账号")
     if connection.scope["type"] == "websocket":
@@ -129,7 +129,7 @@ async def require_device_credential(connection: HTTPConnection) -> dict:
     except ValueError:
         reject(connection, status=404, detail="设备不存在")
     token = bearer_token(connection)
-    device = await asyncio.to_thread(connection.app.state.identities.credential_device, device_id, token)
+    device = await run_blocking(connection.app.state.identities.credential_device, device_id, token)
     if device is None:
         reject(connection, status=401, detail="设备凭证缺失或无效")
     return device
@@ -157,7 +157,7 @@ async def authorize_runtime(connection: HTTPConnection, *, hardware: bool = Fals
             user = await require_session_write(connection)
         else:
             user = await require_session(connection)
-        device = await asyncio.to_thread(connection.app.state.identities.owned_device, device_id, user.id)
+        device = await run_blocking(connection.app.state.identities.owned_device, device_id, user.id)
         if device is None:
             reject(connection, status=404, detail="设备不存在或无权访问")
         user_id = user.id

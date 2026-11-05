@@ -54,7 +54,10 @@ tar -xzf /tmp/cybermiao-test-source.tgz -C /opt/cybermiao-test/app
 python3.10 -m venv /opt/cybermiao-test/venv
 /opt/cybermiao-test/venv/bin/python -m pip install --require-hashes -r /opt/cybermiao-test/app/server/requirements-linux-py310.lock
 chown -R root:root /opt/cybermiao-test
+chmod -R go-w /opt/cybermiao-test/app
 ```
+
+从 Windows 打包上传的源码可能带有过宽的文件权限。上述命令将测试代码归属 root 并移除组和其他用户的写权限；服务由独立的 `cybermiao-test` 用户运行，Python 字节码也不会写入源码目录。不要将此权限调整用于现有项目或数据目录。
 
 本次测试服务器缺少 `ensurepip`。已在隔离目录使用 `python3.10 -m venv --without-pip /opt/cybermiao-test/venv` 创建环境，并使用已校验 SHA-256 的 pip 25.3 wheel 引导安装，没有安装系统包。需要在同版本环境重做时，可在创建空虚拟环境后执行：
 

@@ -145,6 +145,9 @@ MEMORY_DEVICE_ID = os.getenv("CYBERMIAO_MEMORY_DEVICE_ID", "test-cat-001").strip
 MEMORY_DB_PATH = Path(os.getenv("CYBERMIAO_MEMORY_DB_PATH", str(DATA_ROOT / "memory.sqlite3"))).expanduser()
 MEMORY_IDLE_SECONDS = max(1.0, float(os.getenv("CYBERMIAO_MEMORY_IDLE_SECONDS", "300")))
 MEMORY_POLL_SECONDS = max(1.0, float(os.getenv("CYBERMIAO_MEMORY_POLL_SECONDS", "15")))
+MEMORY_SHUTDOWN_TIMEOUT_SECONDS = max(
+    0.1, float(os.getenv("CYBERMIAO_MEMORY_SHUTDOWN_TIMEOUT_SECONDS", "4"))
+)
 MEMORY_DEBUG_API_ENABLED = os.getenv("CYBERMIAO_MEMORY_DEBUG_API", "1") == "1"
 
 MEMORY_SUMMARY_SYSTEM_PROMPT = """你负责把桌面小猫的一段聊天整理成长期记忆。
@@ -360,7 +363,10 @@ async def start_memory_manager() -> None:
 
 @app.on_event("shutdown")
 async def stop_memory_manager() -> None:
-    await memory_manager.close()
+    try:
+        await memory_manager.flush_pending(timeout=MEMORY_SHUTDOWN_TIMEOUT_SECONDS)
+    finally:
+        await memory_manager.close()
 
 
 @dataclass
@@ -2595,6 +2601,11 @@ async def ws_ui(ws: WebSocket):
         pass
     finally:
         ui_clients.pop(id(ws), None)
+        if not ui_clients and ui_memory_conversation_id is not None:
+            try:
+                await memory_manager.finish_conversation(ui_memory_conversation_id)
+            except Exception as exc:
+                print(f"[MEMORY] UI conversation finish failed: {type(exc).__name__}", flush=True)
 
 
 @app.websocket("/ws_audio")
@@ -3003,7 +3014,14 @@ async def ws_audio(ws: WebSocket):
             pass
         with contextlib.suppress(Exception):
             await asyncio.wait_for(worker_task, timeout=1.5)
-        await stop_session()
+        try:
+            await stop_session()
+        finally:
+            if memory_conversation_id is not None:
+                try:
+                    await memory_manager.finish_conversation(memory_conversation_id)
+                except Exception as exc:
+                    print(f"[MEMORY] audio conversation finish failed: {type(exc).__name__}", flush=True)
         if esp32_audio_ws is ws:
             esp32_audio_ws = None
 

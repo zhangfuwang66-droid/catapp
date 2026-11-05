@@ -20,12 +20,17 @@
 
 每次聊天结束后会重新计时；默认连续空闲 5 分钟，后台任务调用 DashScope 文本模型生成一段摘要，并提取少量稳定事实和未完成话题。下次建立实时会话时只加载摘要、长期记忆和尚未总结的近期消息，不会把完整历史全部塞进模型上下文。
 
+记忆总结还有三个补偿时机：ESP32 音频 WebSocket 断开时会立即安排当前会话总结；网页控制台最后一个连接关闭时也会安排总结；服务正常关闭时会在短时间窗口内冲刷所有未总结会话。关机冲刷等待时间默认 4 秒，可通过 `CYBERMIAO_MEMORY_SHUTDOWN_TIMEOUT_SECONDS` 调整。若总结请求在窗口内没有完成，原始消息会保留，服务下次启动时会自动扫描并补做总结。
+
+突然断电、系统强制结束进程时无法在断电瞬间调用模型，但已经落库的消息不会丢失，下一次启动仍会自动恢复。只有已经写入 SQLite 的消息才能被恢复；尚未写入数据库的内存内容无法补回。
+
 当前阶段还没有登录、真实设备身份或配对协议。可以用以下环境变量区分测试数据：
 
 ```powershell
 $env:CYBERMIAO_MEMORY_USER_ID = 'test-user-001'
 $env:CYBERMIAO_MEMORY_DEVICE_ID = 'test-cat-001'
 $env:CYBERMIAO_MEMORY_IDLE_SECONDS = '300'
+$env:CYBERMIAO_MEMORY_SHUTDOWN_TIMEOUT_SECONDS = '4'
 ```
 
 本地调试时，`GET /api/memory` 可以查看当前测试身份的摘要、长期记忆和未总结消息；`DELETE /api/memory` 会清除这些测试数据。两个接口默认开启，只能在本机或可信局域网使用。部署到公网前必须关闭 `CYBERMIAO_MEMORY_DEBUG_API=0`，并在登录鉴权后重新提供用户级接口。

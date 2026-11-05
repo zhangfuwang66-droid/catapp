@@ -7,7 +7,7 @@ import sys
 import tempfile
 import time
 import traceback
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 def close_gui(gui):
@@ -94,6 +94,20 @@ def run_check(report_path):
             with urlopen(f"http://127.0.0.1:{port}/", timeout=3) as response:
                 assert response.status == 200 and len(response.read()) > 1000
             report["checks"].append("独立服务进程、健康检查和网页")
+            assert Path(server_app.memory_store.path) == data_dir / "memory.sqlite3"
+            memory_conversation = server_app.memory_store.create_conversation(
+                server_app.MEMORY_USER_ID, server_app.MEMORY_DEVICE_ID
+            )
+            server_app.memory_store.append_message(memory_conversation, "user", "冻结版记忆检查")
+            with urlopen(f"http://127.0.0.1:{port}/api/memory", timeout=3) as response:
+                memory_payload = json.loads(response.read())
+            assert memory_payload["ok"] and any(
+                item["content"] == "冻结版记忆检查" for item in memory_payload["recent_messages"]
+            )
+            request = Request(f"http://127.0.0.1:{port}/api/memory", method="DELETE")
+            with urlopen(request, timeout=3) as response:
+                assert json.loads(response.read())["ok"]
+            report["checks"].append("冻结版记忆数据库、接口和清除操作")
             from websockets.sync.client import connect
             with connect(f"ws://127.0.0.1:{port}/ws/viewer", proxy=None):
                 manager.stop_server()

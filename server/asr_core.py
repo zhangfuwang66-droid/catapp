@@ -60,26 +60,26 @@ def _extract_sentence(event_obj: Any) -> Tuple[Optional[str], Optional[bool]]:
 
 INTERRUPT_KEYWORDS = set(os.getenv("INTERRUPT_KEYWORDS", "停下,别说了,停止,闭嘴").split(","))
 
-_current_recognition: Optional[object] = None
-_rec_lock = asyncio.Lock()
+class RecognitionState:
+    """识别器归属单台设备，停止操作不会触及其他设备。"""
 
+    def __init__(self):
+        self.current: Optional[object] = None
+        self._lock = asyncio.Lock()
 
-async def set_current_recognition(recognition):
-    global _current_recognition
-    async with _rec_lock:
-        _current_recognition = recognition
+    async def set_current(self, recognition):
+        async with self._lock:
+            self.current = recognition
 
-
-async def stop_current_recognition():
-    global _current_recognition
-    async with _rec_lock:
-        recognition = _current_recognition
-        _current_recognition = None
-    if recognition:
-        try:
-            recognition.stop()
-        except Exception:
-            pass
+    async def stop_current(self):
+        async with self._lock:
+            recognition = self.current
+            self.current = None
+        if recognition:
+            try:
+                await asyncio.to_thread(recognition.stop)
+            except Exception:
+                pass
 
 
 class ASRCallback:

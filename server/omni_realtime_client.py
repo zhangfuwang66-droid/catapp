@@ -255,22 +255,23 @@ class OmniRealtimeSession:
         self._pending_image_task = None
         task = self._message_task
         self._message_task = None
-        if pending_task is not None and not pending_task.done():
+        current_task = asyncio.current_task()
+        if pending_task is not None and pending_task is not current_task and not pending_task.done():
             pending_task.cancel()
             try:
                 await pending_task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
         if ws is not None and not self._ws_is_closed(ws):
             try:
                 await ws.close()
             except Exception:
                 pass
-        if task is not None and not task.done():
+        if task is not None and task is not current_task and not task.done():
             task.cancel()
             try:
                 await task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
         await self._debug("session closed")
 

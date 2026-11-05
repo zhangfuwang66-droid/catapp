@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# httptools 0.9.0 is not available as a CPython 3.10 Linux x86_64 wheel.
+httptools==0.6.4

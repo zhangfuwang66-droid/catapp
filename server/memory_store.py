@@ -223,6 +223,27 @@ class MemoryStore:
             finally:
                 connection.close()
 
+    def pending_conversation_ids(self) -> List[int]:
+        """返回所有仍有未总结消息的会话，供进程启动恢复使用。"""
+        with self._lock:
+            connection = self._connect()
+            try:
+                rows = connection.execute(
+                    """
+                    SELECT c.id
+                    FROM conversations AS c
+                    WHERE EXISTS (
+                        SELECT 1 FROM messages AS m
+                        WHERE m.conversation_id = c.id
+                          AND m.id > c.summarized_through_message_id
+                    )
+                    ORDER BY c.id
+                    """
+                ).fetchall()
+                return [int(row[0]) for row in rows]
+            finally:
+                connection.close()
+
     def save_summary(
         self,
         conversation_id: int,
@@ -423,6 +444,47 @@ class MemoryManager:
         if self._maintenance_task is None or self._maintenance_task.done():
             self._closed = False
             self._maintenance_task = asyncio.create_task(self._maintenance_loop())
+            await self.recover_pending()
+
+    async def recover_pending(self) -> None:
+        """服务重新启动后立即安排所有未总结会话，不依赖上次空闲计时器。"""
+        conversation_ids = await asyncio.to_thread(self.store.pending_conversation_ids)
+        for conversation_id in conversation_ids:
+            self._schedule_summary(conversation_id, 0)
+
+    async def finish_conversation(self, conversation_id: int) -> None:
+        """连接断开或页面关闭时立即安排一次总结。"""
+        self._schedule_summary(conversation_id, 0)
+
+    async def flush_pending(self, timeout: float = 4.0) -> None:
+        """在正常关机的短窗口内冲刷未总结消息；超时则留给下次启动恢复。"""
+        conversation_ids = await asyncio.to_thread(self.store.pending_conversation_ids)
+        if not conversation_ids:
+            return
+        to_cancel = []
+        for conversation_id in conversation_ids:
+            task = self._summary_tasks.pop(conversation_id, None)
+            if task is not None and not task.done():
+                task.cancel()
+                to_cancel.append(task)
+        if to_cancel:
+            await asyncio.gather(*to_cancel, return_exceptions=True)
+        tasks = [asyncio.create_task(self.summarize_now(conversation_id)) for conversation_id in conversation_ids]
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=max(0.1, timeout),
+            )
+            for result in results:
+                if isinstance(result, Exception) and self.on_error is not None:
+                    self.on_error(result)
+        except asyncio.TimeoutError:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            if self.on_error is not None:
+                self.on_error(TimeoutError("关机前记忆总结超时，将在下次启动时重试"))
 
     async def close(self) -> None:
         self._closed = True

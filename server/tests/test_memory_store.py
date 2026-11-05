@@ -85,7 +85,7 @@ class MemoryManagerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(store.context_for("user-a", "cat-a")["summaries"]), 2)
             await manager.close()
 
-    async def test_startup_scan_recovers_idle_conversation(self):
+    async def test_startup_scan_recovers_pending_conversation_without_waiting_for_idle(self):
         with tempfile.TemporaryDirectory(prefix="小喵 memory ") as directory:
             store = MemoryStore(Path(directory) / "memory.sqlite3")
             conversation = store.create_conversation("user-a", "cat-a")
@@ -96,10 +96,47 @@ class MemoryManagerTests(unittest.IsolatedAsyncioTestCase):
                 calls.append(messages[0]["content"])
                 return SummaryResult(summary="服务重启前的对话摘要。")
 
-            manager = MemoryManager(store, summarize, idle_seconds=0, poll_seconds=0.01)
+            manager = MemoryManager(store, summarize, idle_seconds=300, poll_seconds=0.01)
             await manager.start()
             await asyncio.sleep(0.08)
             self.assertEqual(calls, ["服务重启前的消息"])
+            self.assertEqual(store.pending_messages(conversation), [])
+            await manager.close()
+
+    async def test_finish_conversation_summarizes_immediately(self):
+        with tempfile.TemporaryDirectory(prefix="小喵 memory ") as directory:
+            store = MemoryStore(Path(directory) / "memory.sqlite3")
+            calls = []
+
+            async def summarize(messages):
+                calls.append([item["content"] for item in messages])
+                return SummaryResult(summary="设备断开前的对话摘要。")
+
+            manager = MemoryManager(store, summarize, idle_seconds=300, poll_seconds=0.01)
+            await manager.start()
+            conversation = await manager.start_conversation("user-a", "cat-a")
+            await manager.record_message(conversation, "user", "设备即将断开")
+            await manager.finish_conversation(conversation)
+            await asyncio.sleep(0.08)
+            self.assertEqual(calls, [["设备即将断开"]])
+            self.assertEqual(store.pending_messages(conversation), [])
+            await manager.close()
+
+    async def test_flush_pending_summarizes_before_close(self):
+        with tempfile.TemporaryDirectory(prefix="小喵 memory ") as directory:
+            store = MemoryStore(Path(directory) / "memory.sqlite3")
+            calls = []
+
+            async def summarize(messages):
+                calls.append(messages[0]["content"])
+                return SummaryResult(summary="服务正常关闭前的摘要。")
+
+            manager = MemoryManager(store, summarize, idle_seconds=300, poll_seconds=0.01)
+            await manager.start()
+            conversation = await manager.start_conversation("user-a", "cat-a")
+            await manager.record_message(conversation, "user", "服务准备正常关闭")
+            await manager.flush_pending(timeout=1)
+            self.assertEqual(calls, ["服务准备正常关闭"])
             self.assertEqual(store.pending_messages(conversation), [])
             await manager.close()
 

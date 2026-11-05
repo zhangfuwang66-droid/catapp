@@ -37,6 +37,7 @@ build/
 
 # Runtime-generated data (record analysis screenshots, TTS diagnostics, hand-tracking model)
 records/
+memory.sqlite3*
 audio_diagnostics/
 models/
 

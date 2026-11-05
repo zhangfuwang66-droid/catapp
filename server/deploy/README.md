@@ -47,7 +47,7 @@ tar --exclude=.git --exclude='*/.venv' --exclude='*/.env' --exclude='*/.env.*' -
 scp $env:TEMP\cybermiao-test-source.tgz root@123.57.23.227:/tmp/
 ```
 
-在服务器上解包并创建环境：
+在服务器上解包并创建环境。系统需具备 Python 3.10 的 `venv` 和 `ensurepip`（Ubuntu 上通常来自 `python3.10-venv`）；若缺少，不要直接更改系统软件包，先确认安装方式：
 
 ```bash
 tar -xzf /tmp/cybermiao-test-source.tgz -C /opt/cybermiao-test/app
@@ -56,6 +56,18 @@ python3.10 -m venv /opt/cybermiao-test/venv
 chown -R root:root /opt/cybermiao-test
 ```
 
+本次测试服务器缺少 `ensurepip`。已在隔离目录使用 `python3.10 -m venv --without-pip /opt/cybermiao-test/venv` 创建环境，并使用已校验 SHA-256 的 pip 25.3 wheel 引导安装，没有安装系统包。需要在同版本环境重做时，可在创建空虚拟环境后执行：
+
+```bash
+curl --fail --location --output /opt/cybermiao-test/pip-25.3-py3-none-any.whl https://files.pythonhosted.org/packages/44/3c/d717024885424591d5376220b5e836c2d5293ce2011523c9de23ff7bf068/pip-25.3-py3-none-any.whl
+echo '9655943313a94722b7774661c21049070f6bbb0a1516bf02f7c8d5d9201514cd  /opt/cybermiao-test/pip-25.3-py3-none-any.whl' | sha256sum -c -
+PYTHONPATH=/opt/cybermiao-test/pip-25.3-py3-none-any.whl /opt/cybermiao-test/venv/bin/python -m pip install --no-index --no-deps /opt/cybermiao-test/pip-25.3-py3-none-any.whl
+/opt/cybermiao-test/venv/bin/python -m pip install --require-hashes -r /opt/cybermiao-test/app/server/requirements-linux-py310.lock
+/opt/cybermiao-test/venv/bin/python -m pip check
+```
+
+仅在校验成功时继续执行安装。依赖下载需要能够访问对应 Python 包索引。
+
 安装通过锁定文件固定全部依赖版本与哈希。`requirements-linux-py310.in` 在共享依赖之上增加 Linux/Python 3.10 的平台约束；依赖清单变更后，需要从 `server` 目录重新生成并在 Linux x86_64 / Python 3.10 目标下验证锁文件，再上传部署：
 
 ```powershell
@@ -63,6 +75,27 @@ uv pip compile --python-version 3.10 --python-platform x86_64-manylinux_2_17 --g
 ```
 
 安装完成后可删除 `/tmp/cybermiao-test-source.tgz`。OpenCV、MediaPipe 及其依赖会占用较多磁盘空间，安装前先检查实际可用空间。
+
+### Ubuntu 22.04 的隔离图形运行库
+
+本次 Ubuntu 22.04 x86_64 服务器缺少 `libGL.so.1`，会导致 OpenCV 和 MediaPipe 无法导入。以下操作从 Ubuntu 已配置的软件源下载三个运行库，只解包到测试目录，不安装系统包。校验值针对 Ubuntu 22.04 的 `1.4.0-1` amd64 包；如果来源、版本或架构不同，应先核对对应软件源的签名索引和哈希，不要照搬：
+
+```bash
+install -d -m 0755 /opt/cybermiao-test/native/debs /opt/cybermiao-test/native/root
+cd /opt/cybermiao-test/native/debs
+apt-get download libgl1=1.4.0-1 libglx0=1.4.0-1 libglvnd0=1.4.0-1
+sha256sum -c <<'SHA256'
+4fb2bbff94bb1a59bbdb40041e7a8ab58db2a003a151f4055357af03f0b78666  libgl1_1.4.0-1_amd64.deb
+950068e8a3ad3905058d21a8c870c37989e48c0a537a7c57231c277af19f5395  libglx0_1.4.0-1_amd64.deb
+6956d8be93b160b439a043141a061adfd54561d877423a956ace84d2fb3bfb4e  libglvnd0_1.4.0-1_amd64.deb
+SHA256
+dpkg-deb -x libgl1_1.4.0-1_amd64.deb /opt/cybermiao-test/native/root
+dpkg-deb -x libglx0_1.4.0-1_amd64.deb /opt/cybermiao-test/native/root
+dpkg-deb -x libglvnd0_1.4.0-1_amd64.deb /opt/cybermiao-test/native/root
+sudo -u cybermiao-test env LD_LIBRARY_PATH=/opt/cybermiao-test/native/root/usr/lib/x86_64-linux-gnu MPLBACKEND=Agg MPLCONFIGDIR=/var/lib/cybermiao-test/matplotlib OPENBLAS_NUM_THREADS=1 /opt/cybermiao-test/venv/bin/python -c 'import cv2, mediapipe, numpy; print(cv2.__version__, mediapipe.__version__, numpy.__version__)'
+```
+
+仅在全部哈希校验成功后解包。服务文件通过 `LD_LIBRARY_PATH` 使用上述目录，并将 Matplotlib 缓存放在独立数据目录。该验证覆盖导入和基本图片编解码，未验证 GPU、显示窗口或实际摄像头。
 
 ## 安全录入 API Key
 
@@ -81,7 +114,7 @@ unset key
 
 ## 初始化独立数据库和账号
 
-以下命令在服务启动前执行一次。密码由终端隐藏输入，不要放在 shell 历史或聊天中；设备凭证只保存到私密文件，尚未写入固件。
+以下命令在服务启动前执行一次。`init` 只允许创建不存在的新数据库；导入 `app` 也可能创建数据库，如果数据库已存在，先使用 `inspect` 检查，切勿覆盖。密码由终端隐藏输入，不要放在 shell 历史或聊天中；设备凭证只保存到私密文件，尚未写入固件。
 
 ```bash
 install -d -o cybermiao-test -g cybermiao-test -m 0700 /var/lib/cybermiao-test/provision

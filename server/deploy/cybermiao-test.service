@@ -20,6 +20,9 @@ Environment=QWEN_REALTIME_MODEL=qwen3.8-omni-flash-realtime
 Environment=QWEN_REALTIME_VOICE=Tina
 Environment=HAND_TRACKING_ENABLED=0
 Environment=MPLBACKEND=Agg
+Environment=MPLCONFIGDIR=/var/lib/cybermiao-test/matplotlib
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=LD_LIBRARY_PATH=/opt/cybermiao-test/native/root/usr/lib/x86_64-linux-gnu
 ExecStart=/opt/cybermiao-test/venv/bin/python /opt/cybermiao-test/app/server/cloud_test_entry.py
 Restart=on-failure
 RestartSec=5

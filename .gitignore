@@ -38,6 +38,9 @@ build/
 # Runtime-generated data (record analysis screenshots, TTS diagnostics, hand-tracking model)
 records/
 memory.sqlite3*
+*.sqlite3
+*.sqlite3-*
+cybermiao-*.json
 audio_diagnostics/
 models/
 

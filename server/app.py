@@ -2,6 +2,7 @@
 
 from contextlib import asynccontextmanager
 import asyncio
+import sqlite3
 from async_helpers import run_blocking
 from typing import Any, Dict, Optional
 
@@ -25,6 +26,8 @@ from device_runtime import (
 from device_registry import DeviceRegistry
 from web_pages import WEB_ROOT, console_html, portal_html
 from memory_store import MemoryManager, MemoryStore
+from database_backups import BackupSettings, DatabaseBackups
+from tools.memory_database import check_database_ready
 from identity_store import IdentityStore
 from access_control import AccessSettings, LocalAccessMiddleware, authorize_runtime, require_session
 from connection_authorization import ConnectionAuthorizer, AuthorizedStreamingResponse
@@ -83,6 +86,15 @@ async def device_console(device_id: str, request: Request):
 @router.get("/api/health", response_class=PlainTextResponse)
 def health():
     return "OK"
+
+
+@router.get("/api/ready", response_class=PlainTextResponse)
+async def ready(request: Request):
+    try:
+        await run_blocking(check_database_ready, request.app.state.memory_manager.store.path)
+    except (OSError, ValueError, sqlite3.Error):
+        return PlainTextResponse("NOT READY", status_code=503, headers={"Cache-Control": "no-store"})
+    return PlainTextResponse("OK", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/stream.wav")
@@ -249,7 +261,7 @@ def get_index_html():
 
 
 def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memory_messages,
-               access: Optional[AccessSettings] = None) -> FastAPI:
+               access: Optional[AccessSettings] = None, backup_settings: Optional[BackupSettings] = None) -> FastAPI:
     manager = MemoryManager(
         store if store is not None else MemoryStore(MEMORY_DB_PATH),
         summarizer, idle_seconds=MEMORY_IDLE_SECONDS, poll_seconds=MEMORY_POLL_SECONDS,
@@ -259,6 +271,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     access = access if access is not None else AccessSettings.from_environment()
     identities = IdentityStore(manager.store.path)
     connections = ConnectionAuthorizer(identities)
+    backups = DatabaseBackups(manager.store.path, backup_settings if backup_settings is not None else BackupSettings.from_environment())
 
     async def cleanup_revoked_devices():
         while True:
@@ -274,6 +287,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     @asynccontextmanager
     async def lifespan(application):
         await manager.start()
+        await backups.start()
         cleanup_task = asyncio.create_task(cleanup_revoked_devices()) if access.mode == "accounts" else None
         try:
             yield
@@ -286,7 +300,10 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
                 await devices.close()
                 await manager.flush_pending(timeout=MEMORY_SHUTDOWN_TIMEOUT_SECONDS)
             finally:
-                await manager.close()
+                try:
+                    await manager.close()
+                finally:
+                    await backups.close()
 
     application = FastAPI(lifespan=lifespan)
 
@@ -299,6 +316,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.state.access = access
     application.state.identities = identities
     application.state.connections = connections
+    application.state.database_backups = backups
     application.state.default_user_id = MEMORY_USER_ID
     application.state.default_device_id = MEMORY_DEVICE_ID
     application.include_router(router)

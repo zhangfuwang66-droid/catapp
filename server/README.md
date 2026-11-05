@@ -55,6 +55,37 @@ python server/tools/memory_database.py backup --database artifacts/data/memory.s
 
 `inspect` 还会检查账号/设备表、外键、事实归属、总结消息边界和真实账号与设备归属，输出各组件版本、身份表数量、待总结会话数以及数据库/WAL/可复用空间和磁盘剩余空间。只报告数量和状态，不输出聊天、账号、密码哈希或令牌；遇到关系异常会失败，供部署前人工处理。
 
+### 自动备份与运行检查
+
+自动备份默认关闭。设置备份目录后，后端在生命周期内启动后台备份任务，仍使用一个 Uvicorn worker。从仓库根目录启动开发服务前可配置：
+
+```powershell
+$env:CYBERMIAO_BACKUP_DIR = Join-Path (Get-Location) 'artifacts/backups/automatic'
+```
+
+首次没有有效备份时立即生成；重启会校验已有快照，距离最新备份未满间隔时继续等待。以下环境变量均可选：
+
+- `CYBERMIAO_BACKUP_INTERVAL_SECONDS`：默认 `21600`，即 6 小时；环境配置至少 60 秒。
+- `CYBERMIAO_BACKUP_KEEP`：默认保留最新 `28` 份有效快照，正常连续运行时约 7 天；这是数量限制，不是按日期保留承诺。
+- `CYBERMIAO_BACKUP_MIN_FREE_MB`：默认 `256`，创建前还额外预留两倍数据库逻辑大小的空间。空间不足时保留原数据库与现有备份，暂缓生成。
+- `CYBERMIAO_BACKUP_TIMEOUT_SECONDS`：SQLite 复制阶段默认限时 `30` 秒；校验、磁盘 I/O 与线程清理仍需时间，不是整个任务的硬截止时间。
+
+每份独立的 `.sqlite3` 快照带有 `.json` 清单，记录 SHA-256、时间、大小、组件版本和表数量，不含聊天、账号或凭证正文。快照包含完整数据库，必须私密保存；Windows 依赖目录 ACL，Linux 新建文件只允许属主读写。清单以同盘硬链接发布，备份目录需支持硬链接。
+
+只轮换严格符合自动备份命名、同一源数据库路径、清单和 SHA-256 校验的快照；手工备份、其他源数据库、损坏或不完整记录不会自动删除。更换源库路径会开始新的备份序列，旧序列需另行管理。降低保留数量后，下一轮即使无需新建快照，也会执行轮换。失败会记录异常类型并在最多 60 秒后重试；普通日志不包含原始异常正文。
+
+以下命令只读检查同源自动备份；源数据库丢失时仍可列出备份，不会重建数据库：
+
+```powershell
+python server/tools/memory_database.py backup-status --database artifacts/data/memory.sqlite3 --directory artifacts/backups/automatic
+```
+
+返回 `valid_backups`、`skipped_unverified` 和最新备份的文件名、时间戳、SHA-256。`ok` 表示检查执行成功；`valid_backups=0` 表示没有可用快照，不能据此认定备份健康。有跳过记录时需管理员检查目录。同机、同盘备份不能抵御整机或磁盘故障，实际云端部署还需异机复制与恢复演练，本轮没有配置外部上传。
+
+`GET /api/health` 继续只表示服务响应；新增 `GET /api/ready` 只读检查数据库可访问、组件版本、必需表和列：可用返回 `200 OK`，失败返回 `503 NOT READY`，不暴露内部细节。它不是完整性巡检，也不保证写入、备份或模型连接正常；完整检查仍用 `inspect`。
+
+清除设备记忆只影响当前数据库，历史快照中的旧内容会保留到轮换或管理员单独处理。停用自动备份可清空 `CYBERMIAO_BACKUP_DIR` 后重启后端，已有快照保留。
+
 ### 恢复演练与正式恢复
 
 先保存备份命令返回的 SHA-256 到独立记录。恢复默认只读预览，不创建目标目录：

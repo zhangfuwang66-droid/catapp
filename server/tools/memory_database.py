@@ -48,6 +48,19 @@ def open_readonly(database: Path) -> sqlite3.Connection:
     return connection
 
 
+def check_database_ready(database: Path):
+    """就绪探针只检查可读和必需表，不全表扫描，不把详情暴露给公网。"""
+    connection = open_readonly(database)
+    try:
+        connection.execute("BEGIN")
+        validate_versions(connection)
+        validate_columns(connection, {**MEMORY_COLUMNS, **IDENTITY_COLUMNS})
+        for table in (*MEMORY_COLUMNS, *IDENTITY_COLUMNS):
+            connection.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone()
+    finally:
+        connection.close()
+
+
 def inspect_database(database: Path) -> dict:
     database = database.expanduser().resolve(strict=True)
     connection = open_readonly(database)
@@ -228,6 +241,18 @@ def restore_database(backup: Path, output: Path, expected_sha256: str, *, apply:
             raise
 
 
+def backup_status(database: Path, directory: Path):
+    # 延迟导入，避免自动备份服务与运维工具的模块导入互相依赖。
+    from database_backups import BackupRepository, BackupSettings
+    repository = BackupRepository(database, BackupSettings(directory))
+    entries, skipped = repository.verified_entries()
+    latest = None
+    if entries:
+        created, path, _ = entries[-1]
+        latest = {"file": path.name, "created_at": created, "sha256": file_sha256(path)}
+    return {"ok": True, "valid_backups": len(entries), "skipped_unverified": skipped, "latest": latest}
+
+
 def main(arguments: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -242,9 +267,14 @@ def main(arguments: list[str] | None = None) -> int:
     restore.add_argument("--sha256", required=True)
     restore.add_argument("--apply", action="store_true")
     restore.add_argument("--confirm-service-stopped", action="store_true")
+    status = subparsers.add_parser("backup-status", help="只读检查自动备份数量与最新校验值")
+    status.add_argument("--database", required=True, type=Path)
+    status.add_argument("--directory", required=True, type=Path)
     options = parser.parse_args(arguments)
     try:
-        if options.command == "restore":
+        if options.command == "backup-status":
+            report = backup_status(options.database, options.directory)
+        elif options.command == "restore":
             report = restore_database(options.backup, options.output, options.sha256,
                                       apply=options.apply, offline=options.confirm_service_stopped)
         elif options.command == "init":

@@ -1,6 +1,7 @@
 """持续检查长连接权限，退出或停用后结束相应订阅与音频流。"""
 
 import asyncio
+import anyio
 from async_helpers import run_blocking
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -83,7 +84,10 @@ class ConnectionAuthorizer:
         finally:
             self.leases.discard(lease)
             watcher.cancel()
-            await asyncio.gather(watcher, return_exceptions=True)
+            # ASGI 的取消域会重复取消；等待巡检任务清理时保留外层取消原因，
+            # 避免 gather 将其替换成子任务自身的无来源 CancelledError。
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(watcher, return_exceptions=True)
 
     async def revoke_session(self, token: str):
         digest = token_digest(token)

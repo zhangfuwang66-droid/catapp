@@ -13,6 +13,8 @@
 #include <WebServer.h>
 #include <cstring>
 #include <esp_camera.h>
+#include "DeviceConfig.h"
+#include "DeviceProvisioning.h"
 
 // 串口日志总开关。播放 TTS 期间，Serial.print 在 USB-CDC / UART 上是同步写入，
 // 即便是 115200 波特率下一行几十字节也可能阻塞 task 1-5ms，足以让 I2S 的 DMA
@@ -33,9 +35,6 @@
 using namespace websockets;
 
 namespace {
-constexpr const char* WIFI_SSID = "DESKTOP-PE4349U 4243";
-constexpr const char* WIFI_PASS = "99999999";
-constexpr const char* SERVER_HOST = "10.192.11.10";
 constexpr uint16_t SERVER_PORT = 8081;
 constexpr const char* CAM_WS_PATH = "/ws/camera";
 constexpr const char* AUD_WS_PATH = "/ws_audio";
@@ -169,7 +168,7 @@ constexpr int8_t WIFI_TX_POWER_TTS_DBM = 11;      // ~WIFI_POWER_11dBm
 // === 配网模式 ===
 // 启动后若在 AP_TIMEOUT_MS 内没连上 WiFi，就开一个软 AP 热点 + 网页门户让用户
 // 输入新的 WiFi 凭据；凭据存进 NVS(Preferences)，下次开机优先用 NVS 里的，没有
-// 再用下面 WIFI_SSID/WIFI_PASS 硬编码值兜底。
+// 没有保存的配置时进入设备热点，不在源码中保存网络密码。
 constexpr const char* AP_CONFIG_SSID = "CyberMiao-Setup";   // 配网热点名
 constexpr const char* AP_CONFIG_PASS = "";                  // 留空 = 开放热点
 constexpr uint32_t AP_CONFIG_TIMEOUT_MS = 30000;            // 连不上 30 秒后进配网
@@ -256,6 +255,8 @@ I2SClass i2sOut;
 WebsocketsClient wsCam;
 WebsocketsClient wsAud;
 WiFiClient ttsClient;
+DeviceConfig deviceConfig;
+DeviceProvisioning provisioning(Serial, deviceConfig);
 
 typedef camera_fb_t* fb_ptr_t;
 QueueHandle_t qFrames = nullptr;
@@ -313,8 +314,7 @@ volatile uint8_t speakerVolumePercent = 78;
 
 // === 配网相关全局状态 ===
 // 前移至此定义：taskHttpPlay / maintainSockets 等较早的函数会用到 cfgServerHost，
-// C++ 需先声明后使用。凭据存 NVS，开机优先读 NVS，没有则回退硬编码。
-Preferences wifiPrefs;
+// C++ 需先声明后使用。凭据只存 NVS；无配置时进入配置热点。
 WebServer apWebServer(80);
 DNSServer apDnsServer;
 bool apConfigMode = false;
@@ -1755,14 +1755,14 @@ void taskHttpPlay(void*) {
     }
 
     ttsClient.stop();
-    if (!ttsClient.connect(cfgServerHost.c_str(), SERVER_PORT)) {
+    if (!ttsClient.connect(cfgServerHost.c_str(), deviceConfig.network().port)) {
       ttsAudioAvailable = false;
       micEnabled = true;
       delay(300);
       continue;
     }
     String request = String("GET /stream.wav HTTP/1.1\r\n") +
-                     "Host: " + cfgServerHost + ":" + String(SERVER_PORT) + "\r\n" +
+                     "Host: " + cfgServerHost + ":" + String(deviceConfig.network().port) + "\r\n" +
                      "Connection: close\r\n\r\n";
     ttsClient.print(request);
 
@@ -2651,7 +2651,7 @@ void setupWebSocketCallbacks() {
 }
 
 // ===================== 配网模式（AP + Captive Portal） =====================
-// 凭据存 NVS：开机优先用 NVS，没有则回退到硬编码 WIFI_SSID/WIFI_PASS。
+// 凭据只从 NVS 读取，没有配置时进入设备热点。
 // 连不上超过 AP_CONFIG_TIMEOUT_MS 后开软 AP 热点，手机连热点即弹配网页。
 // 全局变量 wifiPrefs/apWebServer/apDnsServer/apConfigMode/bootStartMs/cfgSsid/cfgPass/cfgServerHost
 // 已前移到文件顶部全局变量区（speakerVolumePercent 之后），避免较早函数引用不到。
@@ -2720,46 +2720,18 @@ function showHint(t){var h=document.getElementById('hint');h.textContent=t;h.sty
 </html>
 )rawliteral";
 
-// 清洗服务器地址：去掉 http:// 前缀、:端口、/路径、首尾空格，
-// 只保留纯主机名或 IPv4。用户在配网页可能误填 "http://192.168.1.100" 或
-// "192.168.1.100:8081"，不洗掉会导致 connect() 把整串当域名而连不上。
-String sanitizeHost(String h) {
-  h.trim();
-  if (h.startsWith("http://")) h = h.substring(7);
-  else if (h.startsWith("https://")) h = h.substring(8);
-  int slash = h.indexOf('/');
-  if (slash > 0) h = h.substring(0, slash);
-  int colon = h.indexOf(':');
-  if (colon > 0) h = h.substring(0, colon);
-  h.trim();
-  return h;
-}
-
 void loadWiFiConfig() {
-  wifiPrefs.begin(NVS_NS_WIFI, false);
-  cfgSsid = wifiPrefs.getString(NVS_KEY_SSID, "");
-  cfgPass = wifiPrefs.getString(NVS_KEY_PASS, "");
-  cfgServerHost = sanitizeHost(wifiPrefs.getString(NVS_KEY_HOST, ""));
-  wifiPrefs.end();
-  if (cfgSsid.length() == 0) {
-    cfgSsid = WIFI_SSID;
-    cfgPass = WIFI_PASS;
-    LOGLN("[WIFI] no saved config, using hardcoded credentials");
-  } else {
-    LOGF("[WIFI] using saved config: %s\n", cfgSsid.c_str());
-  }
-  if (cfgServerHost.length() == 0) {
-    cfgServerHost = SERVER_HOST;
-  }
-  LOGF("[WIFI] server host: %s\n", cfgServerHost.c_str());
+  if (!deviceConfig.begin()) { LOGLN("[CONFIG] invalid saved config; setup required"); return; }
+  cfgSsid = deviceConfig.network().ssid;
+  cfgPass = deviceConfig.network().password;
+  cfgServerHost = deviceConfig.network().host;
+  LOGLN("[CONFIG] saved configuration loaded");
 }
 
-void saveWiFiConfig(const String& ssid, const String& pass, const String& host) {
-  wifiPrefs.begin(NVS_NS_WIFI, false);
-  wifiPrefs.putString(NVS_KEY_SSID, ssid);
-  wifiPrefs.putString(NVS_KEY_PASS, pass);
-  wifiPrefs.putString(NVS_KEY_HOST, host);
-  wifiPrefs.end();
+bool saveWiFiConfig(const String& ssid, const String& pass, const String& host, String& error) {
+  DeviceNetworkConfig candidate = deviceConfig.network();
+  candidate.ssid = ssid; candidate.password = pass;
+  return DeviceConfig::parseServerUrl(host, candidate, error) && deviceConfig.saveNetwork(candidate, error);
 }
 
 void handleApRoot() {
@@ -2784,13 +2756,14 @@ void handleApScan() {
 void handleApConnect() {
   String ssid = apWebServer.arg("ssid");
   String pass = apWebServer.arg("pass");
-  String host = sanitizeHost(apWebServer.arg("host"));
+  String host = apWebServer.arg("host");
   ssid.trim();
   if (ssid.length() == 0) {
     apWebServer.send(400, "text/plain", "SSID 不能为空");
     return;
   }
-  saveWiFiConfig(ssid, pass, host);
+  String error;
+  if (!saveWiFiConfig(ssid, pass, host, error)) { apWebServer.send(400, "text/plain", error); return; }
   cfgSsid = ssid;
   cfgPass = pass;
   if (host.length() > 0) cfgServerHost = host;
@@ -2893,11 +2866,12 @@ void serveApConfig() {
 }
 
 void connectWiFi() {
+  if (!cfgSsid.length() || !cfgServerHost.length()) { startApConfigMode(); return; }
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   lastWiFiRetryMs = millis();
   lastWiFiStatus = WiFi.status();
-  LOGF("[WIFI] connect request sent to %s\n", cfgSsid.c_str());
+  LOGLN("[WIFI] connecting with saved configuration");
   WiFi.begin(cfgSsid.c_str(), cfgPass.c_str());
 }
 
@@ -2936,19 +2910,21 @@ void maintainWiFi() {
 
 void maintainSockets() {
   if (apConfigMode) return;  // 配网模式下不尝试连接 server
+  // 新身份与 TLS 连接将在下一项改动接入；不会回退匿名或明文。
+  if (deviceConfig.network().accounts || deviceConfig.network().tls) return;
   uint32_t now = millis();
   if (WiFi.status() != WL_CONNECTED) return;
 
   if (!wsCam.available() && now - lastCamRetryMs >= 2000) {
     lastCamRetryMs = now;
-    if (wsCam.connect(cfgServerHost.c_str(), SERVER_PORT, CAM_WS_PATH)) {
+    if (wsCam.connect(cfgServerHost.c_str(), deviceConfig.network().port, CAM_WS_PATH)) {
       LOGLN("[WS-CAM] connect request sent");
     }
   }
 
   if (!wsAud.available() && now - lastAudRetryMs >= 3000) {
     lastAudRetryMs = now;
-    if (wsAud.connect(cfgServerHost.c_str(), SERVER_PORT, AUD_WS_PATH)) {
+    if (wsAud.connect(cfgServerHost.c_str(), deviceConfig.network().port, AUD_WS_PATH)) {
       LOGLN("[WS-AUD] connect request sent");
     }
   }
@@ -3091,6 +3067,9 @@ void setup() {
 }
 
 void loop() {
+  provisioning.poll();
+  if (provisioning.shouldReboot()) ESP.restart();
+  if (provisioning.takeSetupRequest()) startApConfigMode();
   maintainWiFi();
   serviceDirectPoseControl();
   scheduleIdleActionIfNeeded();

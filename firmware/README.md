@@ -26,3 +26,11 @@ Arduino 草图的文件夹名与 `.ino` 文件名保持一致。烧录步骤见 
 首次编译需准备库与核心缓存，可能耗时数分钟。第三方 ArduinoWebsockets 与 ESP32Servo 在当前核心下有弃用警告，本次没有编译错误。编译通过只证明源码可构建，运行表现仍需实物联调。
 
 完整设备备份位置、校验结果及恢复注意事项见[第二阶段联调记录](../docs/第二阶段联调记录.md)。固件镜像和设备备份均留在已忽略的 `artifacts/`，不提交 Git。
+
+## 第二阶段开发中
+
+主草图增加 `DeviceConfig` 与 `DeviceProvisioning` 模块：芯片派生的稳定编号、独立 NVS 身份、服务器协议/主机/端口、兼容读取旧 Wi-Fi 配置，以及 USB 状态查询和凭证配发。工具与模拟串口测试在 `tools/`、`tests/`，操作说明见 [USB 配置说明](tools/README.md)。
+
+目前只是离线配置基础，账号连接与 TLS 尚待接入，未写入实物。2026-11-05 按原 8MB/OPI/自定义分区配置编译通过：程序 `1224982 / 2621440` 字节，静态变量 `99572 / 327680` 字节；六项 USB 工具模拟测试通过。接线、角度限制和分区表已与基线比对一致。实际重启持久化和语音表现需要后续实物验证。
+
+本机命令可加 `--config-file 'C:\Users\20388\.arduinoIDE\arduino-cli.yaml'` 使用已安装的核心与 `D:\document\Arduino\libraries`，把 `--build-path` 改为 `artifacts/build/firmware-phase2` 区分新固件；仅执行 `compile` 不会访问串口或烧录设备。

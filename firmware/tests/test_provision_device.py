@@ -1,0 +1,101 @@
+"""USB 配发工具使用模拟串口，验证分片、编号核对和私密输出；不打开设备。"""
+
+from contextlib import redirect_stdout, redirect_stderr
+import io
+import json
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from provision_device import PREFIX, ProvisioningClient, ProvisioningError, main, validate_server_url
+
+
+class FakeSerial:
+    def __init__(self, *, device_id="cat-112233445566", reject=False):
+        self.device_id = device_id
+        self.reject = reject
+        self.writes = []
+        self.pending = b""
+        self.closed = False
+
+    def write(self, payload):
+        request = json.loads(payload[len(PREFIX):])
+        self.writes.append(request)
+        result = {"protocol":1, "request_id":request["request_id"], "device_id":self.device_id,
+                  "ok":not self.reject, "credential_configured":True, "has_wifi":True,
+                  "server_url":"https://cat.example:443", "mode":"accounts"}
+        if request["op"] in {"provision", "configure"}:
+            result.update(pending_reboot=True, identity_saved=request["op"] == "provision")
+        result["device_token"] = "unexpected-private-field"
+        # 普通日志、错误请求编号和分片都不应被当作本次操作结果。
+        noise = PREFIX + b'{"request_id":"old"}\n'
+        self.pending += b"[BOOT] simulated\n" + noise + PREFIX + json.dumps(result).encode() + b"\n"
+        return len(payload)
+
+    def read(self, size):
+        data, self.pending = self.pending[:7], self.pending[7:]
+        return data
+
+    def close(self):
+        self.closed = True
+
+
+class ProvisionDeviceTests(unittest.TestCase):
+    def test_fragmented_status_and_noise_do_not_expose_unexpected_fields(self):
+        response = ProvisioningClient(FakeSerial()).exchange("status")
+        self.assertEqual(response["device_id"], "cat-112233445566")
+        self.assertNotIn("device_token", response)
+        self.assertNotIn("request_id", response)
+
+    def test_device_mismatch_is_checked_before_sending_credential(self):
+        stream = FakeSerial()
+        with self.assertRaises(ProvisioningError):
+            ProvisioningClient(stream).provision({"device_id":"cat-other", "device_token":"T"*43})
+        self.assertEqual([request["op"] for request in stream.writes], ["status"])
+
+    def test_cli_reads_private_file_but_never_prints_credential(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "device.secret.json"
+            path.write_text(json.dumps({"version":1,"device_id":"cat-112233445566","device_token":"T"*43}), encoding="utf-8")
+            stream, output = FakeSerial(), io.StringIO()
+            with redirect_stdout(output):
+                code = main(["--port","SIMULATED","provision","--credential-file",str(path)], serial_factory=lambda port: stream)
+            self.assertEqual(code,0)
+            self.assertTrue(stream.closed)
+            self.assertTrue(json.loads(output.getvalue())["identity_saved"])
+            self.assertNotIn("T"*43, output.getvalue())
+            self.assertNotIn("unexpected-private-field", output.getvalue())
+            self.assertEqual([request["op"] for request in stream.writes], ["status","provision"])
+
+    def test_configure_uses_hidden_wifi_prompt_and_normalizes_server(self):
+        stream, output = FakeSerial(), io.StringIO()
+        with patch("builtins.input",return_value="simulated-wifi"), patch("getpass.getpass",return_value="simulated-wifi-password"), redirect_stdout(output):
+            code = main(["--port","SIMULATED","configure","--server-url","https://cat.example","--mode","accounts","--wifi"], serial_factory=lambda port: stream)
+        self.assertEqual(code,0)
+        request = stream.writes[-1]
+        self.assertEqual(request["server_url"],"https://cat.example:443")
+        self.assertEqual(request["wifi_password"],"simulated-wifi-password")
+        self.assertNotIn("simulated-wifi",output.getvalue())
+
+    def test_invalid_urls_and_device_rejection_are_reported_without_raw_output(self):
+        for url in ("ws://cat.example", "https://user:pass@cat.example", "https://cat.example/path", "https://cat.example?", "https://cat.example:0", "http://999.2.3.4", "https://-cat.example", "https://[::1]"):
+            with self.subTest(url=url), self.assertRaises(ProvisioningError):
+                validate_server_url(url)
+        output = io.StringIO()
+        with redirect_stderr(output):
+            code = main(["--port","SIMULATED","status"],serial_factory=lambda port: FakeSerial(reject=True))
+        self.assertEqual(code,1)
+        self.assertNotIn("unexpected-private-field",output.getvalue())
+
+    def test_oversize_request_is_refused_before_usb_write(self):
+        stream = FakeSerial()
+        with self.assertRaises(ProvisioningError):
+            ProvisioningClient(stream).exchange("configure",wifi_password="x"*2000)
+        self.assertEqual(stream.writes,[])
+
+
+if __name__ == "__main__":
+    unittest.main()

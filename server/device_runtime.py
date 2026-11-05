@@ -1,6 +1,8 @@
 """单台设备的音视频、模型会话、控制与录制；只读配置和资源可共享。"""
 
 import asyncio
+from runtime_logging import log_event
+from runtime_storage import RuntimeStorage, RecordingSpaceError
 import base64
 import contextlib
 import io
@@ -185,7 +187,7 @@ async def summarize_memory_messages(messages: List[Dict[str, object]]) -> Summar
             "请整理以下聊天记录：\n\n" + "\n".join(lines),
         )
     except Exception as exc:
-        print(f"[MEMORY] summary failed: {type(exc).__name__}", flush=True)
+        log_event(f"[MEMORY] summary failed: {type(exc).__name__}", flush=True)
         return SummaryResult(summary="")
     parsed = _parse_memory_summary(response)
     if parsed is None:
@@ -314,7 +316,7 @@ COVER_GRAY_STD_THRESHOLD = float(os.getenv("COVER_GRAY_STD_THRESHOLD", "24.0"))
 COVER_CHANNEL_RANGE_THRESHOLD = float(os.getenv("COVER_CHANNEL_RANGE_THRESHOLD", "78.0"))
 
 def _log_memory_error(exc: Exception) -> None:
-    print(f"[MEMORY] background task failed: {type(exc).__name__}: {exc}", flush=True)
+    log_event(f"[MEMORY] background task failed: {type(exc).__name__}", flush=True)
 
 @dataclass
 class CameraViewerState:
@@ -576,10 +578,6 @@ def _serialize_record_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
         "image_url": entry.get("image_url", ""),
     }
 
-def _write_bytes_to_disk(path: str, data: bytes) -> None:
-    with open(path, "wb") as f:
-        f.write(data)
-
 HAND_LANDMARKER_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
     "hand_landmarker/float16/latest/hand_landmarker.task"
@@ -600,14 +598,14 @@ def _ensure_hand_landmarker_model() -> Optional[str]:
         os.makedirs(os.path.dirname(HAND_LANDMARKER_MODEL_PATH), exist_ok=True)
         import urllib.request
 
-        print(f"[HAND] downloading model {HAND_LANDMARKER_MODEL_URL}", flush=True)
+        log_event(f"[HAND] downloading model {HAND_LANDMARKER_MODEL_URL}", flush=True)
         tmp_path = HAND_LANDMARKER_MODEL_PATH + ".part"
         urllib.request.urlretrieve(HAND_LANDMARKER_MODEL_URL, tmp_path)
         os.replace(tmp_path, HAND_LANDMARKER_MODEL_PATH)
-        print(f"[HAND] model saved -> {HAND_LANDMARKER_MODEL_PATH}", flush=True)
+        log_event(f"[HAND] model saved -> {HAND_LANDMARKER_MODEL_PATH}", flush=True)
         return HAND_LANDMARKER_MODEL_PATH
     except Exception as exc:
-        print(f"[HAND] model download failed: {exc}", flush=True)
+        log_event(f"[HAND] model download failed: {type(exc).__name__}", flush=True)
         return None
 
 class _LegacyHandsAdapter:
@@ -654,13 +652,13 @@ def _build_hand_tracker():
             )
             return _LegacyHandsAdapter(hands)
         except Exception as exc:
-            print(f"[HAND] legacy solutions.hands init failed: {exc}", flush=True)
+            log_event(f"[HAND] legacy solutions.hands init failed: {type(exc).__name__}", flush=True)
             # 接着尝试 tasks API
     if MEDIAPIPE_HAS_TASKS:
         model_path = _ensure_hand_landmarker_model()
         if not model_path:
             if not _hand_landmarker_unavailable_logged:
-                print("[HAND] hand_landmarker.task missing, tracker disabled", flush=True)
+                log_event("[HAND] hand_landmarker.task missing, tracker disabled", flush=True)
                 _hand_landmarker_unavailable_logged = True
             return None
         try:
@@ -678,10 +676,10 @@ def _build_hand_tracker():
             landmarker = mp_vision.HandLandmarker.create_from_options(options)
             return _TasksHandLandmarkerAdapter(landmarker)
         except Exception as exc:
-            print(f"[HAND] tasks HandLandmarker init failed: {exc}", flush=True)
+            log_event(f"[HAND] tasks HandLandmarker init failed: {type(exc).__name__}", flush=True)
             return None
     if not _hand_landmarker_unavailable_logged:
-        print("[HAND] mediapipe build has neither solutions nor tasks API", flush=True)
+        log_event("[HAND] mediapipe build has neither solutions nor tasks API", flush=True)
         _hand_landmarker_unavailable_logged = True
     return None
 
@@ -713,11 +711,14 @@ async def _viewer_sender_loop(state: CameraViewerState) -> None:
 class DeviceRuntime:
     """一只设备的连接、模型、音视频与活动状态；只读资源在模块内共享。"""
 
-    def __init__(self, device_id: str, user_id: str, memory_manager: MemoryManager):
+    def __init__(self, device_id: str, user_id: str, memory_manager: MemoryManager, *, storage=None):
         self.device_id = device_id
         self.user_id = user_id
         self.memory_manager = memory_manager
         self.records_dir = str(Path(RECORDS_DIR) / device_id)
+        self.storage = storage or RuntimeStorage(Path(RECORDS_DIR), protected_paths=lambda: {
+            entry["image_path"] for entry in self.recording_entries
+        })
         self.api_prefix = f"/api/devices/{device_id}"
         self.recognition = RecognitionState()
         self.audio_connection = DeviceConnectionSlot()
@@ -799,7 +800,7 @@ class DeviceRuntime:
         def finished(completed):
             self._background_tasks.discard(completed)
             if not completed.cancelled() and completed.exception() is not None:
-                print(f"[DEVICE] background task failed: {type(completed.exception()).__name__}", flush=True)
+                log_event(f"[DEVICE] background task failed: {type(completed.exception()).__name__}", flush=True)
 
         task.add_done_callback(finished)
         return task
@@ -1261,7 +1262,7 @@ class DeviceRuntime:
         self.current_screen_mode = new_mode % len(SCREEN_MODE_LABELS)
         self.screen_sender_last_push_at = 0.0
         self.screen_sender_last_mode = -1
-        print(f"[SCREEN] mode -> {SCREEN_MODE_LABELS.get(self.current_screen_mode)} reason={reason or 'manual'}", flush=True)
+        log_event(f"[SCREEN] mode -> {SCREEN_MODE_LABELS.get(self.current_screen_mode)} reason={reason or 'manual'}", flush=True)
         await self.notify_screen_mode()
         await self.sync_esp32_camera_fps()
         if self.current_screen_mode == SCREEN_MODE_EXPRESSION:
@@ -1320,7 +1321,7 @@ class DeviceRuntime:
             try:
                 await self.push_screen_frame_once()
             except Exception as exc:
-                print(f"[SCREEN] push failed: {exc}", flush=True)
+                log_event(f"[SCREEN] push failed: {type(exc).__name__}", flush=True)
             # 同声传译模式下需要更高的刷新，让打字机效果流畅
             if self.current_screen_mode == SCREEN_MODE_TRANSLATE:
                 await asyncio.sleep(0.04)
@@ -1350,7 +1351,7 @@ class DeviceRuntime:
         self.vision_dialogue_response = ""
         self.vision_dialogue_status = "idle"
         if was_active:
-            print(f"[VISION] deactivate reason={reason or 'manual'}", flush=True)
+            log_event(f"[VISION] deactivate reason={reason or 'manual'}", flush=True)
             if not self.translation_active:
                 await self._apply_visual_dialogue_prompt_to_session(False)
         if restore_expression and not self.translation_active and self.current_screen_mode == SCREEN_MODE_VISION_DIALOG and not self.vision_screen_pinned:
@@ -1361,7 +1362,7 @@ class DeviceRuntime:
     async def sync_visual_dialogue_turn(self, text: str) -> bool:
         keyword = match_voice_visual_request(text)
         if keyword is not None or self.vision_screen_pinned:
-            print(f"[VISION] activate keyword={keyword} text={text}", flush=True)
+            log_event(f"[VISION] activate keyword={keyword} text_chars={len(text)}", flush=True)
             await self.activate_visual_dialogue_mode(text, reason=f"vision:{keyword or 'pinned'}")
             return True
         if self.vision_dialogue_active:
@@ -1436,7 +1437,7 @@ class DeviceRuntime:
                 await self.push_screen_frame_once(force=True)
             return
         self.vision_screen_pinned = active
-        print(f"[VISION] pinned -> {'ON' if active else 'OFF'} reason={reason or 'manual'}", flush=True)
+        log_event(f"[VISION] pinned -> {'ON' if active else 'OFF'} reason={reason or 'manual'}", flush=True)
         if active:
             await self.activate_visual_dialogue_mode("", reason=reason or "vision_pin_on")
         else:
@@ -1466,7 +1467,7 @@ class DeviceRuntime:
             else:
                 await session.update_instructions(build_translation_prompt(pair))
         except Exception as exc:
-            print(f"[TRANSLATE] session update failed: {exc}", flush=True)
+            log_event(f"[TRANSLATE] session update failed: {type(exc).__name__}", flush=True)
 
     async def _apply_visual_dialogue_prompt_to_session(self, active: bool) -> None:
         session = self.current_realtime_session
@@ -1475,7 +1476,7 @@ class DeviceRuntime:
         try:
             await session.update_instructions(VISUAL_DIALOG_SYSTEM_PROMPT if active else SYSTEM_PROMPT)
         except Exception as exc:
-            print(f"[VISION] session update failed: {exc}", flush=True)
+            log_event(f"[VISION] session update failed: {type(exc).__name__}", flush=True)
 
     async def activate_translation_mode(self, pair: str, *, voice_trigger: bool = False):
         if self.performance_mode_active:
@@ -1484,7 +1485,7 @@ class DeviceRuntime:
         pair = pair if pair in TRANSLATION_LANG_PAIRS else DEFAULT_TRANSLATION_PAIR
         already_on = self.translation_active and self.translation_pair == pair
         info = TRANSLATION_LANG_PAIRS.get(pair, {})
-        print(
+        log_event(
             f"[TRANSLATE] activate pair={pair} display={info.get('display', pair)} voice={voice_trigger} already_on={already_on}",
             flush=True,
         )
@@ -1507,7 +1508,7 @@ class DeviceRuntime:
         # 旧会话里堆满猫娘对话历史，仅推 session.update 换 instructions 压不住上下文惯性；
         # 递增 epoch 让 ws_audio 侧重建一个以翻译 prompt 初始化的全新会话，历史彻底清空
         self.realtime_restart_epoch += 1
-        print("[TRANSLATE] realtime session restart requested (context will be cleared)", flush=True)
+        log_event("[TRANSLATE] realtime session restart requested (context will be cleared)", flush=True)
         await self._broadcast_translation_state()
         await self.set_screen_mode(SCREEN_MODE_TRANSLATE, reason=f"translate:{pair}")
         if self.esp32_audio_ws and self.esp32_audio_ws.client_state == WebSocketState.CONNECTED:
@@ -1532,10 +1533,10 @@ class DeviceRuntime:
         self.translation_current_text = ""
         self.translation_input_text = ""
         self.translation_finalized = False
-        print(f"[TRANSLATE] deactivate reason={reason}", flush=True)
+        log_event(f"[TRANSLATE] deactivate reason={reason}", flush=True)
         # 退出翻译同样重建会话，把翻译上下文清干净再回猫娘人格
         self.realtime_restart_epoch += 1
-        print("[TRANSLATE] realtime session restart requested (back to chat)", flush=True)
+        log_event("[TRANSLATE] realtime session restart requested (back to chat)", flush=True)
         await self._broadcast_translation_state()
         await self.set_screen_mode(SCREEN_MODE_EXPRESSION, reason="translate_stop")
 
@@ -1583,7 +1584,7 @@ class DeviceRuntime:
         if self.esp32_audio_priority_active == active:
             return
         self.esp32_audio_priority_active = active
-        print(f"[AUDIO-PRIO] {'ON' if active else 'OFF'} reason={reason or 'manual'}", flush=True)
+        log_event(f"[AUDIO-PRIO] {'ON' if active else 'OFF'} reason={reason or 'manual'}", flush=True)
         await self.sync_esp32_camera_fps()
 
     async def _send_ui_expression(self, emotion: str):
@@ -1609,7 +1610,7 @@ class DeviceRuntime:
             await self._broadcast_performance_mode_state()
             return False
         self.performance_mode_active = active
-        print(f"[PERF] performance mode -> {'ON' if active else 'OFF'} reason={reason or 'manual'}", flush=True)
+        log_event(f"[PERF] performance mode -> {'ON' if active else 'OFF'} reason={reason or 'manual'}", flush=True)
 
         if active:
             # 打开时：立刻释放所有会占用算力/带宽的资源
@@ -1747,7 +1748,7 @@ class DeviceRuntime:
             try:
                 if not COVER_INTERACTION_ENABLED or cv2 is None or np is None:
                     if not announced_disabled:
-                        print("[COVER] disabled (need opencv + numpy)", flush=True)
+                        log_event("[COVER] disabled (need opencv + numpy)", flush=True)
                         announced_disabled = True
                     await asyncio.sleep(2.0)
                     continue
@@ -1780,7 +1781,7 @@ class DeviceRuntime:
                         self.camera_cover_active = True
                         self.camera_cover_escalated = False
                         self.camera_cover_since = now
-                        print(
+                        log_event(
                             "[COVER] covered "
                             f"mad={metrics['mean_abs_dev']:.1f} std={metrics['gray_std']:.1f} "
                             f"range={metrics['channel_range']:.1f}",
@@ -1790,19 +1791,19 @@ class DeviceRuntime:
                         await self._replace_cover_interaction(self._run_cover_initial_sequence())
                     elif self.camera_cover_active and not self.camera_cover_escalated and (now - self.camera_cover_since) >= COVER_ESCALATE_AFTER_SEC:
                         self.camera_cover_escalated = True
-                        print("[COVER] still covered -> shake + cry", flush=True)
+                        log_event("[COVER] still covered -> shake + cry", flush=True)
                         await self._replace_cover_interaction(self._run_cover_escalation_sequence())
                 else:
                     self.camera_cover_clear_hits = min(self.camera_cover_clear_hits + 1, 10)
                     self.camera_cover_detect_hits = 0
                     if self.camera_cover_active and self.camera_cover_clear_hits >= COVER_CLEAR_HITS:
-                        print("[COVER] released -> happy + nod", flush=True)
+                        log_event("[COVER] released -> happy + nod", flush=True)
                         self.camera_cover_active = False
                         self.camera_cover_escalated = False
                         self.camera_cover_since = 0.0
                         await self._replace_cover_interaction(self._run_cover_release_sequence())
             except Exception as exc:
-                print(f"[COVER] loop error: {exc}", flush=True)
+                log_event(f"[COVER] loop error: {type(exc).__name__}", flush=True)
             await asyncio.sleep(COVER_CHECK_INTERVAL_SEC)
 
     def ensure_cover_monitor_task(self) -> None:
@@ -1817,7 +1818,7 @@ class DeviceRuntime:
         try:
             await self.ui_broadcast_raw("RECORD:" + json.dumps(message, ensure_ascii=False))
         except Exception as exc:
-            print(f"[RECORD] broadcast failed: {exc}", flush=True)
+            log_event(f"[RECORD] broadcast failed: {type(exc).__name__}", flush=True)
 
     def _record_state_dict(self) -> Dict[str, Any]:
         return {
@@ -1840,33 +1841,38 @@ class DeviceRuntime:
 
         session_id = self.recording_session_id or "default"
         session_dir = os.path.join(self.records_dir, session_id)
-        os.makedirs(session_dir, exist_ok=True)
 
         now = time.time()
         self.recording_entry_seq += 1
         filename = f"{int(now * 1000)}_{self.recording_entry_seq:04d}.jpg"
         file_path = os.path.join(session_dir, filename)
 
-        try:
-            await asyncio.to_thread(lambda: _write_bytes_to_disk(file_path, jpeg_bytes))
-        except Exception as exc:
-            print(f"[RECORD] save failed: {exc}", flush=True)
-            return None
+        with self.storage.pin(file_path):
+            try:
+                await self.storage.write_image(file_path, jpeg_bytes)
+            except RecordingSpaceError:
+                self.recording_active = False
+                log_event("[RECORD] paused reason=storage_limit")
+                await self._broadcast_record_event("error", {"message": "存储空间不足，录制已暂停", "state": self._record_state_dict()})
+                return None
+            except Exception as exc:
+                log_event(f"[RECORD] save failed: {type(exc).__name__}", flush=True)
+                return None
 
-        description = await describe_image_async(jpeg_bytes)
-        entry = {
-            "id": f"{session_id}-{self.recording_entry_seq:04d}",
-            "timestamp": now,
-            "time_label": time.strftime("%H:%M:%S", time.localtime(now)),
-            "description": (description or "").strip(),
-            "image_path": file_path,
-            "image_url": f"{self.api_prefix}/record/image/{session_id}/{filename}",
-            "session_id": session_id,
-        }
-        self.recording_entries.append(entry)
+            description = await describe_image_async(jpeg_bytes)
+            entry = {
+                "id": f"{session_id}-{self.recording_entry_seq:04d}",
+                "timestamp": now,
+                "time_label": time.strftime("%H:%M:%S", time.localtime(now)),
+                "description": (description or "").strip(),
+                "image_path": file_path,
+                "image_url": f"{self.api_prefix}/record/image/{session_id}/{filename}",
+                "session_id": session_id,
+            }
+            self.recording_entries.append(entry)
         if len(self.recording_entries) > RECORD_MAX_ENTRIES:
             self.recording_entries[: -RECORD_MAX_ENTRIES] = []
-        print(f"[RECORD] {entry['time_label']} {entry['description']}", flush=True)
+        log_event(f"[RECORD] image_saved description_chars={len(entry['description'])}", flush=True)
         await self._broadcast_record_event("entry", _serialize_record_entry(entry))
         return entry
 
@@ -1884,7 +1890,7 @@ class DeviceRuntime:
                 try:
                     await self._record_tick_once()
                 except Exception as exc:
-                    print(f"[RECORD] tick failed: {exc}", flush=True)
+                    log_event(f"[RECORD] tick failed: {type(exc).__name__}", flush=True)
         except asyncio.CancelledError:
             pass
         finally:
@@ -1897,7 +1903,6 @@ class DeviceRuntime:
         self.recording_session_id = time.strftime("%Y%m%d-%H%M%S")
         self.recording_entries = []
         self.recording_entry_seq = 0
-        os.makedirs(os.path.join(self.records_dir, self.recording_session_id), exist_ok=True)
         self.recording_task = asyncio.create_task(self._recording_loop())
         await self._broadcast_record_event(
             "started",
@@ -1907,7 +1912,7 @@ class DeviceRuntime:
                 "state": self._record_state_dict(),
             },
         )
-        print(f"[RECORD] session started id={self.recording_session_id}", flush=True)
+        log_event(f"[RECORD] session started id={self.recording_session_id}", flush=True)
         return self._record_state_dict()
 
     async def stop_recording_session(self):
@@ -1920,7 +1925,7 @@ class DeviceRuntime:
             with contextlib.suppress(Exception):
                 await task
         await self._broadcast_record_event("stopped", {"state": self._record_state_dict()})
-        print("[RECORD] session stopped", flush=True)
+        log_event("[RECORD] session stopped", flush=True)
         return self._record_state_dict()
 
     async def _send_esp32_raw(self, message: str):
@@ -1986,7 +1991,7 @@ class DeviceRuntime:
         if not send_idle or not was_active:
             return
         try:
-            print("[HAND] reset -> idle", flush=True)
+            log_event("[HAND] reset -> idle", flush=True)
             await self._send_esp32_raw("CATPOSE:CLEAR")
             await self._send_esp32_raw("ANIM:STOP")
             await self._send_esp32_raw("EXPR:neutral")
@@ -2004,7 +2009,7 @@ class DeviceRuntime:
             self.hand_tracking_bored = False
             self.hand_tracking_started_at = now
             self.hand_tracking_last_expression_at = now
-            print(f"[HAND] detected hand center=({center_x:.2f},{center_y:.2f}) -> happy", flush=True)
+            log_event(f"[HAND] detected hand center=({center_x:.2f},{center_y:.2f}) -> happy", flush=True)
             self.current_emotion = HAND_TRACKING_NEW_HAND_EMOTION
             await self._send_hand_tracking_expression(HAND_TRACKING_NEW_HAND_EMOTION)
 
@@ -2013,7 +2018,7 @@ class DeviceRuntime:
         if not self.hand_tracking_bored and elapsed >= HAND_TRACKING_BORED_TIMEOUT_SEC and expression_unlocked:
             self.hand_tracking_bored = True
             self.hand_tracking_last_expression_at = now
-            print("[HAND] bored -> speechless", flush=True)
+            log_event("[HAND] bored -> speechless", flush=True)
             self.current_emotion = HAND_TRACKING_BORED_EMOTION
             await self._send_hand_tracking_expression(HAND_TRACKING_BORED_EMOTION)
         elif (
@@ -2024,7 +2029,7 @@ class DeviceRuntime:
             emotion = random.choice(HAND_TRACKING_RANDOM_EMOTIONS)
             self.hand_tracking_last_expression_at = now
             self.current_emotion = emotion
-            print(f"[HAND] next emotion -> {emotion}", flush=True)
+            log_event(f"[HAND] next emotion -> {emotion}", flush=True)
             await self._send_hand_tracking_expression(emotion)
 
         offset_x = center_x - 0.5
@@ -2051,7 +2056,7 @@ class DeviceRuntime:
 
     async def hand_tracking_loop(self):
         announced_disabled = False
-        print("[HAND] tracking loop started", flush=True)
+        log_event("[HAND] tracking loop started", flush=True)
         while True:
             try:
                 # 极速画面模式下完全跳过，避免 MediaPipe 推理抢占 CPU
@@ -2065,7 +2070,7 @@ class DeviceRuntime:
                     continue
                 if not HAND_TRACKING_ENABLED or not MEDIAPIPE_AVAILABLE or cv2 is None or np is None:
                     if not announced_disabled:
-                        print("[HAND] disabled (need mediapipe + opencv + numpy)", flush=True)
+                        log_event("[HAND] disabled (need mediapipe + opencv + numpy)", flush=True)
                         announced_disabled = True
                     await asyncio.sleep(2.0)
                     continue
@@ -2103,7 +2108,7 @@ class DeviceRuntime:
                 else:
                     await self.handle_hand_tracking_detection(hand_info, now)
             except Exception as exc:
-                print(f"[HAND] loop error: {exc}", flush=True)
+                log_event(f"[HAND] loop error: {type(exc).__name__}", flush=True)
             await asyncio.sleep(HAND_TRACKING_INTERVAL_SEC)
 
     def ensure_hand_tracking_task(self):
@@ -2124,7 +2129,7 @@ class DeviceRuntime:
             context = await self.memory_manager.context_for(self.user_id, self.device_id)
             return self.ui_memory_conversation_id, context
         except Exception as exc:
-            print(f"[MEMORY] UI conversation unavailable: {type(exc).__name__}", flush=True)
+            log_event(f"[MEMORY] UI conversation unavailable: {type(exc).__name__}", flush=True)
             return None, empty
 
     async def start_ai_with_text(self, user_text: str):
@@ -2139,7 +2144,7 @@ class DeviceRuntime:
             try:
                 await self.memory_manager.record_message(memory_conversation_id, "user", user_text)
             except Exception as exc:
-                print(f"[MEMORY] UI user message save failed: {type(exc).__name__}", flush=True)
+                log_event(f"[MEMORY] UI user message save failed: {type(exc).__name__}", flush=True)
         await self.reset_hand_tracking_state(send_idle=False)
 
         async def _runner():
@@ -2195,8 +2200,8 @@ class DeviceRuntime:
                 raise
             except Exception as exc:
                 if visual_turn:
-                    await self.update_visual_dialogue_response(f"出错了：{exc}", "done", force=True)
-                await self.ui_broadcast_final(f"[AI] 发生错误：{exc}")
+                    await self.update_visual_dialogue_response(f"出错了：{type(exc).__name__}", "done", force=True)
+                await self.ui_broadcast_final(f"[AI] 发生错误：{type(exc).__name__}")
             finally:
                 for client in list(self.audio.stream_clients):
                     if not client.abort_event.is_set():
@@ -2217,7 +2222,7 @@ class DeviceRuntime:
                     try:
                         await self.memory_manager.record_message(memory_conversation_id, "assistant", final_text)
                     except Exception as exc:
-                        print(f"[MEMORY] UI assistant message save failed: {type(exc).__name__}", flush=True)
+                        log_event(f"[MEMORY] UI assistant message save failed: {type(exc).__name__}", flush=True)
                 await asyncio.sleep(0.5)
                 if self.esp32_audio_ws and self.esp32_audio_ws.client_state == WebSocketState.CONNECTED:
                     try:
@@ -2239,13 +2244,13 @@ class DeviceRuntime:
 
         if action_hit and self.esp32_audio_ws and self.esp32_audio_ws.client_state == WebSocketState.CONNECTED:
             commands, keyword = action_hit
-            print(f"[VOICE ACTION] {keyword}", flush=True)
+            log_event(f"[VOICE ACTION] {keyword}", flush=True)
             for command in commands:
                 await self.send_esp32_command(command)
 
         if expr_hit and self.esp32_audio_ws and self.esp32_audio_ws.client_state == WebSocketState.CONNECTED:
             emotion, keyword = expr_hit
-            print(f"[VOICE EXPR] {keyword} -> {emotion}", flush=True)
+            log_event(f"[VOICE EXPR] {keyword} -> {emotion}", flush=True)
             self.current_emotion = emotion
             await self._send_ui_expression(emotion)
 
@@ -2283,10 +2288,10 @@ class DeviceRuntime:
                     audio_buf.append(pcm16)
 
             async def on_response_started():
-                print("[REALTIME-REPEAT] response started", flush=True)
+                log_event("[REALTIME-REPEAT] response started", flush=True)
 
             async def on_response_done():
-                print("[REALTIME-REPEAT] response done", flush=True)
+                log_event("[REALTIME-REPEAT] response done", flush=True)
                 done_event.set()
 
             async def on_speech_started():
@@ -2297,7 +2302,7 @@ class DeviceRuntime:
                 done_event.set()
 
             async def on_debug(message: str):
-                print(f"[REALTIME-REPEAT] {message}", flush=True)
+                log_event(f"[REALTIME-REPEAT] {message}", flush=True)
 
             try:
                 session = OmniRealtimeSession(
@@ -2320,7 +2325,7 @@ class DeviceRuntime:
             except asyncio.TimeoutError:
                 await self.ui_broadcast_final("[复述] Realtime 响应超时")
             except Exception as exc:
-                await self.ui_broadcast_final(f"[复述] 发生错误：{exc}")
+                await self.ui_broadcast_final(f"[复述] 发生错误：{type(exc).__name__}")
             finally:
                 if audio_buf:
                     self.latest_repeat_wav = pcm16_to_wav_bytes(b"".join(audio_buf), STREAM_SR)
@@ -2463,7 +2468,7 @@ class DeviceRuntime:
                     try:
                         await self.memory_manager.finish_conversation(conversation_id)
                     except Exception as exc:
-                        print(f"[MEMORY] UI conversation finish failed: {type(exc).__name__}", flush=True)
+                        log_event(f"[MEMORY] UI conversation finish failed: {type(exc).__name__}", flush=True)
 
     async def ws_audio(self, ws: WebSocket):
         self.esp32_audio_ws = ws
@@ -2477,9 +2482,9 @@ class DeviceRuntime:
                 self.user_id, self.device_id
             )
             memory_context = await self.memory_manager.context_for(self.user_id, self.device_id)
-            print(f"[MEMORY] audio conversation started id={memory_conversation_id}", flush=True)
+            log_event(f"[MEMORY] audio conversation started id={memory_conversation_id}", flush=True)
         except Exception as exc:
-            print(f"[MEMORY] audio conversation unavailable: {type(exc).__name__}", flush=True)
+            log_event(f"[MEMORY] audio conversation unavailable: {type(exc).__name__}", flush=True)
         session: Optional[OmniRealtimeSession] = None
         streaming = False
         response_text_parts: List[str] = []
@@ -2501,7 +2506,7 @@ class DeviceRuntime:
             try:
                 await self.memory_manager.record_message(memory_conversation_id, role, content)
             except Exception as exc:
-                print(f"[MEMORY] message save failed: {type(exc).__name__}", flush=True)
+                log_event(f"[MEMORY] message save failed: {type(exc).__name__}", flush=True)
 
         async def upload_worker():
             while not upload_stop.is_set():
@@ -2519,7 +2524,7 @@ class DeviceRuntime:
                 try:
                     await current_session.append_audio(data)
                 except Exception as exc:
-                    print(f"[WS_AUDIO] upload failed: {exc}", flush=True)
+                    log_event(f"[WS_AUDIO] upload failed: {type(exc).__name__}", flush=True)
                     # 上游写不进去，让状态机自愈（可能是 WS 已关）
                     break
 
@@ -2553,7 +2558,7 @@ class DeviceRuntime:
             response_text_parts = []
             response_emotion_sent = False
             await self.set_esp32_audio_priority(False, reason="ws_audio_stop_session")
-            print("[WS_AUDIO] session stopped", flush=True)
+            log_event("[WS_AUDIO] session stopped", flush=True)
             if send_notice:
                 try:
                     await ws.send_text(send_notice)
@@ -2586,7 +2591,7 @@ class DeviceRuntime:
                 await new_session.ensure_connected()
                 session = new_session
                 streaming = True
-                print("[WS_AUDIO] realtime session connected", flush=True)
+                log_event("[WS_AUDIO] realtime session connected", flush=True)
                 if self.translation_active:
                     await self.ui_broadcast_partial("（同声传译模式已就绪…）")
                 else:
@@ -2595,8 +2600,8 @@ class DeviceRuntime:
             except Exception as exc:
                 session = None
                 self.current_realtime_session = None
-                print(f"[WS_AUDIO] realtime startup failed: {exc}", flush=True)
-                await self.ui_broadcast_partial(f"（Realtime启动失败：{exc}）")
+                log_event(f"[WS_AUDIO] realtime startup failed: {type(exc).__name__}", flush=True)
+                await self.ui_broadcast_partial(f"（Realtime启动失败：{type(exc).__name__}）")
                 return False
 
         async def restart_session_if_requested():
@@ -2609,7 +2614,7 @@ class DeviceRuntime:
             if session is None or session_epoch == self.realtime_restart_epoch:
                 return
             session_epoch = self.realtime_restart_epoch
-            print("[WS_AUDIO] realtime session restarting (context switch)", flush=True)
+            log_event("[WS_AUDIO] realtime session restarting (context switch)", flush=True)
             old = session
             await finish_pcm_stream()
             session = None
@@ -2624,13 +2629,13 @@ class DeviceRuntime:
                 await self.ui_broadcast_partial("（未设置 DASHSCOPE_API_KEY）")
 
         async def on_realtime_debug(message: str):
-            print(f"[REALTIME] {message}", flush=True)
+            log_event(f"[REALTIME] {message}", flush=True)
 
         async def on_input_transcript(text: str):
             text = text.strip()
             if not text:
                 return
-            print(f"[REALTIME] final transcript={text}", flush=True)
+            log_event(f"[REALTIME] input_transcript chars={len(text)}", flush=True)
             await self.ui_broadcast_partial("")
             await self.ui_broadcast_final(text)
 
@@ -2638,12 +2643,12 @@ class DeviceRuntime:
             translate_start = match_voice_translation_start(text)
             if translate_start is not None:
                 pair, keyword = translate_start
-                print(f"[VOICE TRANSLATE START] {keyword} -> {pair}", flush=True)
+                log_event(f"[VOICE TRANSLATE START] {keyword} -> {pair}", flush=True)
                 await self.activate_translation_mode(pair, voice_trigger=True)
                 return
             translate_stop = match_voice_translation_stop(text) if self.translation_active else None
             if translate_stop is not None:
-                print(f"[VOICE TRANSLATE STOP] {translate_stop}", flush=True)
+                log_event(f"[VOICE TRANSLATE STOP] {translate_stop}", flush=True)
                 await self.deactivate_translation_mode(reason="voice_stop")
                 return
 
@@ -2658,12 +2663,12 @@ class DeviceRuntime:
             expr_hit = None if visual_turn else match_voice_expression(text)
             if action_hit and self.esp32_audio_ws and self.esp32_audio_ws.client_state == WebSocketState.CONNECTED:
                 commands, keyword = action_hit
-                print(f"[VOICE ACTION] {keyword}", flush=True)
+                log_event(f"[VOICE ACTION] {keyword}", flush=True)
                 for command in commands:
                     await self.send_esp32_command(command)
             if expr_hit and self.esp32_audio_ws and self.esp32_audio_ws.client_state == WebSocketState.CONNECTED:
                 emotion, keyword = expr_hit
-                print(f"[VOICE EXPR] {keyword} -> {emotion}", flush=True)
+                log_event(f"[VOICE EXPR] {keyword} -> {emotion}", flush=True)
                 self.current_emotion = emotion
                 await self._send_ui_expression(emotion)
             if action_hit or expr_hit:
@@ -2675,7 +2680,7 @@ class DeviceRuntime:
             response_text_parts.append(delta)
             full_text = "".join(response_text_parts)
             if len(response_text_parts) == 1:
-                print("[REALTIME] first text delta received", flush=True)
+                log_event("[REALTIME] first text delta received", flush=True)
             if response_was_translation and self.translation_active:
                 self.translation_current_text = full_text
                 self.translation_finalized = False
@@ -2692,7 +2697,7 @@ class DeviceRuntime:
 
         async def on_output_audio(audio_bytes: bytes):
             if response_text_parts == []:
-                print(f"[REALTIME] audio bytes received before text len={len(audio_bytes)}", flush=True)
+                log_event(f"[REALTIME] audio bytes received before text len={len(audio_bytes)}", flush=True)
             # 0.65：realtime 输出峰值接近满幅，固件端还有 speakerVolume 增益，
             # 系数过大时累积增益会把功放推饱和，产生"电音"失真
             pcm16 = audio_multiply_volume(audio_bytes, 2, 0.65)
@@ -2710,7 +2715,7 @@ class DeviceRuntime:
                 self.translation_finalized = False
             elif self.vision_dialogue_active:
                 await self.update_visual_dialogue_response("", "thinking", force=True)
-            print("[REALTIME] response started", flush=True)
+            log_event("[REALTIME] response started", flush=True)
             playback_release_event = asyncio.Event()
             self._set_playing_task_marker(playback_release_event)
             if self.esp32_audio_ws and self.esp32_audio_ws.client_state == WebSocketState.CONNECTED:
@@ -2724,7 +2729,7 @@ class DeviceRuntime:
         async def on_response_done():
             nonlocal playback_release_event, response_text_parts, response_emotion_sent, response_was_translation
             final_text = ("".join(response_text_parts)).strip() or "（空响应）"
-            print(f"[REALTIME] response done text={final_text}", flush=True)
+            log_event(f"[REALTIME] response_done chars={len(final_text)}", flush=True)
             if response_was_translation and self.translation_active:
                 self.translation_current_text = final_text if response_text_parts else self.translation_current_text
                 self.translation_finalized = True
@@ -2761,7 +2766,7 @@ class DeviceRuntime:
             await self.set_esp32_audio_priority(False, reason="realtime_response_done")
 
         async def on_speech_started():
-            print("[REALTIME] speech started", flush=True)
+            log_event("[REALTIME] speech started", flush=True)
             if self.audio.is_playing_now():
                 await self.audio.hard_reset_audio("realtime interruption")
                 await self.sync_esp32_camera_fps()
@@ -2775,7 +2780,7 @@ class DeviceRuntime:
             task.add_done_callback(session_background_tasks.discard)
 
         async def on_realtime_error(message: str):
-            print(f"[REALTIME] error={message}", flush=True)
+            log_event(f"[REALTIME] error={message}", flush=True)
             if self.vision_dialogue_active:
                 await self.update_visual_dialogue_response(f"出错了：{message}", "done", force=True)
             current_session = session
@@ -2804,7 +2809,7 @@ class DeviceRuntime:
                     if raw.startswith("ANIM_DONE:"):
                         token = raw[10:].strip()
                         if token and token == self.hand_tracking_waiting_token:
-                            print(f"[HAND] animation done token={token}", flush=True)
+                            log_event(f"[HAND] animation done token={token}", flush=True)
                             self.hand_tracking_waiting_token = None
                         continue
                     if cmd == "START":
@@ -2813,9 +2818,9 @@ class DeviceRuntime:
                         audio_chunk_count = 0
                         audio_total_bytes = 0
                         audio_log_started_at = time.monotonic()
-                        print("[WS_AUDIO] START command received", flush=True)
+                        log_event("[WS_AUDIO] START command received", flush=True)
                         if self.performance_mode_active:
-                            print("[WS_AUDIO] START ignored: performance mode active", flush=True)
+                            log_event("[WS_AUDIO] START ignored: performance mode active", flush=True)
                             await self.ui_broadcast_partial("（极速画面模式开启中，已暂停语音会话）")
                             await ws.send_text("OK:STARTED")
                             continue
@@ -2839,10 +2844,10 @@ class DeviceRuntime:
                         audio_chunk_count += 1
                         audio_total_bytes += len(data)
                         if audio_chunk_count == 1:
-                            print(f"[WS_AUDIO] first audio chunk bytes={len(data)}", flush=True)
+                            log_event(f"[WS_AUDIO] first audio chunk bytes={len(data)}", flush=True)
                         elif audio_chunk_count % 50 == 0:
                             elapsed = time.monotonic() - audio_log_started_at
-                            print(
+                            log_event(
                                 f"[WS_AUDIO] audio chunks={audio_chunk_count} total_bytes={audio_total_bytes} elapsed_s={elapsed:.1f}",
                                 flush=True,
                             )
@@ -2855,7 +2860,7 @@ class DeviceRuntime:
                         try:
                             upload_queue.put_nowait(data)
                         except Exception as exc:
-                            print(f"[WS_AUDIO] upload queue error: {exc}", flush=True)
+                            log_event(f"[WS_AUDIO] upload queue error: {type(exc).__name__}", flush=True)
         except WebSocketDisconnect:
             pass
         finally:
@@ -2877,7 +2882,7 @@ class DeviceRuntime:
                     try:
                         await self.memory_manager.finish_conversation(memory_conversation_id)
                     except Exception as exc:
-                        print(f"[MEMORY] audio conversation finish failed: {type(exc).__name__}", flush=True)
+                        log_event(f"[MEMORY] audio conversation finish failed: {type(exc).__name__}", flush=True)
             if self.esp32_audio_ws is ws:
                 self.esp32_audio_ws = None
 

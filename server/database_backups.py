@@ -18,6 +18,7 @@ from typing import Optional
 import uuid
 
 from async_helpers import run_blocking
+from runtime_logging import log_event
 from tools.memory_database import backup_database, file_sha256, inspect_database
 
 
@@ -204,6 +205,6 @@ class DatabaseBackups:
                 raise
             except Exception as exc:
                 # 不转发原始异常正文，避免文件路径或 SQL 内容混进普通服务日志。
-                print(f"[BACKUP] failed ({type(exc).__name__}); will retry", flush=True)
+                log_event(f"[BACKUP] failed ({type(exc).__name__}); will retry", flush=True)
                 delay = min(60, self.settings.interval_seconds)
             await asyncio.sleep(delay)

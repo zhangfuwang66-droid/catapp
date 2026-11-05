@@ -1,6 +1,7 @@
 """每台设备独立的 PCM 播放任务、预缓冲与 HTTP 播放客户端。"""
 
 import asyncio
+from runtime_logging import log_event
 from collections import deque
 from dataclasses import dataclass
 import struct
@@ -69,7 +70,7 @@ class AudioStream:
         self.recent_pcm_chunks.clear()
         await self.cancel_current_ai()
         if reason:
-            print(f"[HARD-RESET] {reason}", flush=True)
+            log_event("[HARD-RESET] audio_state_cleared", flush=True)
 
     def clear_stream_prebuffer(self):
         self.recent_pcm_chunks.clear()

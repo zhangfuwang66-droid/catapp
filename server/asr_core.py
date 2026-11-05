@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
+from runtime_logging import log_event
 import json
 import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -138,7 +139,7 @@ class ASRCallback:
     def _handle(self, event: Any):
         if ASR_DEBUG_RAW:
             try:
-                print("[ASR EVENT RAW]", json.dumps(_safe_to_dict(event), ensure_ascii=False), flush=True)
+                log_event("[ASR] event_received", flush=True)
             except Exception:
                 pass
 
@@ -154,14 +155,14 @@ class ASRCallback:
 
             async def _reset():
                 async with self._interrupt_lock:
-                    print(f"[ASR HOTWORD] {text}", flush=True)
+                    log_event(f"[ASR HOTWORD] detected chars={len(text)}", flush=True)
                     await self._full_reset("hotword interrupt")
 
             self._post(_reset())
             return
 
         if self._is_playing():
-            print(f"[ASR IGNORED] { _shorten(text) }", flush=True)
+            log_event(f"[ASR IGNORED] chars={len(text)}", flush=True)
             return
 
         import time

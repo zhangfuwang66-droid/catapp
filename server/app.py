@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 import asyncio
 import sqlite3
+from pathlib import Path
 from async_helpers import run_blocking
 from typing import Any, Dict, Optional
 
@@ -27,6 +28,8 @@ from device_registry import DeviceRegistry
 from web_pages import WEB_ROOT, console_html, portal_html
 from memory_store import MemoryManager, MemoryStore
 from database_backups import BackupSettings, DatabaseBackups
+from runtime_storage import RuntimeStorage, StorageSettings
+from runtime_logging import log_event
 from tools.memory_database import check_database_ready
 from identity_store import IdentityStore
 from access_control import AccessSettings, LocalAccessMiddleware, authorize_runtime, require_session
@@ -261,13 +264,16 @@ def get_index_html():
 
 
 def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memory_messages,
-               access: Optional[AccessSettings] = None, backup_settings: Optional[BackupSettings] = None) -> FastAPI:
+               access: Optional[AccessSettings] = None, backup_settings: Optional[BackupSettings] = None,
+               storage_settings: Optional[StorageSettings] = None) -> FastAPI:
     manager = MemoryManager(
         store if store is not None else MemoryStore(MEMORY_DB_PATH),
         summarizer, idle_seconds=MEMORY_IDLE_SECONDS, poll_seconds=MEMORY_POLL_SECONDS,
         on_error=_log_memory_error,
     )
-    devices = DeviceRegistry(manager)
+    storage = RuntimeStorage(Path(RECORDS_DIR), storage_settings)
+    devices = DeviceRegistry(manager, storage=storage)
+    storage.protected_paths = devices.protected_record_paths
     access = access if access is not None else AccessSettings.from_environment()
     identities = IdentityStore(manager.store.path)
     connections = ConnectionAuthorizer(identities)
@@ -282,12 +288,13 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
                         await connections.revoke_device(device.device_id)
                         await devices.retire(device.device_id)
                 except Exception as exc:
-                    print(f"[DEVICE] cleanup will retry: {type(exc).__name__}", flush=True)
+                    log_event(f"[DEVICE] cleanup will retry: {type(exc).__name__}", flush=True)
 
     @asynccontextmanager
     async def lifespan(application):
         await manager.start()
         await backups.start()
+        await storage.start()
         cleanup_task = asyncio.create_task(cleanup_revoked_devices()) if access.mode == "accounts" else None
         try:
             yield
@@ -303,7 +310,10 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
                 try:
                     await manager.close()
                 finally:
-                    await backups.close()
+                    try:
+                        await backups.close()
+                    finally:
+                        await storage.close()
 
     application = FastAPI(lifespan=lifespan)
 
@@ -317,6 +327,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.state.identities = identities
     application.state.connections = connections
     application.state.database_backups = backups
+    application.state.runtime_storage = storage
     application.state.default_user_id = MEMORY_USER_ID
     application.state.default_device_id = MEMORY_DEVICE_ID
     application.include_router(router)
@@ -333,4 +344,7 @@ memory_store = memory_manager.store
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8081, log_level="info", access_log=False)
+    from runtime_logging import configure_logging
+    from runtime_paths import DATA_ROOT
+    configure_logging(DATA_ROOT / "logs")
+    uvicorn.run(app, host="0.0.0.0", port=8081, log_config=None, log_level="info", access_log=False)

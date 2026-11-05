@@ -9,6 +9,7 @@ from typing import Awaitable, Callable, Optional
 
 import websockets
 from websockets.exceptions import ConnectionClosed
+from runtime_logging import provider_error_tag, redact_secrets
 
 REALTIME_MODEL = os.getenv("QWEN_REALTIME_MODEL", "qwen3.8-omni-flash")
 REALTIME_VOICE = os.getenv("QWEN_REALTIME_VOICE", "Sunnybobi")
@@ -148,7 +149,7 @@ class OmniRealtimeSession:
                 await self._ws.send(json.dumps(event, ensure_ascii=False))
         except ConnectionClosed as exc:
             self._connected = False
-            self._last_close_message = f"code={exc.code}, reason={exc.reason}"
+            self._last_close_message = f"code={exc.code}"
             raise RuntimeError(self._build_closed_error("WebSocket 已关闭"))
 
     async def _update_session(self):
@@ -191,7 +192,7 @@ class OmniRealtimeSession:
             await self._send_event({"type": "session.update", "session": session_payload})
             await self._debug("session.update pushed (instructions refreshed)")
         except Exception as exc:
-            await self._debug(f"update_instructions failed: {exc}")
+            await self._debug(f"update_instructions failed: {type(exc).__name__}")
 
     async def append_audio(self, pcm_chunk: bytes):
         if not pcm_chunk:
@@ -285,7 +286,8 @@ class OmniRealtimeSession:
                 if event_type == "error":
                     err_payload = event.get("error", event)
                     err_msg = json.dumps(err_payload, ensure_ascii=False)
-                    self._last_error_message = err_msg
+                    error_tag = provider_error_tag(err_payload)
+                    self._last_error_message = error_tag
                     err_type = ""
                     err_code = ""
                     if isinstance(err_payload, dict):
@@ -308,7 +310,7 @@ class OmniRealtimeSession:
                         self._connected = False
                         self._fatal_error = True
                         self._ready_event.set()
-                        await self._debug(f"server fatal error: {err_msg}")
+                        await self._debug(f"server fatal error: {error_tag}")
                     else:
                         self._responding = False
                         self._image_sent_for_turn = False
@@ -318,9 +320,9 @@ class OmniRealtimeSession:
                         self._speech_started_for_turn = False
                         self._cancel_pending_image_task()
                         await self._debug(
-                            f"server recoverable error (type={err_type} code={err_code}): {err_msg}"
+                            f"server recoverable error: {error_tag}"
                         )
-                    await self.on_error(err_msg)
+                    await self.on_error(error_tag)
                     continue
                 if event_type == "session.created":
                     self._connected = True
@@ -362,7 +364,7 @@ class OmniRealtimeSession:
                 if event_type == "conversation.item.input_audio_transcription.completed":
                     transcript = (event.get("transcript") or "").strip()
                     if transcript:
-                        await self._debug(f"input transcript: {transcript}")
+                        await self._debug(f"input transcript chars={len(transcript)}")
                         await self.on_input_transcript(transcript)
                     continue
                 if event_type in ("response.audio_transcript.delta", "response.text.delta"):
@@ -383,19 +385,19 @@ class OmniRealtimeSession:
         except ConnectionClosed as exc:
             self._connected = False
             self._responding = False
-            self._last_close_message = f"code={exc.code}, reason={exc.reason}"
+            self._last_close_message = f"code={exc.code}"
             if "Model not found" in (exc.reason or ""):
                 self._fatal_error = True
             self._ready_event.set()
-            await self._debug(f"connection closed code={exc.code} reason={exc.reason}")
+            await self._debug(f"connection closed code={exc.code}")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self._connected = False
-            self._last_error_message = str(exc)
+            self._last_error_message = type(exc).__name__
             self._ready_event.set()
-            await self._debug(f"message loop exception: {exc}")
-            await self.on_error(str(exc))
+            await self._debug(f"message loop exception: {type(exc).__name__}")
+            await self.on_error(type(exc).__name__)
 
     def _cancel_pending_image_task(self):
         task = self._pending_image_task
@@ -453,7 +455,7 @@ class OmniRealtimeSession:
                 f"post_speech_audio_count={self._audio_append_count_after_speech_started}"
             )
         except Exception as exc:
-            await self._debug(f"image append failed, will retry next turn: {exc}")
+            await self._debug(f"image append failed, will retry next turn: {type(exc).__name__}")
 
     def _build_closed_error(self, default_message: str) -> str:
         detail = self._last_error_message or self._last_close_message or default_message
@@ -461,4 +463,4 @@ class OmniRealtimeSession:
 
     async def _debug(self, message: str):
         if self.on_debug is not None:
-            await self.on_debug(message)
+            await self.on_debug(redact_secrets(message))

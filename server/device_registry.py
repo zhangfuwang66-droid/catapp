@@ -10,8 +10,9 @@ from memory_store import MemoryManager
 
 
 class DeviceRegistry:
-    def __init__(self, memory_manager: MemoryManager):
+    def __init__(self, memory_manager: MemoryManager, *, storage=None):
         self.memory_manager = memory_manager
+        self.storage = storage
         self.devices: Dict[str, DeviceRuntime] = {}
         self._locks: Dict[str, asyncio.Lock] = {}
 
@@ -30,13 +31,16 @@ class DeviceRegistry:
         validate_device_id(device_id)
         runtime = self.devices.get(device_id)
         if runtime is None:
-            runtime = DeviceRuntime(device_id, user_id, self.memory_manager)
+            runtime = DeviceRuntime(device_id, user_id, self.memory_manager, storage=self.storage)
             self.devices[device_id] = runtime
         elif runtime.user_id != user_id:
             raise ValueError("设备运行身份与当前归属不一致")
         elif runtime._closed:
             raise ValueError("设备正在清理，请稍后重试")
         return runtime
+
+    def protected_record_paths(self):
+        return {entry["image_path"] for runtime in self.devices.values() for entry in runtime.recording_entries}
 
     async def retire(self, device_id: str):
         async with self.locked(device_id):

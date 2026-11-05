@@ -1,6 +1,7 @@
 """双设备模拟验证：连接、控制、记录和记忆均不访问硬件或云模型。"""
 
 import asyncio
+import json
 from contextlib import ExitStack
 from pathlib import Path
 import tempfile
@@ -16,6 +17,7 @@ from device_connections import DeviceConnectionSlot
 from device_registry import DeviceRegistry
 from memory_store import MemoryManager, MemoryStore, SummaryResult
 from omni_realtime_client import OmniRealtimeSession
+from runtime_storage import RuntimeStorage, StorageSettings
 
 
 async def summarize(messages):
@@ -86,6 +88,26 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_concurrent_ui_initialization_uses_one_conversation(self):
         contexts = await asyncio.gather(*(self.a._ensure_ui_memory_context() for _ in range(8)))
         self.assertEqual(len({context[0] for context in contexts}), 1)
+
+    async def test_full_recording_quota_pauses_and_notifies_only_affected_device(self):
+        self.a.storage = RuntimeStorage(Path(runtime_module.RECORDS_DIR),
+                                       StorageSettings(max_bytes=1, min_free_bytes=0))
+        self.a.recording_active = self.b.recording_active = True
+        self.a.recording_session_id = "20261105-120000"
+        self.a.last_frames.append((runtime_module.time.time(), b"synthetic-image"))
+        notify = AsyncMock()
+        describe = AsyncMock()
+        with patch.object(self.a, "ui_broadcast_raw", notify), \
+                patch.object(runtime_module, "describe_image_async", describe):
+            self.assertIsNone(await self.a._record_tick_once())
+        self.assertFalse(self.a.recording_active)
+        self.assertTrue(self.b.recording_active)
+        self.assertEqual(self.a.recording_entries, [])
+        describe.assert_not_awaited()
+        message = json.loads(notify.await_args.args[0].removeprefix("RECORD:"))
+        self.assertEqual(message["kind"], "error")
+        self.assertFalse(message["payload"]["state"]["active"])
+        self.assertIn("存储空间不足", message["payload"]["message"])
 
     async def test_close_cancels_owned_tasks_and_rejects_invalid_device_paths(self):
         task = self.a.spawn_background(asyncio.Event().wait())

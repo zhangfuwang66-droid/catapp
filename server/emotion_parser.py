@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+from runtime_logging import log_event
 from typing import Dict
 
 from openai import OpenAI
@@ -63,5 +64,5 @@ def analyze_emotion(text: str) -> str:
             if candidate in emotion:
                 return candidate
     except Exception as exc:
-        print(f"[EMOTION] parse failed: {exc}", flush=True)
+        log_event(f"[EMOTION] parse failed: {type(exc).__name__}", flush=True)
     return DEFAULT_EMOTION

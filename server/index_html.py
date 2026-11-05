@@ -1409,6 +1409,9 @@ function handleRecordEvent(evt){
   } else if(evt.kind === 'stopped'){
     if(evt.payload && evt.payload.state) applyRecordState(evt.payload.state);
     toast('info','记录已停止');
+  } else if(evt.kind === 'error'){
+    if(evt.payload && evt.payload.state) applyRecordState(evt.payload.state);
+    toast('error', (evt.payload && evt.payload.message) || '录制已暂停');
   } else if(evt.kind === 'entry'){
     entriesCache.push(evt.payload);
     recCountEl.textContent = entriesCache.length;

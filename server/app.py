@@ -23,6 +23,7 @@ from memory_store import MemoryManager, MemoryStore
 from identity_store import IdentityStore
 from access_control import AccessSettings, LocalAccessMiddleware, require_session, reject
 from auth_routes import router as auth_router
+from device_routes import router as devices_router
 
 router = APIRouter()
 
@@ -222,6 +223,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.state.default_device_id = MEMORY_DEVICE_ID
     application.include_router(router)
     application.include_router(auth_router)
+    application.include_router(devices_router)
     application.add_middleware(LocalAccessMiddleware, settings=access)
     return application
 

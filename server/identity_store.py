@@ -19,6 +19,7 @@ import uuid
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from argon2.low_level import Type
+from device_identity import validate_device_id
 
 
 MIGRATIONS = (
@@ -44,6 +45,34 @@ MIGRATIONS = (
             hits INTEGER NOT NULL
         )""",
     ),
+    (
+        """CREATE TABLE devices (
+            id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            owner_user_id TEXT REFERENCES auth_users(id),
+            created_at REAL NOT NULL,
+            bound_at REAL,
+            revoked_at REAL
+        )""",
+        "CREATE INDEX idx_devices_owner ON devices(owner_user_id)",
+        """CREATE TABLE device_credentials (
+            token_hash TEXT PRIMARY KEY,
+            device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+            created_at REAL NOT NULL,
+            revoked_at REAL
+        )""",
+        "CREATE INDEX idx_device_credentials_device ON device_credentials(device_id)",
+        """CREATE TABLE device_pairings (
+            code_hash TEXT PRIMARY KEY,
+            device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            claimed_by TEXT REFERENCES auth_users(id),
+            claimed_at REAL,
+            invalidated_at REAL
+        )""",
+        "CREATE INDEX idx_device_pairings_device ON device_pairings(device_id)",
+    ),
 )
 
 
@@ -57,6 +86,19 @@ class User:
 class SessionGrant:
     user: User
     token: str = field(repr=False)
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class DeviceCredential:
+    device_id: str
+    token: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class PairingGrant:
+    device_id: str
+    code: str = field(repr=False)
     expires_at: float
 
 
@@ -240,3 +282,132 @@ class IdentityStore:
         with self._transaction(write=True) as connection:
             connection.execute("UPDATE auth_sessions SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL",
                                (self.clock(), token_digest(token)))
+
+    def register_device(self, device_id: str, display_name: str) -> DeviceCredential:
+        validate_device_id(device_id)
+        display_name = display_name.strip()
+        if not 1 <= len(display_name) <= 80 or any(ord(c) < 32 for c in display_name):
+            raise ValueError("设备名称需为 1～80 个可显示字符")
+        grant = DeviceCredential(device_id, secrets.token_urlsafe(32))
+        now = self.clock()
+        with self._transaction(write=True) as connection:
+            try:
+                connection.execute("INSERT INTO devices(id, display_name, created_at) VALUES (?, ?, ?)",
+                                   (device_id, display_name, now))
+            except sqlite3.IntegrityError:
+                raise ValueError("设备已登记，请核对编号或使用凭证轮换") from None
+            connection.execute("INSERT INTO device_credentials(token_hash, device_id, created_at) VALUES (?, ?, ?)",
+                               (token_digest(grant.token), device_id, now))
+        return grant
+
+    def rotate_device_credential(self, device_id: str) -> DeviceCredential:
+        validate_device_id(device_id)
+        grant = DeviceCredential(device_id, secrets.token_urlsafe(32))
+        now = self.clock()
+        with self._transaction(write=True) as connection:
+            if connection.execute("SELECT id FROM devices WHERE id=?", (device_id,)).fetchone() is None:
+                raise ValueError("设备未登记")
+            connection.execute("UPDATE device_credentials SET revoked_at=? WHERE device_id=? AND revoked_at IS NULL", (now, device_id))
+            connection.execute("UPDATE device_pairings SET invalidated_at=? WHERE device_id=? AND claimed_at IS NULL", (now, device_id))
+            connection.execute("INSERT INTO device_credentials(token_hash, device_id, created_at) VALUES (?, ?, ?)",
+                               (token_digest(grant.token), device_id, now))
+            connection.execute("UPDATE devices SET revoked_at=NULL WHERE id=?", (device_id,))
+        return grant
+
+    def credential_device(self, device_id: str, token: str) -> Optional[dict]:
+        try:
+            validate_device_id(device_id)
+        except ValueError:
+            return None
+        if not isinstance(token, str) or not 32 <= len(token) <= 128:
+            return None
+        with self._transaction() as connection:
+            row = connection.execute("""SELECT d.* FROM devices d
+                JOIN device_credentials c ON c.device_id=d.id
+                WHERE d.id=? AND c.token_hash=? AND c.revoked_at IS NULL AND d.revoked_at IS NULL""",
+                (device_id, token_digest(token)),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_devices(self, user_id: Optional[str] = None) -> list[dict]:
+        query = "SELECT id, display_name, owner_user_id, created_at, bound_at, revoked_at FROM devices"
+        arguments = ()
+        if user_id is not None:
+            query += " WHERE owner_user_id=?"
+            arguments = (user_id,)
+        query += " ORDER BY created_at, id"
+        with self._transaction() as connection:
+            return [dict(row) for row in connection.execute(query, arguments)]
+
+    def owned_device(self, device_id: str, user_id: str) -> Optional[dict]:
+        with self._transaction() as connection:
+            row = connection.execute("SELECT * FROM devices WHERE id=? AND owner_user_id=? AND revoked_at IS NULL",
+                                     (device_id, user_id)).fetchone()
+        return dict(row) if row else None
+
+    def revoke_device(self, device_id: str, *, owner_user_id: Optional[str] = None):
+        now = self.clock()
+        with self._transaction(write=True) as connection:
+            row = connection.execute("SELECT owner_user_id FROM devices WHERE id=?", (device_id,)).fetchone()
+            if row is None or (owner_user_id is not None and row["owner_user_id"] != owner_user_id):
+                raise ValueError("设备不存在或无权操作")
+            connection.execute("UPDATE devices SET revoked_at=? WHERE id=?", (now, device_id))
+            connection.execute("UPDATE device_credentials SET revoked_at=? WHERE device_id=? AND revoked_at IS NULL", (now, device_id))
+            connection.execute("UPDATE device_pairings SET invalidated_at=? WHERE device_id=? AND claimed_at IS NULL", (now, device_id))
+
+    def request_pairing(self, device_id: str, token: str) -> PairingGrant:
+        if self.credential_device(device_id, token) is None:
+            raise ValueError("设备凭证无效")
+        self.consume_rate_limit("pair-request:" + device_id, limit=1, window=30)
+        now = self.clock()
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        raw_code = "".join(secrets.choice(alphabet) for _ in range(8))
+        with self._transaction(write=True) as connection:
+            row = connection.execute("""SELECT d.owner_user_id FROM devices d
+                JOIN device_credentials c ON c.device_id=d.id
+                WHERE d.id=? AND c.token_hash=? AND c.revoked_at IS NULL AND d.revoked_at IS NULL""",
+                (device_id, token_digest(token)),
+            ).fetchone()
+            if row is None:
+                raise ValueError("设备凭证无效")
+            if row["owner_user_id"] is not None:
+                raise ValueError("设备已绑定账号")
+            connection.execute("UPDATE device_pairings SET invalidated_at=? WHERE device_id=? AND claimed_at IS NULL AND invalidated_at IS NULL",
+                               (now, device_id))
+            connection.execute("DELETE FROM device_pairings WHERE expires_at<? AND claimed_at IS NULL", (now - 86400,))
+            # 极低概率的随机码碰撞仍由唯一约束检测，重新生成最多五次。
+            for attempt in range(5):
+                try:
+                    connection.execute("INSERT INTO device_pairings(code_hash, device_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                                       (token_digest(raw_code), device_id, now, now + 300))
+                    break
+                except sqlite3.IntegrityError:
+                    if attempt == 4:
+                        raise RuntimeError("配对码生成失败，请稍后重试") from None
+                    raw_code = "".join(secrets.choice(alphabet) for _ in range(8))
+        return PairingGrant(device_id, raw_code[:4] + "-" + raw_code[4:], now + 300)
+
+    def claim_pairing(self, code: str, user_id: str, *, client_key: str) -> dict:
+        self.consume_rate_limit("pair-claim-user:" + user_id, limit=10, window=300)
+        self.consume_rate_limit("pair-claim-ip:" + token_digest(client_key), limit=30, window=300)
+        normalized = re.sub(r"[\s-]", "", code.upper())
+        if not re.fullmatch(r"[A-HJ-NP-Z2-9]{8}", normalized):
+            raise ValueError("配对码无效或已过期")
+        now = self.clock()
+        with self._transaction(write=True) as connection:
+            user = connection.execute("SELECT id FROM auth_users WHERE id=? AND disabled=0", (user_id,)).fetchone()
+            if user is None:
+                raise ValueError("账号不可用，请重新登录")
+            pairing = connection.execute("""SELECT p.code_hash, p.device_id FROM device_pairings p
+                JOIN devices d ON d.id=p.device_id
+                WHERE p.code_hash=? AND p.expires_at>? AND p.claimed_at IS NULL AND p.invalidated_at IS NULL
+                    AND d.owner_user_id IS NULL AND d.revoked_at IS NULL""", (token_digest(normalized), now)).fetchone()
+            if pairing is None:
+                raise ValueError("配对码无效或已过期")
+            connection.execute("UPDATE devices SET owner_user_id=?, bound_at=? WHERE id=? AND owner_user_id IS NULL",
+                               (user_id, now, pairing["device_id"]))
+            connection.execute("UPDATE device_pairings SET claimed_by=?, claimed_at=? WHERE code_hash=?",
+                               (user_id, now, pairing["code_hash"]))
+            connection.execute("UPDATE device_pairings SET invalidated_at=? WHERE device_id=? AND claimed_at IS NULL AND invalidated_at IS NULL",
+                               (now, pairing["device_id"]))
+            return dict(connection.execute("SELECT * FROM devices WHERE id=?", (pairing["device_id"],)).fetchone())

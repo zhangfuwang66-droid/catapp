@@ -53,7 +53,7 @@ python server/tools/memory_database.py backup --database artifacts/data/memory.s
 
 ## 第二阶段：账号基础（开发中）
 
-服务器状态已按设备拆分，`app.py` 管理路由，`device_runtime.py` 管理单台设备的会话与任务。默认 `CYBERMIAO_ACCESS_MODE=local` 保留原固件使用方式，访问范围限制在本机和私有局域网。账号模式使用 `accounts`；当前仅完成账号与登录会话，设备调用在认证接入前会拒绝，尚不能按此版本公开部署。
+服务器状态已按设备拆分，`app.py` 管理路由，`device_runtime.py` 管理单台设备的会话与任务。默认 `CYBERMIAO_ACCESS_MODE=local` 保留原固件使用方式，访问范围限制在本机和私有局域网。账号模式使用 `accounts`；账号、凭证与配对已实现，设备业务调用在完整认证接入前会拒绝，尚不能按此版本公开部署。
 
 先安装更新后的依赖，再从仓库根目录创建账号：
 
@@ -63,4 +63,13 @@ python server/tools/identity_admin.py --database artifacts/data/memory.sqlite3 u
 python server/tools/identity_admin.py --database artifacts/data/memory.sqlite3 user-password --username owner
 ```
 
-密码在终端内隐藏输入并确认，长度 10～128 个字符；重设密码会撤销已有登录。`--database` 必须指向实际后端使用的同一个数据库。身份表与聊天表存于同一文件，前述一致性备份也会包含身份表；备份仍需私密保存。设备凭证、配对页面与接口归属验证继续按第二阶段计划实施。
+密码在终端内隐藏输入并确认，长度 10～128 个字符；重设密码会撤销已有登录。`--database` 必须指向实际后端使用的同一个数据库。身份表与聊天表存于同一文件，前述一致性备份也会包含身份表；备份仍需私密保存。
+
+设备登记由终端执行，示例编号须替换成实际设备的稳定编号：
+
+```powershell
+python server/tools/identity_admin.py --database artifacts/data/memory.sqlite3 device-add --device-id cat-example --name 我的赛博小喵 --credential-output artifacts/provision/cat-example.secret.json
+python server/tools/identity_admin.py --database artifacts/data/memory.sqlite3 devices
+```
+
+凭证文件只生成一次并拒绝覆盖，已被 Git 忽略。此命令不会烧录设备；后续通过 USB 配发。`device-rotate` 配合同样的 `--credential-output` 可生成新凭证并撤销旧凭证；`device-revoke --device-id ...` 停用设备，不更换主人或转移历史记忆。若签发后文件写盘失败，使用轮换命令配发新凭证，不能从数据库取回原文。

@@ -12,6 +12,7 @@ from starlette.requests import HTTPConnection
 from starlette.responses import JSONResponse
 
 from identity_store import User, csrf_for_session
+from device_identity import validate_device_id
 
 SESSION_COOKIE = "cybermiao_session"
 LOCAL_NETWORKS = tuple(ipaddress.ip_network(network) for network in (
@@ -102,3 +103,24 @@ async def require_session_write(connection: HTTPConnection) -> User:
     if not secrets.compare_digest(expected.encode("utf-8"), supplied.encode("utf-8")):
         reject(connection, status=403, detail="请求校验失败，请刷新页面后重试")
     return user
+
+
+def bearer_token(connection: HTTPConnection) -> str:
+    value = connection.headers.get("authorization", "")
+    scheme, separator, token = value.partition(" ")
+    if not separator or scheme.lower() != "bearer" or not 32 <= len(token) <= 128:
+        reject(connection, status=401, detail="设备凭证缺失或无效")
+    return token
+
+
+async def require_device_credential(connection: HTTPConnection) -> dict:
+    device_id = connection.path_params.get("device_id", "")
+    try:
+        validate_device_id(device_id)
+    except ValueError:
+        reject(connection, status=404, detail="设备不存在")
+    token = bearer_token(connection)
+    device = await asyncio.to_thread(connection.app.state.identities.credential_device, device_id, token)
+    if device is None:
+        reject(connection, status=401, detail="设备凭证缺失或无效")
+    return device

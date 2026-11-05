@@ -1,20 +1,11 @@
 """在单个服务进程内管理设备实例；身份认证由接口层执行。"""
 
 import asyncio
-import re
 from typing import Dict
 
 from device_runtime import DeviceRuntime
+from device_identity import validate_device_id
 from memory_store import MemoryManager
-
-DEVICE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
-
-
-def validate_device_id(device_id: str) -> str:
-    if not isinstance(device_id, str) or not DEVICE_ID_PATTERN.fullmatch(device_id):
-        raise ValueError("设备编号须为 1～64 位字母、数字、下划线或连字符")
-    return device_id
-
 
 class DeviceRegistry:
     def __init__(self, memory_manager: MemoryManager):
@@ -30,6 +21,13 @@ class DeviceRegistry:
         elif runtime.user_id != user_id:
             raise ValueError("设备运行身份与当前归属不一致")
         return runtime
+
+    async def retire(self, device_id: str):
+        runtime = self.devices.get(device_id)
+        if runtime is not None:
+            await runtime.close()
+            if self.devices.get(device_id) is runtime:
+                self.devices.pop(device_id, None)
 
     async def close(self):
         devices = list(self.devices.values())

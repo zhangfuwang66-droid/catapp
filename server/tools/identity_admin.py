@@ -21,13 +21,48 @@ def main(arguments=None):
         sub = commands.add_parser(command)
         sub.add_argument("--username", required=True)
     commands.add_parser("users")
+    for command in ("device-add", "device-rotate", "device-revoke"):
+        sub = commands.add_parser(command)
+        sub.add_argument("--device-id", required=True)
+        if command in {"device-add", "device-rotate"}:
+            sub.add_argument("--credential-output", required=True, type=Path)
+        if command == "device-add":
+            sub.add_argument("--name", default="赛博小喵")
+    commands.add_parser("devices")
     options = parser.parse_args(arguments)
     try:
-        if options.command != "user-add" and not options.database.expanduser().is_file():
+        if options.command not in {"user-add", "device-add"} and not options.database.expanduser().is_file():
             raise ValueError("数据库不存在，请检查路径")
         store = IdentityStore(options.database)
         if options.command == "users":
             result = {"ok": True, "users": store.list_users()}
+        elif options.command == "devices":
+            result = {"ok": True, "devices": store.list_devices()}
+        elif options.command == "device-revoke":
+            store.revoke_device(options.device_id)
+            result = {"ok": True, "message": "设备已停用，已有凭证已撤销"}
+        elif options.command in {"device-add", "device-rotate"}:
+            output = options.credential_output.expanduser().resolve()
+            if not output.name.endswith(".secret.json"):
+                raise ValueError("凭证文件名必须以 .secret.json 结尾，避免误提交 Git")
+            output.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    if options.command == "device-add":
+                        grant = store.register_device(options.device_id, options.name)
+                    else:
+                        grant = store.rotate_device_credential(options.device_id)
+                    json.dump({"version": 1, "device_id": grant.device_id, "device_token": grant.token}, stream, ensure_ascii=False)
+                    stream.write("\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except BaseException:
+                # 只删除本次独占创建的目标，已有凭证不会被覆盖。
+                output.unlink(missing_ok=True)
+                raise
+            result = {"ok": True, "device_id": grant.device_id, "credential_file": str(output),
+                      "message": "凭证仅保存到私密文件，尚未写入设备"}
         else:
             password = getpass.getpass("请输入密码（至少 10 位，不显示）：")
             confirmation = getpass.getpass("请再次输入密码：")

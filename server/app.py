@@ -5,6 +5,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, WebSocket
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from starlette.requests import HTTPConnection
 import uvicorn
 
@@ -18,11 +20,18 @@ from device_runtime import (
 from device_registry import DeviceRegistry
 from index_html import INDEX_HTML
 from memory_store import MemoryManager, MemoryStore
+from identity_store import IdentityStore
+from access_control import AccessSettings, LocalAccessMiddleware, require_session, reject
+from auth_routes import router as auth_router
 
 router = APIRouter()
 
 
 async def get_device_runtime(connection: HTTPConnection) -> DeviceRuntime:
+    if connection.app.state.access.mode == "accounts":
+        await require_session(connection)
+        # 设备认证接入前拒绝云端设备调用，避免中间版本回退成匿名接口。
+        reject(connection, status=403, detail="设备登记与认证尚未接入")
     device_id = connection.path_params.get("device_id", connection.app.state.default_device_id)
     try:
         return connection.app.state.devices.get(device_id, connection.app.state.default_user_id)
@@ -176,13 +185,16 @@ def get_index_html():
     return INDEX_HTML
 
 
-def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memory_messages) -> FastAPI:
+def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memory_messages,
+               access: Optional[AccessSettings] = None) -> FastAPI:
     manager = MemoryManager(
         store if store is not None else MemoryStore(MEMORY_DB_PATH),
         summarizer, idle_seconds=MEMORY_IDLE_SECONDS, poll_seconds=MEMORY_POLL_SECONDS,
         on_error=_log_memory_error,
     )
     devices = DeviceRegistry(manager)
+    access = access if access is not None else AccessSettings.from_environment()
+    identities = IdentityStore(manager.store.path)
 
     @asynccontextmanager
     async def lifespan(application):
@@ -197,11 +209,20 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
                 await manager.close()
 
     application = FastAPI(lifespan=lifespan)
+
+    @application.exception_handler(RequestValidationError)
+    async def validation_error(request, exc):
+        errors = [{"type": item["type"], "loc": item["loc"], "msg": item["msg"]} for item in exc.errors()]
+        return JSONResponse({"detail": errors}, status_code=422)
     application.state.memory_manager = manager
     application.state.devices = devices
+    application.state.access = access
+    application.state.identities = identities
     application.state.default_user_id = MEMORY_USER_ID
     application.state.default_device_id = MEMORY_DEVICE_ID
     application.include_router(router)
+    application.include_router(auth_router)
+    application.add_middleware(LocalAccessMiddleware, settings=access)
     return application
 
 

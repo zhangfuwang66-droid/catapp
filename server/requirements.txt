@@ -12,3 +12,4 @@ Pillow>=10.0.0
 mediapipe>=0.10.14
 numpy>=1.26.0
 matplotlib>=3.8.0
+argon2-cffi>=23.1.0

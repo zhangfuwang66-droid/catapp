@@ -3064,4 +3064,3 @@ class DeviceRuntime:
             await self.esp32_audio_ws.send_text(f"TFTSET:{param},{value}")
             return {"ok": True, "param": param, "value": value}
         return {"ok": False, "error": "ESP32 not connected"}
-

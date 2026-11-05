@@ -2,7 +2,6 @@
 
 import asyncio
 from contextlib import ExitStack
-import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,12 +10,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-# app 的默认数据库也放在临时目录，避免测试碰到实际聊天数据。
-_import_data = tempfile.TemporaryDirectory(prefix="cybermiao-runtime-import-")
-with patch.dict(os.environ, {"CYBERMIAO_DATA_DIR": _import_data.name,
-                             "DASHSCOPE_API_KEY": "simulated-model-only",
-                             "CYBERMIAO_MEMORY_DB_PATH": str(Path(_import_data.name) / "default.sqlite3")}):
-    import app as server_app
+from support import server_app
 import device_runtime as runtime_module
 from device_connections import DeviceConnectionSlot
 from device_registry import DeviceRegistry
@@ -212,7 +206,7 @@ class DeviceEndpointsTests(unittest.TestCase):
         self.stack.enter_context(patch.object(runtime_module, "API_KEY", "simulated-model-only"))
         self.stack.enter_context(patch.object(runtime_module, "OmniRealtimeSession", FakeRealtimeSession))
         self.application = server_app.create_app(store=MemoryStore(Path(self.temp.name) / "memory.sqlite3"), summarizer=summarize)
-        self.client = self.stack.enter_context(TestClient(self.application))
+        self.client = self.stack.enter_context(TestClient(self.application, client=("127.0.0.1", 12345)))
 
     def tearDown(self):
         self.stack.close()

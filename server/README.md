@@ -50,3 +50,17 @@ python server/tools/memory_database.py backup --database artifacts/data/memory.s
 初始化与备份都会拒绝覆盖已有文件；检查命令不会创建缺失的数据库。备份通过 SQLite 备份接口读取已提交的 WAL 数据，生成可独立恢复的文件，并输出完整性结果和 SHA-256。命令只输出路径、记录数量与校验信息，不输出聊天正文。
 
 创建数据库只是部署准备。实际保存聊天还需要运行后端，并把 `CYBERMIAO_MEMORY_DB_PATH` 指向该数据库；公网设备认证和账号绑定见[第二阶段计划](../docs/第二阶段开发计划.md)。
+
+## 第二阶段：账号基础（开发中）
+
+服务器状态已按设备拆分，`app.py` 管理路由，`device_runtime.py` 管理单台设备的会话与任务。默认 `CYBERMIAO_ACCESS_MODE=local` 保留原固件使用方式，访问范围限制在本机和私有局域网。账号模式使用 `accounts`；当前仅完成账号与登录会话，设备调用在认证接入前会拒绝，尚不能按此版本公开部署。
+
+先安装更新后的依赖，再从仓库根目录创建账号：
+
+```powershell
+python server/tools/identity_admin.py --database artifacts/data/memory.sqlite3 user-add --username owner
+python server/tools/identity_admin.py --database artifacts/data/memory.sqlite3 users
+python server/tools/identity_admin.py --database artifacts/data/memory.sqlite3 user-password --username owner
+```
+
+密码在终端内隐藏输入并确认，长度 10～128 个字符；重设密码会撤销已有登录。`--database` 必须指向实际后端使用的同一个数据库。身份表与聊天表存于同一文件，前述一致性备份也会包含身份表；备份仍需私密保存。设备凭证、配对页面与接口归属验证继续按第二阶段计划实施。

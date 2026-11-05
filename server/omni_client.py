@@ -14,7 +14,7 @@ API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
 if not API_KEY:
     raise RuntimeError("未设置 DASHSCOPE_API_KEY")
 
-QWEN_MODEL = os.getenv("QWEN_OMNI_MODEL", "qwen3-omni-flash")
+QWEN_MODEL = os.getenv("QWEN_OMNI_MODEL", "qwen3.8-omni-flash")
 QWEN_VISION_MODEL = os.getenv("QWEN_VISION_MODEL", "qwen-vl-plus")
 QWEN_TEXT_MODEL = os.getenv("QWEN_TEXT_MODEL", "qwen-plus")
 

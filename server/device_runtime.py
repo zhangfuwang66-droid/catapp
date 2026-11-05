@@ -2590,7 +2590,7 @@ class DeviceRuntime:
                 if self.translation_active:
                     await self.ui_broadcast_partial("（同声传译模式已就绪…）")
                 else:
-                    await self.ui_broadcast_partial("（Qwen 3.5 Omni Realtime 已连接，开始接收音频…）")
+                    await self.ui_broadcast_partial("（Qwen Omni 已连接，开始接收音频…）")
                 return True
             except Exception as exc:
                 session = None

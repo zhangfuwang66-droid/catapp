@@ -10,7 +10,7 @@ from typing import Awaitable, Callable, Optional
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-REALTIME_MODEL = os.getenv("QWEN_REALTIME_MODEL", "qwen3.5-omni-plus-realtime")
+REALTIME_MODEL = os.getenv("QWEN_REALTIME_MODEL", "qwen3.8-omni-flash")
 REALTIME_VOICE = os.getenv("QWEN_REALTIME_VOICE", "Sunnybobi")
 REALTIME_TURN_DETECTION = os.getenv("QWEN_REALTIME_TURN_DETECTION", "server_vad")
 REALTIME_TURN_THRESHOLD = float(os.getenv("QWEN_REALTIME_TURN_THRESHOLD", "0.5"))

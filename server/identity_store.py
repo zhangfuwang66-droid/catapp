@@ -20,6 +20,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from argon2.low_level import Type
 from device_identity import validate_device_id
+from database_schema import validate_versions
 
 
 MIGRATIONS = (
@@ -154,8 +155,7 @@ class IdentityStore:
             connection.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
                 component TEXT PRIMARY KEY, version INTEGER NOT NULL
             )""")
-            row = connection.execute("SELECT version FROM schema_migrations WHERE component='identity'").fetchone()
-            version = row["version"] if row else 0
+            version = validate_versions(connection).get("identity", 0)
             if version > len(MIGRATIONS):
                 raise ValueError("身份数据库版本高于当前程序，请使用匹配版本，不能降级写入")
             for index in range(version, len(MIGRATIONS)):

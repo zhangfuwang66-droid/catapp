@@ -6,11 +6,13 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import sqlite3
 import threading
 from typing import Awaitable, Callable, Dict, Iterable, List, Optional, Set
 from async_helpers import run_blocking
+from database_schema import MEMORY_COLUMNS, MEMORY_SCHEMA_VERSION, validate_columns, validate_versions
 
 
 ROLES = {"user", "assistant", "system"}
@@ -83,6 +85,12 @@ class MemoryStore:
     def __init__(self, path: Path | str):
         self.path = Path(path).expanduser().resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            os.close(descriptor)
         self._lock = threading.RLock()
         self._initialize()
 
@@ -101,9 +109,28 @@ class MemoryStore:
         with self._lock:
             connection = self._connect()
             try:
-                connection.execute("PRAGMA journal_mode = WAL")
-                connection.executescript(self._SCHEMA)
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
+                    component TEXT PRIMARY KEY, version INTEGER NOT NULL
+                )""")
+                version = validate_versions(connection).get("memory", 0)
+                if version == 0:
+                    # 将无版本的旧表登记为第一版；已存在但不完整的表不静默修补。
+                    names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                    existing = names.intersection(MEMORY_COLUMNS)
+                    if existing:
+                        validate_columns(connection, MEMORY_COLUMNS)
+                    for statement in self._SCHEMA.split(";"):
+                        if statement.strip():
+                            connection.execute(statement)
+                    connection.execute("INSERT OR REPLACE INTO schema_migrations(component, version) VALUES ('memory', ?)",
+                                       (MEMORY_SCHEMA_VERSION,))
+                validate_columns(connection, MEMORY_COLUMNS)
                 connection.commit()
+                connection.execute("PRAGMA journal_mode = WAL")
+            except BaseException:
+                connection.rollback()
+                raise
             finally:
                 connection.close()
 
@@ -258,10 +285,13 @@ class MemoryStore:
         open_topics = self._clean_items(open_topics)
         if not summary and not memories and not open_topics:
             raise ValueError("不能保存空摘要")
+        if not isinstance(through_message_id, int) or isinstance(through_message_id, bool) or through_message_id <= 0:
+            raise ValueError("摘要消息边界必须是有效消息编号")
         now = self._now()
         with self._lock:
             connection = self._connect()
             try:
+                connection.execute("BEGIN IMMEDIATE")
                 owner = connection.execute(
                     """
                     SELECT user_id, device_id, summarized_through_message_id
@@ -274,14 +304,15 @@ class MemoryStore:
                 last_message = connection.execute(
                     """
                     SELECT id FROM messages
-                    WHERE conversation_id = ? AND id <= ?
-                    ORDER BY id DESC LIMIT 1
+                    WHERE conversation_id = ? AND id = ?
                     """,
                     (conversation_id, through_message_id),
                 ).fetchone()
                 if last_message is None:
                     raise ValueError("摘要没有对应的消息")
-                through = max(int(owner[2]), int(last_message[0]))
+                if through_message_id <= int(owner[2]):
+                    return  # 迟到或重复的模型结果不覆盖已提交的摘要、事实与进度。
+                through = through_message_id
                 connection.execute(
                     """
                     INSERT INTO conversation_summaries
@@ -331,6 +362,7 @@ class MemoryStore:
         with self._lock:
             connection = self._connect()
             try:
+                connection.execute("BEGIN")
                 messages = connection.execute(
                     """
                     SELECT m.id, m.conversation_id, m.role, m.content, m.created_at

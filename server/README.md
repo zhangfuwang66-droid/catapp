@@ -55,6 +55,18 @@ python server/tools/memory_database.py backup --database artifacts/data/memory.s
 
 `inspect` 还会检查账号/设备表、外键、事实归属、总结消息边界和真实账号与设备归属，输出各组件版本、身份表数量、待总结会话数以及数据库/WAL/可复用空间和磁盘剩余空间。只报告数量和状态，不输出聊天、账号、密码哈希或令牌；遇到关系异常会失败，供部署前人工处理。
 
+### 恢复演练与正式恢复
+
+先保存备份命令返回的 SHA-256 到独立记录。恢复默认只读预览，不创建目标目录：
+
+```powershell
+python server/tools/memory_database.py restore --backup artifacts/backups/memory-before-upgrade.sqlite3 --output artifacts/data/memory-restored.sqlite3 --sha256 备份时保存的64位校验值
+```
+
+停止后端并另行备份当前库后，在同一命令加 `--apply --confirm-service-stopped` 才实际生成恢复库。只接受包含完整性/关联检查且 SHA-256 匹配的独立备份；不接受运行中的 WAL 数据库，不覆盖已有数据库或同名 WAL/SHM/journal。先在私密临时目录完成恢复，再使用同盘硬链接无覆盖发布；文件系统不支持硬链接时安全失败。
+
+恢复库保留聊天、摘要、事实、账号与绑定，撤销备份中的网页登录会话并作废未领取配对码，需要重新登录、重新申请临时码。设备长期凭证会恢复到备份时的状态：备份之后的停用、密码修改和凭证撤销不在旧备份中，重新上线前需管理员核对。该命令不会自动停止服务、替换当前数据库或修改服务配置；核对恢复结果后，再把后端数据库路径切换到新文件。
+
 创建数据库只是部署准备。实际保存聊天还需要运行后端，并把 `CYBERMIAO_MEMORY_DB_PATH` 指向该数据库；公网设备认证和账号绑定见[第二阶段计划](../docs/第二阶段开发计划.md)。
 
 ## 旧测试记忆迁移

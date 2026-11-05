@@ -7,9 +7,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import shutil
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -18,6 +20,23 @@ from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, validate_columns, 
 
 
 TABLES = ("conversations", "messages", "conversation_summaries", "memories")
+
+
+def file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            hasher.update(block)
+    return hasher.hexdigest()
+
+
+def database_sidecars(path: Path):
+    return [path.with_name(path.name + suffix) for suffix in ("-wal", "-shm", "-journal")]
+
+
+def ensure_new_database_path(path: Path):
+    if any(os.path.lexists(candidate) for candidate in [path, *database_sidecars(path)]):
+        raise FileExistsError("目标数据库或其 WAL/SHM/journal 文件已存在，拒绝覆盖")
 
 
 def open_readonly(database: Path) -> sqlite3.Connection:
@@ -108,6 +127,7 @@ def backup_database(database: Path, output: Path, *, timeout: float = 30) -> dic
     inspect_database(database)
     output = output.expanduser().resolve()
     output.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    ensure_new_database_path(output)
     descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     os.close(descriptor)
     source = None
@@ -127,14 +147,7 @@ def backup_database(database: Path, output: Path, *, timeout: float = 30) -> dic
         destination.close()
         destination = None
         report = inspect_database(output)
-        with output.open("rb") as stream:
-            digest = hashlib.file_digest(stream, "sha256").hexdigest() if sys.version_info >= (3, 11) else None
-            if digest is None:
-                hasher = hashlib.sha256()
-                for block in iter(lambda: stream.read(1024 * 1024), b""):
-                    hasher.update(block)
-                digest = hasher.hexdigest()
-        return {**report, "source": str(database), "bytes": output.stat().st_size, "sha256": digest}
+        return {**report, "source": str(database), "bytes": output.stat().st_size, "sha256": file_sha256(output)}
     except BaseException:
         if destination is not None:
             destination.close()
@@ -143,10 +156,76 @@ def backup_database(database: Path, output: Path, *, timeout: float = 30) -> dic
             source = None
         # 只清理本次独占创建的备份文件；原始数据库保持只读。
         output.unlink(missing_ok=True)
+        for sidecar in database_sidecars(output):
+            sidecar.unlink(missing_ok=True)
         raise
     finally:
         if source is not None:
             source.close()
+
+
+def restore_database(backup: Path, output: Path, expected_sha256: str, *, apply: bool = False,
+                     offline: bool = False) -> dict:
+    """只恢复到新路径。默认预览，实际执行必须确认停服并核对独立备份的校验值。"""
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256 or ""):
+        raise ValueError("请提供备份时另行保存的完整 SHA-256")
+    if apply and not offline:
+        raise ValueError("实际恢复需要 --confirm-service-stopped，请先停止后端并保存当前数据库备份")
+    backup = backup.expanduser().resolve(strict=True)
+    output = output.expanduser().resolve()
+    ensure_new_database_path(output)
+    digest = file_sha256(backup)
+    if digest != expected_sha256.lower():
+        raise ValueError("备份 SHA-256 不匹配，未创建恢复文件")
+    connection = open_readonly(backup)
+    try:
+        journal = connection.execute("PRAGMA journal_mode").fetchone()[0]
+        if journal.lower() != "delete" or any(path.exists() for path in database_sidecars(backup)):
+            raise ValueError("恢复源必须是独立备份文件，请先通过 backup 命令生成，不能使用运行中的数据库")
+    finally:
+        connection.close()
+    source_report = inspect_database(backup)
+    plan = {"ok": True, "applied": False, "backup": str(backup), "output": str(output),
+            "source_sha256": digest, "row_counts": source_report["row_counts"],
+            "identity_row_counts": source_report["identity_row_counts"],
+            "schema_versions": source_report["schema_versions"],
+            "sessions_will_be_revoked": True, "pairing_codes_will_be_invalidated": True,
+            "device_credentials": "恢复到备份时的状态；之后的撤销记录不会包含在旧备份中，请核对后再上线"}
+    if not apply:
+        return plan
+    output.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    # 先在同一文件系统的私密临时目录完成备份、会话撤销和验证，最后无覆盖发布。
+    with tempfile.TemporaryDirectory(prefix=".cybermiao-restore-", dir=output.parent) as directory:
+        staged = Path(directory) / "restored.sqlite3"
+        backup_database(backup, staged)
+        connection = sqlite3.connect(staged)
+        try:
+            now = time.time()
+            session_count = 0
+            pairing_count = 0
+            tables = source_report["identity_row_counts"]
+            if "auth_sessions" in tables:
+                session_count = connection.execute("UPDATE auth_sessions SET revoked_at=? WHERE revoked_at IS NULL", (now,)).rowcount
+            if "device_pairings" in tables:
+                pairing_count = connection.execute("""UPDATE device_pairings SET invalidated_at=?
+                    WHERE claimed_at IS NULL AND invalidated_at IS NULL""", (now,)).rowcount
+            connection.commit()
+        finally:
+            connection.close()
+        inspect_database(staged)
+        if file_sha256(backup) != digest:
+            raise ValueError("恢复过程中源备份发生变化，未发布恢复文件")
+        with staged.open("r+b") as stream:
+            os.fsync(stream.fileno())
+        ensure_new_database_path(output)
+        os.link(staged, output)  # 同盘硬链接发布，不允许覆盖并发创建的同名目标。
+        try:
+            report = inspect_database(output)
+            return {**plan, "applied": True, "restored": report, "sha256": file_sha256(output),
+                    "revoked_sessions": session_count, "invalidated_pairings": pairing_count}
+        except BaseException:
+            output.unlink()
+            raise
 
 
 def main(arguments: list[str] | None = None) -> int:
@@ -157,9 +236,18 @@ def main(arguments: list[str] | None = None) -> int:
         command.add_argument("--database", required=True, type=Path)
         if name == "backup":
             command.add_argument("--output", required=True, type=Path)
+    restore = subparsers.add_parser("restore", help="默认只读预览；仅恢复到不存在的新路径")
+    restore.add_argument("--backup", required=True, type=Path)
+    restore.add_argument("--output", required=True, type=Path)
+    restore.add_argument("--sha256", required=True)
+    restore.add_argument("--apply", action="store_true")
+    restore.add_argument("--confirm-service-stopped", action="store_true")
     options = parser.parse_args(arguments)
     try:
-        if options.command == "init":
+        if options.command == "restore":
+            report = restore_database(options.backup, options.output, options.sha256,
+                                      apply=options.apply, offline=options.confirm_service_stopped)
+        elif options.command == "init":
             report = initialize_database(options.database)
         elif options.command == "backup":
             report = backup_database(options.database, options.output)

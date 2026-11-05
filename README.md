@@ -109,6 +109,7 @@ python desktop/src/launcher.py
 
 ```powershell
 python -m unittest discover -s desktop/tests -v
+$env:PYTHONPATH = 'server'
 python -m unittest discover -s server/tests -v
 ```
 

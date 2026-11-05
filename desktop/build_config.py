@@ -43,7 +43,7 @@ def collect_bundle_files():
     # CustomTkinter 的字体和主题 JSON 必须随单文件 exe 一同打包。
     datas += collect_data_files("customtkinter")
     hiddenimports += [
-        "app", "runtime_paths", "pystray._win32", "PIL.IcoImagePlugin",
+        "app", "memory_store", "runtime_paths", "pystray._win32", "PIL.IcoImagePlugin",
         "uvicorn.logging", "uvicorn.loops.asyncio", "uvicorn.lifespan.on",
         "uvicorn.protocols.http.h11_impl", "uvicorn.protocols.websockets.websockets_sansio_impl",
     ]

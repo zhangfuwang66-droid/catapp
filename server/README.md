@@ -12,6 +12,10 @@
 
 实时对话和普通多模态调用默认使用 `qwen3.8-omni-flash`，分别可通过 `QWEN_REALTIME_MODEL` 和 `QWEN_OMNI_MODEL` 覆盖。实时对话仍使用 DashScope Realtime WebSocket 接口；此模型在该接口下的可用性、音色和会话参数兼容性需要真实云端联调确认。视觉问答、文本摘要和情绪解析继续使用各自配置的模型。
 
+## 云端测试部署
+
+第一台云服务器使用独立 systemd 服务和独立 SQLite 数据目录；入口强制账号模式、单 worker，并只监听回环地址 `127.0.0.1:8081`，本阶段通过 SSH 隧道访问。Linux x86_64 / Python 3.10 的部署、带哈希依赖安装、API Key 配置和回退步骤见[云端测试部署说明](deploy/README.md)。
+
 运行模块直接保留在本目录；辅助的配网语音生成工具放在 `tools/`，它需要访问云端 TTS，生成的 `config_prompt.pcm` 用于 ESP32 资源烧录。
 
 `.venv/`、`.env`、`models/`、`records/` 和 Python 缓存均不提交 Git。桌面模式的数据默认写入 `%LOCALAPPDATA%\CyberMiao`，直接运行服务器时默认写入本目录。

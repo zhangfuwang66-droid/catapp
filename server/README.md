@@ -1,6 +1,6 @@
 # Python 服务器
 
-`app.py` 是 FastAPI 入口，默认监听 `0.0.0.0:8081`，健康检查为 `/api/health`。日常使用建议双击根目录的 `CyberMiao.exe` 启动桌面控制台。
+`app.py` 是 FastAPI 入口，默认监听 `0.0.0.0:8081`，健康检查为 `/api/health`。Windows 日常使用可通过桌面控制台启动服务，见[软件使用手册](../docs/使用手册.md)。
 
 单独开发服务器时，在本目录的 `.env` 中配置 `DASHSCOPE_API_KEY`，再执行：
 
@@ -10,11 +10,25 @@
 
 也可运行 `start-server.ps1`。安装依赖使用 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`。
 
-实时对话和普通多模态调用默认使用 `qwen3.8-omni-flash`，分别可通过 `QWEN_REALTIME_MODEL` 和 `QWEN_OMNI_MODEL` 覆盖。实时对话仍使用 DashScope Realtime WebSocket 接口；此模型在该接口下的可用性、音色和会话参数兼容性需要真实云端联调确认。视觉问答、文本摘要和情绪解析继续使用各自配置的模型。
+## 模型配置与兼容性
+
+实时对话和普通多模态调用的源码默认值均为 `qwen3.8-omni-flash`，分别可通过 `QWEN_REALTIME_MODEL` 和 `QWEN_OMNI_MODEL` 覆盖。实时对话使用 DashScope Realtime WebSocket 接口；视觉问答、文本摘要和情绪解析使用各自配置的模型。模型名称相似不代表接口与音色可以直接互换。
+
+- 合成输入测试已验证 `qwen3.8-omni-flash-realtime` 配合 `Tina` 的实时文本、音频与单帧图片输入，以及 `qwen-plus` 的摘要输出；云端测试服务模板采用这一实时组合。
+- 同一实时模型搭配源码默认音色 `Sunnybobi` 的测试返回错误；普通 `qwen3.8-omni-flash` 的现有调用参数和独立视觉模型 `qwen-vl-plus` 也尚未通过真实调用，仍需适配。不要把实时链路成功理解为全部模型接口可用。
+- 上述验证不包含实体麦克风、扬声器、摄像头或多台设备并发。
+
+可从仓库根目录单独探测实时与摘要接口：
+
+```powershell
+python server/tools/probe_models.py --checks realtime summary --realtime-model qwen3.8-omni-flash-realtime --realtime-voice Tina --output artifacts/model-probes/check.json
+```
+
+工具优先读取进程环境中的 Key，其次 `server/.env`，最后桌面用户数据目录中的配置；不在命令参数中填写 Key。该命令会产生真实模型调用与供应商计费，参数只作用于探测进程，不会修改软件默认配置。
 
 ## 云端测试部署
 
-第一台云服务器使用独立 systemd 服务和独立 SQLite 数据目录；入口强制账号模式、单 worker，并只监听回环地址 `127.0.0.1:8081`，本阶段通过 SSH 隧道访问。Linux x86_64 / Python 3.10 的部署、带哈希依赖安装、API Key 配置和回退步骤见[云端测试部署说明](deploy/README.md)。
+云端测试模板使用独立 systemd 服务和独立 SQLite 数据目录；入口强制账号模式、单 worker，并只监听回环地址 `127.0.0.1:8081`，通过 SSH 隧道访问。Linux x86_64 / Python 3.10 的部署、带哈希依赖安装、API Key 配置和回退步骤见[云端测试部署说明](deploy/README.md)。
 
 运行模块直接保留在本目录；辅助的配网语音生成工具放在 `tools/`，它需要访问云端 TTS，生成的 `config_prompt.pcm` 用于 ESP32 资源烧录。
 
@@ -35,7 +49,7 @@
 
 只清理 `records/<设备号>/<YYYYMMDD-HHMMSS>/<时间戳>_<序号>.jpg` 的应用录制图片。当前活动列表和正在写入、描述的图片受保护，可能超过保留期限，直到释放后再清理。不清理数据库、备份、手工文件或目录链接；旧版目录不自动迁移或删除。此限额仅覆盖受管理图片，不代表整个数据目录的容量限制，数据库和备份仍需独立监控。
 
-## 第一阶段聊天记忆
+## 聊天记忆
 
 服务器把用户消息和小喵回复保存到 `memory.sqlite3`。账号模式使用已认证的主人与设备身份；本地兼容模式仍默认使用 `test-user-001` / `test-cat-001`。默认位置是运行数据目录，也可以通过 `CYBERMIAO_MEMORY_DB_PATH` 指定。
 
@@ -117,7 +131,7 @@ python server/tools/memory_database.py restore --backup artifacts/backups/memory
 
 恢复库保留聊天、摘要、事实、账号与绑定，撤销备份中的网页登录会话并作废未领取配对码，需要重新登录、重新申请临时码。设备长期凭证会恢复到备份时的状态：备份之后的停用、密码修改和凭证撤销不在旧备份中，重新上线前需管理员核对。该命令不会自动停止服务、替换当前数据库或修改服务配置；核对恢复结果后，再把后端数据库路径切换到新文件。
 
-创建数据库只是部署准备。实际保存聊天还需要运行后端，并把 `CYBERMIAO_MEMORY_DB_PATH` 指向该数据库；公网设备认证和账号绑定见[第二阶段计划](../docs/第二阶段开发计划.md)。
+创建数据库只是部署准备。实际保存聊天还需要运行后端，并把 `CYBERMIAO_MEMORY_DB_PATH` 指向该数据库；设备认证和账号绑定方法见下方“账号与设备接入”，云端环境另见[部署说明](deploy/README.md)。
 
 ## 旧测试记忆迁移
 
@@ -131,9 +145,9 @@ python server/tools/migrate_memory.py --database artifacts/data/memory.sqlite3 -
 
 确认数据归属并停止后端后，在同一命令末尾加上 `--apply --confirm-service-stopped --backup artifacts/backups/memory-before-identity.sqlite3` 才会执行。工具先取得写锁、再次检查并创建包含 WAL 的独立备份，再用事务更新会话及长期记忆的归属；保留原消息、摘要、编号和总结进度。备份存在则拒绝覆盖；中途失败回滚，已成功创建的备份保留。迁移结束后才能重新启动服务。空库无需迁移；目前未对云端数据库执行此操作。
 
-## 第二阶段：账号基础（开发中）
+## 账号与设备接入
 
-服务器状态已按设备拆分，`app.py` 管理路由，`device_runtime.py` 管理单台设备的会话与任务。默认 `CYBERMIAO_ACCESS_MODE=local` 保留原固件使用方式，访问范围限制在本机和私有局域网。账号模式使用 `accounts`，设备接口已接入凭证、登录和归属检查。账号网页已完成本地浏览器验证；新版固件与实物 TLS 联调尚未完成，正式部署仍按第二阶段计划执行。
+服务器状态已按设备拆分，`app.py` 管理路由，`device_runtime.py` 管理单台设备的会话与任务。默认 `CYBERMIAO_ACCESS_MODE=local` 保留原固件使用方式，访问范围限制在本机和私有局域网。账号模式使用 `accounts`，设备接口已接入凭证、登录和归属检查。账号与设备隔离已有自动化测试；新固件的实物 TLS 和完整音视频联调尚未完成。
 
 先安装更新后的依赖，再从仓库根目录创建账号：
 
@@ -156,7 +170,7 @@ python server/tools/identity_admin.py --database artifacts/data/memory.sqlite3 d
 
 账号模式使用 `/api/devices/{device_id}/...` 和 `/ws/devices/{device_id}/audio|camera|ui|viewer`。旧匿名入口关闭。设备麦克风、摄像头、播放流使用 `Authorization: Bearer ...`；网页通过 HttpOnly Cookie 登录，写请求附带 `Origin` 与 `/api/auth/session` 返回的 `X-CSRF-Token`。设备凭证不接受 URL 参数，也不能用于读取网页记忆和控制接口。网页退出会结束自己的订阅，设备语音可继续工作。
 
-## 账号网页本地联调
+## 账号网页与开发测试
 
 账号模式首页 `/` 提供登录、设备列表、配对码输入、在线状态、记忆查看、确认清除与停用。控制台为 `/console/{device_id}`，打开时验证登录和设备归属；页面的请求、画面与控制都使用该设备的接口，HTTPS 页面使用 WSS。退出、切换账号或权限失效会断开旧订阅，清除聊天、画面、活动图片和播放内容。页面刷新不会把 Cookie 或设备凭证写入浏览器本地存储。
 
@@ -168,7 +182,7 @@ $env:CYBERMIAO_MEMORY_DB_PATH = (Join-Path (Get-Location) 'artifacts/data/memory
 python -m uvicorn app:app --app-dir server --host 127.0.0.1 --port 8081 --workers 1
 ```
 
-浏览器访问 `http://127.0.0.1:8081/`。本例仅供本机开发，云端部署还需配置域名、HTTPS、服务进程和备份。网页资源在 `server/web/`，桌面构建配置已包含资源目录；本阶段没有重新打包 exe。旧固件仍应使用 `local` 模式，新身份协议固件完成前不能直接切换实物。
+浏览器访问 `http://127.0.0.1:8081/`。本例仅供本机开发，云端部署还需配置域名、HTTPS、服务进程和备份。网页资源在 `server/web/`，桌面构建配置已包含资源目录；这些源码更新尚未重新打包进 `v0.2.0`。旧固件应继续使用 `local` 模式，设备升级到支持身份协议的固件并完成凭证配发后，才能切换到 `accounts`。
 
 后端测试：从仓库根目录设置 `PYTHONPATH=server`，运行 `python -m unittest discover -s server/tests -v`。浏览器测试为 `node server/tests/web_ui_test.cjs`，需要可用的 Playwright、浏览器与服务器 Python 依赖；可通过 `PYTHON_EXECUTABLE` 指定解释器，`BROWSER_EXECUTABLE` 指定浏览器，`NODE_PATH` 指向 Playwright 所在的 `node_modules`。测试只启动回环地址的临时服务，用模拟账号和数据库验证页面操作，不调用真实模型或写入硬件；截图存入已忽略的 `artifacts/web-tests/`。
 

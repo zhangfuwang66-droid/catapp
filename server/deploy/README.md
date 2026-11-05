@@ -1,8 +1,8 @@
 # 云端测试部署
 
-此目录只描述第一台云服务器的**测试部署**。入口强制使用账号模式、单个 Uvicorn worker，并只监听 `127.0.0.1:8081`。公网访问必须通过 SSH 隧道；本阶段不开放公网 HTTP，也不配置反向代理和 TLS。
+本目录提供 Linux x86_64 / Python 3.10 的隔离测试部署示例。入口强制使用账号模式、单个 Uvicorn worker，并只监听 `127.0.0.1:8081`。电脑通过 SSH 隧道访问；此模板不开放公网 HTTP，也不包含反向代理和 TLS 配置。
 
-本次实际部署结果和验证边界见 [2026-11-05 验收记录](验收记录-2026-11-05.md)。
+下文的 `YOUR_SERVER_IP`、账号和设备编号需替换为自己的环境。SSH 隧道只供电脑访问，实体小猫连接云端仍需另行准备受信任的 HTTPS/WSS 入口。
 
 ## 本机确认
 
@@ -46,7 +46,7 @@ install -o root -g root -m 0600 /path/to/api_key /etc/cybermiao-test/api_key
 
 ```powershell
 tar --exclude=.git --exclude='*/.venv' --exclude='*/.env' --exclude='*/.env.*' --exclude=artifacts --exclude='*.sqlite3*' --exclude='*.secret.*' --exclude='cybermiao-*.json' --exclude=records --exclude=models --exclude=snapshots --exclude=dist --exclude='desktop/config/settings.ini' -czf $env:TEMP\cybermiao-test-source.tgz server docs README.md
-scp $env:TEMP\cybermiao-test-source.tgz root@123.57.23.227:/tmp/
+scp $env:TEMP\cybermiao-test-source.tgz root@YOUR_SERVER_IP:/tmp/
 ```
 
 在服务器上解包并创建环境。系统需具备 Python 3.10 的 `venv` 和 `ensurepip`（Ubuntu 上通常来自 `python3.10-venv`）；若缺少，不要直接更改系统软件包，先确认安装方式：
@@ -61,7 +61,7 @@ chmod -R go-w /opt/cybermiao-test/app
 
 从 Windows 打包上传的源码可能带有过宽的文件权限。上述命令将测试代码归属 root 并移除组和其他用户的写权限；服务由独立的 `cybermiao-test` 用户运行，Python 字节码也不会写入源码目录。不要将此权限调整用于现有项目或数据目录。
 
-本次测试服务器缺少 `ensurepip`。已在隔离目录使用 `python3.10 -m venv --without-pip /opt/cybermiao-test/venv` 创建环境，并使用已校验 SHA-256 的 pip 25.3 wheel 引导安装，没有安装系统包。需要在同版本环境重做时，可在创建空虚拟环境后执行：
+若环境缺少 `ensurepip`，可以先用 `python3.10 -m venv --without-pip /opt/cybermiao-test/venv` 创建空环境，再用校验后的 pip wheel 引导安装。以下是 pip 25.3 的固定版本示例，仅用于已确认兼容的环境：
 
 ```bash
 curl --fail --location --output /opt/cybermiao-test/pip-25.3-py3-none-any.whl https://files.pythonhosted.org/packages/44/3c/d717024885424591d5376220b5e836c2d5293ce2011523c9de23ff7bf068/pip-25.3-py3-none-any.whl
@@ -83,7 +83,7 @@ uv pip compile --python-version 3.10 --python-platform x86_64-manylinux_2_17 --g
 
 ### Ubuntu 22.04 的隔离图形运行库
 
-本次 Ubuntu 22.04 x86_64 服务器缺少 `libGL.so.1`，会导致 OpenCV 和 MediaPipe 无法导入。以下操作从 Ubuntu 已配置的软件源下载三个运行库，只解包到测试目录，不安装系统包。校验值针对 Ubuntu 22.04 的 `1.4.0-1` amd64 包；如果来源、版本或架构不同，应先核对对应软件源的签名索引和哈希，不要照搬：
+若 Ubuntu 22.04 x86_64 环境缺少 `libGL.so.1`，OpenCV 和 MediaPipe 可能无法导入。以下示例从 Ubuntu 已配置的软件源下载三个运行库，只解包到测试目录，不安装系统包。校验值针对 Ubuntu 22.04 的 `1.4.0-1` amd64 包；如果来源、版本或架构不同，应先核对对应软件源的签名索引和哈希，不要照搬：
 
 ```bash
 install -d -m 0755 /opt/cybermiao-test/native/debs /opt/cybermiao-test/native/root
@@ -129,7 +129,7 @@ sudo -u cybermiao-test /opt/cybermiao-test/venv/bin/python /opt/cybermiao-test/a
 chmod 0600 /var/lib/cybermiao-test/provision/cat-test-001.secret.json
 ```
 
-凭证 JSON 必须通过受保护的 USB 配发流程写入设备；不能放进 URL、Git、普通日志或截图。当前只做服务器和模拟设备验收，不会因为这次部署自动绑定实体设备。
+示例 `cat-test-001` 仅供模拟验收，不能替代实体小猫的真实编号。实体接入时，先通过 [USB 工具](../../firmware/tools/README.md) 查询编号，再登记该编号并安全配发凭证；JSON 不能放进 URL、Git、普通日志或截图。服务器部署不会自动绑定实体设备。
 
 ## 安装服务和回环验收
 
@@ -156,7 +156,7 @@ ls -la /var/lib/cybermiao-test/logs /var/lib/cybermiao-test/backups
 保持服务只监听回环地址，在本机 PowerShell 打开隧道：
 
 ```powershell
-ssh -N -L 127.0.0.1:18081:127.0.0.1:8081 root@123.57.23.227
+ssh -N -L 127.0.0.1:18081:127.0.0.1:8081 root@YOUR_SERVER_IP
 ```
 
 再在本机浏览器打开 `http://127.0.0.1:18081/`，使用刚创建的账号登录。这里的 `18081` 是本机隧道端口，云端服务仍监听 `8081`。网页控制台的设备列表应为空，配对测试设备后只能看到自己的设备；另一账号不能读取该设备的记忆。测试完成后关闭 SSH 窗口即可断开隧道。
@@ -173,4 +173,4 @@ rm -rf /opt/cybermiao-test /etc/cybermiao-test /var/lib/cybermiao-test
 userdel cybermiao-test
 ```
 
-正式部署前仍需：域名、HTTPS/WSS、异机备份、监控、真实设备凭证配发、固件 TLS 联调，以及普通 Omni/视觉接口的单独适配。此次模型验证只确认了 `qwen3.8-omni-flash-realtime` + `Tina` 的实时链路和 `qwen-plus` 摘要。
+正式部署前仍需完成域名与 HTTPS/WSS、异机备份、监控、真实设备凭证配发、固件 TLS 联调和容量评估。模型配置、兼容性限制与真实接口探测方法见[服务器说明](../README.md)。

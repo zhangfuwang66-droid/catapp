@@ -1,9 +1,10 @@
 """FastAPI 生命周期和接口；每台设备的业务状态由 DeviceRuntime 持有。"""
 
 from contextlib import asynccontextmanager
+import asyncio
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, WebSocket
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -21,23 +22,37 @@ from device_registry import DeviceRegistry
 from index_html import INDEX_HTML
 from memory_store import MemoryManager, MemoryStore
 from identity_store import IdentityStore
-from access_control import AccessSettings, LocalAccessMiddleware, require_session, reject
+from access_control import AccessSettings, LocalAccessMiddleware, authorize_runtime
+from connection_authorization import ConnectionAuthorizer, AuthorizedStreamingResponse
 from auth_routes import router as auth_router
 from device_routes import router as devices_router
 
 router = APIRouter()
 
 
-async def get_device_runtime(connection: HTTPConnection) -> DeviceRuntime:
-    if connection.app.state.access.mode == "accounts":
-        await require_session(connection)
-        # 设备认证接入前拒绝云端设备调用，避免中间版本回退成匿名接口。
-        reject(connection, status=403, detail="设备登记与认证尚未接入")
-    device_id = connection.path_params.get("device_id", connection.app.state.default_device_id)
+async def resolve_runtime(connection: HTTPConnection, *, hardware=False, playback=False) -> DeviceRuntime:
+    device_id, user_id = await authorize_runtime(connection, hardware=hardware, playback=playback)
     try:
-        return connection.app.state.devices.get(device_id, connection.app.state.default_user_id)
+        return connection.app.state.devices.get(device_id, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+async def get_device_runtime(connection: HTTPConnection) -> DeviceRuntime:
+    return await resolve_runtime(connection)
+
+
+async def get_hardware_runtime(connection: HTTPConnection) -> DeviceRuntime:
+    return await resolve_runtime(connection, hardware=True)
+
+
+async def get_playback_runtime(connection: HTTPConnection) -> DeviceRuntime:
+    return await resolve_runtime(connection, playback=True)
+
+
+async def run_authorized_websocket(ws: WebSocket, handler):
+    authorization = getattr(ws.state, "device_authorization", None)
+    await ws.app.state.connections.run(authorization, handler, ws=ws)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -52,8 +67,10 @@ def health():
 
 @router.get("/stream.wav")
 @router.get("/api/devices/{device_id}/stream.wav")
-async def stream_wav(runtime: DeviceRuntime = Depends(get_device_runtime)):
-    return runtime.audio.response()
+async def stream_wav(request: Request, runtime: DeviceRuntime = Depends(get_playback_runtime)):
+    response = runtime.audio.response()
+    authorization = getattr(request.state, "device_authorization", None)
+    return AuthorizedStreamingResponse(response, request.app.state.connections, authorization) if authorization else response
 
 
 @router.get("/api/memory")
@@ -77,48 +94,57 @@ def repeat_wav(runtime: DeviceRuntime = Depends(get_device_runtime)):
 @router.websocket("/ws_ui")
 @router.websocket("/ws/devices/{device_id}/ui")
 async def ws_ui(ws: WebSocket, runtime: DeviceRuntime = Depends(get_device_runtime)):
-    return await runtime.serve_client(ws, runtime.ws_ui)
+    await run_authorized_websocket(ws, lambda: runtime.serve_client(ws, runtime.ws_ui))
 
 
 @router.websocket("/ws_audio")
 @router.websocket("/ws/devices/{device_id}/audio")
-async def ws_audio(ws: WebSocket, runtime: DeviceRuntime = Depends(get_device_runtime)):
-    return await runtime.audio_connection.run(ws, runtime.ws_audio)
+async def ws_audio(ws: WebSocket, runtime: DeviceRuntime = Depends(get_hardware_runtime)):
+    await run_authorized_websocket(ws, lambda: runtime.audio_connection.run(ws, runtime.ws_audio))
 
 
 @router.websocket("/ws/camera")
 @router.websocket("/ws/devices/{device_id}/camera")
-async def ws_camera_esp(ws: WebSocket, runtime: DeviceRuntime = Depends(get_device_runtime)):
-    return await runtime.camera_connection.run(ws, runtime.ws_camera_esp)
+async def ws_camera_esp(ws: WebSocket, runtime: DeviceRuntime = Depends(get_hardware_runtime)):
+    await run_authorized_websocket(ws, lambda: runtime.camera_connection.run(ws, runtime.ws_camera_esp))
 
 
 @router.websocket("/ws/viewer")
 @router.websocket("/ws/devices/{device_id}/viewer")
 async def ws_viewer(ws: WebSocket, runtime: DeviceRuntime = Depends(get_device_runtime)):
-    return await runtime.serve_client(ws, runtime.ws_viewer)
+    await run_authorized_websocket(ws, lambda: runtime.serve_client(ws, runtime.ws_viewer))
 
 
 @router.get("/servo")
-@router.get("/api/devices/{device_id}/servo")
+@router.post("/api/devices/{device_id}/servo")
 async def servo_control(ch: int=0, angle: int=90, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.servo_control(ch=ch, angle=angle)
 
 
 @router.get("/servo_raw")
-@router.get("/api/devices/{device_id}/servo_raw")
+@router.post("/api/devices/{device_id}/servo_raw")
 async def servo_raw_control(ch: int=0, angle: int=90, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.servo_raw_control(ch=ch, angle=angle)
 
 
 @router.get("/servo_raw_mode")
-@router.get("/api/devices/{device_id}/servo_raw_mode")
+@router.post("/api/devices/{device_id}/servo_raw_mode")
 async def servo_raw_mode_control(active: int=1, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.servo_raw_mode_control(active=active)
 
 
 @router.get("/screen_mode")
-@router.get("/api/devices/{device_id}/screen_mode")
 async def screen_mode_control(mode: Optional[int]=None, runtime: DeviceRuntime = Depends(get_device_runtime)):
+    return await runtime.screen_mode_control(mode=mode)
+
+
+@router.get("/api/devices/{device_id}/screen_mode")
+async def screen_mode_get(runtime: DeviceRuntime = Depends(get_device_runtime)):
+    return await runtime.screen_mode_control()
+
+
+@router.post("/api/devices/{device_id}/screen_mode")
+async def screen_mode_set(mode: int, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.screen_mode_control(mode=mode)
 
 
@@ -135,7 +161,7 @@ async def performance_mode_set(active: Optional[int]=None, runtime: DeviceRuntim
 
 
 @router.get("/camera_setting")
-@router.get("/api/devices/{device_id}/camera_setting")
+@router.post("/api/devices/{device_id}/camera_setting")
 async def camera_setting(param: str='', value: int=0, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.camera_setting(param=param, value=value)
 
@@ -177,7 +203,7 @@ async def record_image(session_id: str, filename: str, runtime: DeviceRuntime = 
 
 
 @router.get("/tft_setting")
-@router.get("/api/devices/{device_id}/tft_setting")
+@router.post("/api/devices/{device_id}/tft_setting")
 async def tft_setting(param: str='', value: int=0, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.tft_setting(param=param, value=value)
 
@@ -196,14 +222,31 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     devices = DeviceRegistry(manager)
     access = access if access is not None else AccessSettings.from_environment()
     identities = IdentityStore(manager.store.path)
+    connections = ConnectionAuthorizer(identities)
+
+    async def cleanup_revoked_devices():
+        while True:
+            await asyncio.sleep(1)
+            for device in list(devices.devices.values()):
+                try:
+                    if await asyncio.to_thread(identities.owned_device, device.device_id, device.user_id) is None:
+                        await connections.revoke_device(device.device_id)
+                        await devices.retire(device.device_id)
+                except Exception as exc:
+                    print(f"[DEVICE] cleanup will retry: {type(exc).__name__}", flush=True)
 
     @asynccontextmanager
     async def lifespan(application):
         await manager.start()
+        cleanup_task = asyncio.create_task(cleanup_revoked_devices()) if access.mode == "accounts" else None
         try:
             yield
         finally:
             try:
+                if cleanup_task is not None:
+                    cleanup_task.cancel()
+                    await asyncio.gather(cleanup_task, return_exceptions=True)
+                await connections.close()
                 await devices.close()
                 await manager.flush_pending(timeout=MEMORY_SHUTDOWN_TIMEOUT_SECONDS)
             finally:
@@ -219,6 +262,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.state.devices = devices
     application.state.access = access
     application.state.identities = identities
+    application.state.connections = connections
     application.state.default_user_id = MEMORY_USER_ID
     application.state.default_device_id = MEMORY_DEVICE_ID
     application.include_router(router)

@@ -237,12 +237,12 @@ class DeviceEndpointsTests(unittest.TestCase):
 
     def test_control_and_audio_replacement_do_not_cross_devices(self):
         audio_a, audio_b = self.audio("cat-a"), self.audio("cat-b")
-        self.assertTrue(self.client.get("/api/devices/cat-a/servo?ch=3&angle=91").json()["ok"])
+        self.assertTrue(self.client.post("/api/devices/cat-a/servo?ch=3&angle=91").json()["ok"])
         self.assertEqual(audio_a.receive_text(), "SERVO:3,91")
         replacement_a = self.audio("cat-a")
-        self.assertTrue(self.client.get("/api/devices/cat-a/servo?ch=3&angle=92").json()["ok"])
+        self.assertTrue(self.client.post("/api/devices/cat-a/servo?ch=3&angle=92").json()["ok"])
         self.assertEqual(replacement_a.receive_text(), "SERVO:3,92")
-        self.assertTrue(self.client.get("/api/devices/cat-b/servo?ch=3&angle=93").json()["ok"])
+        self.assertTrue(self.client.post("/api/devices/cat-b/servo?ch=3&angle=93").json()["ok"])
         self.assertEqual(audio_b.receive_text(), "SERVO:3,93")
 
     def test_audio_model_callbacks_write_separate_device_memories(self):

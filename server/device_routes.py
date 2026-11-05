@@ -68,5 +68,6 @@ async def revoke(device_id: str, request: Request, user: User = Depends(require_
         await asyncio.to_thread(request.app.state.identities.revoke_device, device_id, owner_user_id=user.id)
     except ValueError:
         raise HTTPException(status_code=404, detail="设备不存在或无权操作") from None
+    await request.app.state.connections.revoke_device(device_id)
     await request.app.state.devices.retire(device_id)
     return {"ok": True}

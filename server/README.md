@@ -53,7 +53,7 @@ python server/tools/memory_database.py backup --database artifacts/data/memory.s
 
 ## 第二阶段：账号基础（开发中）
 
-服务器状态已按设备拆分，`app.py` 管理路由，`device_runtime.py` 管理单台设备的会话与任务。默认 `CYBERMIAO_ACCESS_MODE=local` 保留原固件使用方式，访问范围限制在本机和私有局域网。账号模式使用 `accounts`；账号、凭证与配对已实现，设备业务调用在完整认证接入前会拒绝，尚不能按此版本公开部署。
+服务器状态已按设备拆分，`app.py` 管理路由，`device_runtime.py` 管理单台设备的会话与任务。默认 `CYBERMIAO_ACCESS_MODE=local` 保留原固件使用方式，访问范围限制在本机和私有局域网。账号模式使用 `accounts`，设备接口已经接入凭证、登录和归属检查；账号网页、固件及 TLS 联调尚未完成，正式部署仍按第二阶段计划执行。
 
 先安装更新后的依赖，再从仓库根目录创建账号：
 
@@ -73,3 +73,5 @@ python server/tools/identity_admin.py --database artifacts/data/memory.sqlite3 d
 ```
 
 凭证文件只生成一次并拒绝覆盖，已被 Git 忽略。此命令不会烧录设备；后续通过 USB 配发。`device-rotate` 配合同样的 `--credential-output` 可生成新凭证并撤销旧凭证；`device-revoke --device-id ...` 停用设备，不更换主人或转移历史记忆。若签发后文件写盘失败，使用轮换命令配发新凭证，不能从数据库取回原文。
+
+账号模式使用 `/api/devices/{device_id}/...` 和 `/ws/devices/{device_id}/audio|camera|ui|viewer`。旧匿名入口关闭。设备麦克风、摄像头、播放流使用 `Authorization: Bearer ...`；网页通过 HttpOnly Cookie 登录，写请求附带 `Origin` 与 `/api/auth/session` 返回的 `X-CSRF-Token`。设备凭证不接受 URL 参数，也不能用于读取网页记忆和控制接口。网页退出会结束自己的订阅，设备语音可继续工作。

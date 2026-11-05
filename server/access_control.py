@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse
 
 from identity_store import User, csrf_for_session
 from device_identity import validate_device_id
+from connection_authorization import DeviceAuthorization
 
 SESSION_COOKIE = "cybermiao_session"
 LOCAL_NETWORKS = tuple(ipaddress.ip_network(network) for network in (
@@ -64,7 +65,15 @@ class LocalAccessMiddleware:
                     response = JSONResponse({"detail": "本地兼容模式仅允许本机和私有局域网访问"}, status_code=403)
                     await response(scope, receive, send)
                 return
-        await self.app(scope, receive, send)
+        async def private_send(message):
+            if scope["type"] == "http" and message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                if not any(key.lower() == b"cache-control" for key, value in headers):
+                    headers.append((b"cache-control", b"no-store"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, private_send)
 
 
 def reject(connection: HTTPConnection, *, status: int, detail: str):
@@ -124,3 +133,34 @@ async def require_device_credential(connection: HTTPConnection) -> dict:
     if device is None:
         reject(connection, status=401, detail="设备凭证缺失或无效")
     return device
+
+
+async def authorize_runtime(connection: HTTPConnection, *, hardware: bool = False, playback: bool = False):
+    if connection.app.state.access.mode == "local":
+        device_id = connection.path_params.get("device_id", connection.app.state.default_device_id)
+        return device_id, connection.app.state.default_user_id
+    device_id = connection.path_params.get("device_id")
+    if device_id is None:
+        reject(connection, status=404, detail="账号模式已关闭旧版匿名接口")
+    try:
+        validate_device_id(device_id)
+    except ValueError:
+        reject(connection, status=404, detail="设备不存在")
+    if hardware or (playback and connection.headers.get("authorization")):
+        device = await require_device_credential(connection)
+        user_id = device["owner_user_id"]
+        if user_id is None:
+            reject(connection, status=409, detail="设备尚未绑定账号，请先配对")
+        authorization = DeviceAuthorization("device", user_id, device_id, bearer_token(connection))
+    else:
+        if connection.scope["type"] == "http" and connection.scope["method"] not in {"GET", "HEAD", "OPTIONS"}:
+            user = await require_session_write(connection)
+        else:
+            user = await require_session(connection)
+        device = await asyncio.to_thread(connection.app.state.identities.owned_device, device_id, user.id)
+        if device is None:
+            reject(connection, status=404, detail="设备不存在或无权访问")
+        user_id = user.id
+        authorization = DeviceAuthorization("session", user_id, device_id, connection.cookies[SESSION_COOKIE])
+    connection.state.device_authorization = authorization
+    return device_id, user_id

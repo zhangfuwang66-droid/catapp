@@ -37,6 +37,7 @@ async def login(payload: LoginRequest, request: Request, response: Response):
     previous = request.cookies.get(SESSION_COOKIE)
     if previous:
         await asyncio.to_thread(request.app.state.identities.revoke_session, previous)
+        await request.app.state.connections.revoke_session(previous)
     response.set_cookie(SESSION_COOKIE, grant.token, max_age=7 * 86400, httponly=True,
                         secure=request.url.scheme == "https", samesite="strict", path="/")
     response.headers["Cache-Control"] = "no-store"
@@ -52,6 +53,7 @@ async def session(request: Request, response: Response, user: User = Depends(req
 @router.post("/logout")
 async def logout(request: Request, response: Response, user: User = Depends(require_session_write)):
     await asyncio.to_thread(request.app.state.identities.revoke_session, request.cookies[SESSION_COOKIE])
+    await request.app.state.connections.revoke_session(request.cookies[SESSION_COOKIE])
     response.delete_cookie(SESSION_COOKIE, path="/", secure=request.url.scheme == "https", httponly=True, samesite="strict")
     response.headers["Cache-Control"] = "no-store"
     return {"ok": True}

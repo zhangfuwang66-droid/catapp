@@ -67,7 +67,7 @@ class AuthRoutesTests(unittest.TestCase):
         old = self.client.cookies.get(SESSION_COOKIE)
         self.login()
         self.assertIsNone(self.app.state.identities.session_user(old))
-        self.assertEqual(self.client.get("/api/memory").status_code, 403)
+        self.assertEqual(self.client.get("/api/memory").status_code, 404)
 
     def test_local_mode_rejects_public_client(self):
         application = server_app.create_app(

@@ -105,16 +105,7 @@ except Exception:
     Image = ImageDraw = ImageFont = None
     PIL_AVAILABLE = False
 
-from audio_stream import (
-    BYTES_PER_20MS_16K,
-    STREAM_SR,
-    broadcast_pcm16_realtime,
-    clear_stream_prebuffer,
-    hard_reset_audio,
-    is_playing_now,
-    register_stream_route,
-    stream_clients,
-)
+from audio_stream import BYTES_PER_20MS_16K, STREAM_SR, AudioStream, register_stream_route
 from asr_core import set_current_recognition, stop_current_recognition
 from cat_motion import send_cat_emotion_actions
 from emotion_parser import analyze_emotion
@@ -339,6 +330,7 @@ COVER_GRAY_STD_THRESHOLD = float(os.getenv("COVER_GRAY_STD_THRESHOLD", "24.0"))
 COVER_CHANNEL_RANGE_THRESHOLD = float(os.getenv("COVER_CHANNEL_RANGE_THRESHOLD", "78.0"))
 
 app = FastAPI()
+audio = AudioStream()
 
 
 def _log_memory_error(exc: Exception) -> None:
@@ -1325,7 +1317,7 @@ async def activate_translation_mode(pair: str, *, voice_trigger: bool = False):
             await current_realtime_session.cancel_response()
         except Exception:
             pass
-    await hard_reset_audio("translate activate")
+    await audio.hard_reset_audio("translate activate")
     if vision_screen_pinned:
         await set_vision_screen_pinned(False, reason="translate_activate")
     await deactivate_visual_dialogue_mode(reason="translate_activate", restore_expression=False)
@@ -1361,7 +1353,7 @@ async def deactivate_translation_mode(*, reason: str = "manual"):
             await current_realtime_session.cancel_response()
         except Exception:
             pass
-    await hard_reset_audio("translate deactivate")
+    await audio.hard_reset_audio("translate deactivate")
     translation_active = False
     translation_current_text = ""
     translation_input_text = ""
@@ -1375,7 +1367,7 @@ async def deactivate_translation_mode(*, reason: str = "manual"):
 
 
 async def full_system_reset(reason: str = ""):
-    await hard_reset_audio(reason or "full_system_reset")
+    await audio.hard_reset_audio(reason or "full_system_reset")
     await stop_current_recognition()
     await reset_hand_tracking_state(send_idle=False)
     await reset_camera_cover_state(cancel_task=True)
@@ -1419,7 +1411,7 @@ MOTION_COMMAND_PREFIXES = (
 
 
 def audio_priority_mode_active() -> bool:
-    return esp32_audio_priority_active or is_playing_now()
+    return esp32_audio_priority_active or audio.is_playing_now()
 
 
 def is_motion_command(message: str) -> bool:
@@ -1485,7 +1477,7 @@ async def set_performance_mode(active: bool, reason: str = "") -> bool:
                 await current_realtime_session.cancel_response()
             current_realtime_session = None
         with contextlib.suppress(Exception):
-            await hard_reset_audio("performance_mode_on")
+            await audio.hard_reset_audio("performance_mode_on")
         with contextlib.suppress(Exception):
             await stop_current_recognition()
         # 释放主机摄像头（仅在 HOST_CAMERA 屏幕模式时可能占用）
@@ -1741,7 +1733,7 @@ def ensure_cover_monitor_task() -> None:
 
 
 def voice_interaction_active() -> bool:
-    return is_playing_now()
+    return audio.is_playing_now()
 
 
 def _serialize_record_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
@@ -2208,16 +2200,7 @@ def ensure_hand_tracking_task():
 
 
 def _set_playing_task_marker(release_event: Optional[asyncio.Event]):
-    from audio_stream import __dict__ as _audio_dict
-
-    if release_event is None:
-        _audio_dict["current_ai_task"] = None
-        return
-
-    async def _wait_release():
-        await release_event.wait()
-
-    _audio_dict["current_ai_task"] = asyncio.create_task(_wait_release())
+    audio.set_playing_task_marker(release_event)
 
 
 async def _ensure_ui_memory_context() -> Tuple[Optional[int], Dict[str, List[Dict[str, object]]]]:
@@ -2300,7 +2283,7 @@ async def start_ai_with_text(user_text: str):
                     pcm24 = base64.b64decode(piece.audio_b64)
                     pcm16 = audio_multiply_volume(pcm24, 2, 0.80)
                     if pcm16:
-                        await broadcast_pcm16_realtime(pcm16)
+                        await audio.broadcast_pcm16_realtime(pcm16)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -2308,7 +2291,7 @@ async def start_ai_with_text(user_text: str):
                 await update_visual_dialogue_response(f"出错了：{exc}", "done", force=True)
             await ui_broadcast_final(f"[AI] 发生错误：{exc}")
         finally:
-            for client in list(stream_clients):
+            for client in list(audio.stream_clients):
                 if not client.abort_event.is_set():
                     try:
                         client.q.put_nowait(b"\x00" * BYTES_PER_20MS_16K)
@@ -2337,7 +2320,7 @@ async def start_ai_with_text(user_text: str):
                     pass
             await set_esp32_audio_priority(False, reason="start_ai_with_text_done")
 
-    await hard_reset_audio("start_ai_with_text")
+    await audio.hard_reset_audio("start_ai_with_text")
     await stop_current_recognition()
     current_partial = ""
     await ui_broadcast_partial("")
@@ -2360,10 +2343,10 @@ async def start_ai_with_text(user_text: str):
         await _send_ui_expression(emotion)
 
     loop = asyncio.get_running_loop()
-    from audio_stream import __dict__ as _audio_dict
+
 
     task = loop.create_task(_runner())
-    _audio_dict["current_ai_task"] = task
+    audio.current_ai_task = task
 
 
 async def start_tts_repeat(user_text: str):
@@ -2449,19 +2432,19 @@ async def start_tts_repeat(user_text: str):
                 await ui_play_repeat_audio(latest_repeat_token)
             await set_esp32_audio_priority(False, reason="start_tts_repeat_done")
 
-    await hard_reset_audio("start_tts_repeat")
+    await audio.hard_reset_audio("start_tts_repeat")
     await stop_current_recognition()
     await ui_broadcast_partial("")
     await ui_local_audio(False)
     latest_repeat_wav = b""
     latest_repeat_token = "0"
-    clear_stream_prebuffer()
+    audio.clear_stream_prebuffer()
     await set_esp32_audio_priority(True, reason="start_tts_repeat")
     loop = asyncio.get_running_loop()
-    from audio_stream import __dict__ as _audio_dict
+
 
     task = loop.create_task(_runner())
-    _audio_dict["current_ai_task"] = task
+    audio.current_ai_task = task
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -2515,7 +2498,7 @@ def repeat_wav():
     )
 
 
-register_stream_route(app)
+register_stream_route(app, audio)
 
 
 @app.websocket("/ws_ui")
@@ -2670,7 +2653,7 @@ async def ws_audio(ws: WebSocket):
     worker_task = asyncio.create_task(upload_worker())
 
     async def finish_pcm_stream():
-        for client in list(stream_clients):
+        for client in list(audio.stream_clients):
             if not client.abort_event.is_set():
                 try:
                     client.q.put_nowait(None)
@@ -2844,8 +2827,8 @@ async def ws_audio(ws: WebSocket):
         # 0.65：realtime 输出峰值接近满幅，固件端还有 speakerVolume 增益，
         # 系数过大时累积增益会把功放推饱和，产生"电音"失真
         pcm16 = audio_multiply_volume(audio_bytes, 2, 0.65)
-        if pcm16 and stream_clients:
-            await broadcast_pcm16_realtime(pcm16)
+        if pcm16:
+            await audio.broadcast_pcm16_realtime(pcm16)
 
     async def on_response_started():
         nonlocal playback_release_event, response_text_parts, response_emotion_sent, response_was_translation
@@ -2853,7 +2836,7 @@ async def ws_audio(ws: WebSocket):
         response_text_parts = []
         response_emotion_sent = False
         response_was_translation = translation_active
-        clear_stream_prebuffer()
+        audio.clear_stream_prebuffer()
         if translation_active:
             translation_current_text = ""
             translation_finalized = False
@@ -2912,8 +2895,8 @@ async def ws_audio(ws: WebSocket):
 
     async def on_speech_started():
         print("[REALTIME] speech started", flush=True)
-        if is_playing_now():
-            await hard_reset_audio("realtime interruption")
+        if audio.is_playing_now():
+            await audio.hard_reset_audio("realtime interruption")
             await sync_esp32_camera_fps()
         asyncio.create_task(
             capture_camera_frame_on_demand(

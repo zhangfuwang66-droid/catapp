@@ -36,3 +36,17 @@ $env:CYBERMIAO_MEMORY_SHUTDOWN_TIMEOUT_SECONDS = '4'
 本地调试时，`GET /api/memory` 可以查看当前测试身份的摘要、长期记忆和未总结消息；`DELETE /api/memory` 会清除这些测试数据。两个接口默认开启，只能在本机或可信局域网使用。部署到公网前必须关闭 `CYBERMIAO_MEMORY_DEBUG_API=0`，并在登录鉴权后重新提供用户级接口。
 
 记忆数据库和原始聊天内容包含个人信息，请纳入备份、删除和访问控制策略。第一阶段使用 SQLite 是为了不改动现有环境；多用户部署前会迁移到 PostgreSQL。
+
+## 数据库初始化与备份
+
+`tools/memory_database.py` 只依赖 Python 标准库和现有记忆模块，支持 Python 3.10 及以上版本。下面命令从仓库根目录运行，路径可按部署环境调整：
+
+```powershell
+python server/tools/memory_database.py init --database artifacts/data/memory.sqlite3
+python server/tools/memory_database.py inspect --database artifacts/data/memory.sqlite3
+python server/tools/memory_database.py backup --database artifacts/data/memory.sqlite3 --output artifacts/backups/memory-before-upgrade.sqlite3
+```
+
+初始化与备份都会拒绝覆盖已有文件；检查命令不会创建缺失的数据库。备份通过 SQLite 备份接口读取已提交的 WAL 数据，生成可独立恢复的文件，并输出完整性结果和 SHA-256。命令只输出路径、记录数量与校验信息，不输出聊天正文。
+
+创建数据库只是部署准备。实际保存聊天还需要运行后端，并把 `CYBERMIAO_MEMORY_DB_PATH` 指向该数据库；公网设备认证和账号绑定见[第二阶段计划](../docs/第二阶段开发计划.md)。

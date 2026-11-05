@@ -53,7 +53,10 @@ async def pairing(device_id: str, request: Request, response: Response, device: 
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     response.headers["Cache-Control"] = "no-store"
-    return {"ok": True, "device_id": grant.device_id, "code": grant.code, "expires_at": grant.expires_at}
+    # 固件使用剩余秒数倒计时，不依赖 HTTP 本地模式下尚未同步的设备时钟。
+    expires_in = max(0, min(300, int(grant.expires_at - request.app.state.identities.clock())))
+    return {"ok": True, "device_id": grant.device_id, "code": grant.code,
+            "expires_at": grant.expires_at, "expires_in": expires_in}
 
 
 @router.get("/{device_id}/binding")

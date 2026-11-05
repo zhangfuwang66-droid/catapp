@@ -141,6 +141,8 @@ class PairingRoutesTests(unittest.TestCase):
         result = self.client.post("/api/devices/cat-a/pairing", headers=device_headers)
         self.assertEqual(result.status_code, 200)
         self.assertIn("no-store", result.headers["cache-control"])
+        self.assertGreater(result.json()["expires_in"], 0)
+        self.assertLessEqual(result.json()["expires_in"], 300)
         code = result.json()["code"]
         pair = self.client.post("/api/devices/pair", json={"code": code, "user_id": self.bob.id}, headers=self.a)
         self.assertEqual(pair.status_code, 200)
@@ -161,6 +163,17 @@ class PairingRoutesTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/devices/cat-a/pairing", params={"token": self.credential.token}).status_code, 401)
         self.assertEqual(self.client.post("/api/devices/cat-b/pairing", headers={"Authorization": "Bearer " + self.credential.token}).status_code, 401)
         self.assertEqual(self.client.post("/api/devices/pair", json={"code": "ABCD-EFGH"}).status_code, 401)
+
+    def test_pairing_lifetime_uses_server_clock(self):
+        from unittest.mock import patch
+        from identity_store import PairingGrant
+
+        with patch.object(self.store, "clock", return_value=1800000000), \
+             patch.object(self.store, "request_pairing", return_value=PairingGrant("cat-a", "ABCD-EFGH", 1800000123)):
+            result = self.client.post("/api/devices/cat-a/pairing",
+                                      headers={"Authorization": "Bearer " + self.credential.token})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["expires_in"], 123)
 
 
 if __name__ == "__main__":

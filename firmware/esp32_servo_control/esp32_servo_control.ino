@@ -15,12 +15,15 @@
 #include <esp_camera.h>
 #include "DeviceConfig.h"
 #include "DeviceProvisioning.h"
+#include "DeviceSocket.h"
+#include "DeviceLink.h"
+#include "DeviceSetup.h"
 
 // 串口日志总开关。播放 TTS 期间，Serial.print 在 USB-CDC / UART 上是同步写入，
 // 即便是 115200 波特率下一行几十字节也可能阻塞 task 1-5ms，足以让 I2S 的 DMA
 // buffer 出现 underrun，表现为"语音被其它事件冲着播卡顿"。默认直接关成 no-op；
 // 需要本地调试时把 0 改回 1 即可恢复所有日志。
-#define SERIAL_LOG_ENABLED 1
+#define SERIAL_LOG_ENABLED 0
 #if SERIAL_LOG_ENABLED
   #define LOGF(fmt, ...)  Serial.printf(fmt, ##__VA_ARGS__)
   #define LOGLN(...)      Serial.println(__VA_ARGS__)
@@ -35,7 +38,6 @@
 using namespace websockets;
 
 namespace {
-constexpr uint16_t SERVER_PORT = 8081;
 constexpr const char* CAM_WS_PATH = "/ws/camera";
 constexpr const char* AUD_WS_PATH = "/ws_audio";
 
@@ -169,13 +171,7 @@ constexpr int8_t WIFI_TX_POWER_TTS_DBM = 11;      // ~WIFI_POWER_11dBm
 // 启动后若在 AP_TIMEOUT_MS 内没连上 WiFi，就开一个软 AP 热点 + 网页门户让用户
 // 输入新的 WiFi 凭据；凭据存进 NVS(Preferences)，下次开机优先用 NVS 里的，没有
 // 没有保存的配置时进入设备热点，不在源码中保存网络密码。
-constexpr const char* AP_CONFIG_SSID = "CyberMiao-Setup";   // 配网热点名
-constexpr const char* AP_CONFIG_PASS = "";                  // 留空 = 开放热点
 constexpr uint32_t AP_CONFIG_TIMEOUT_MS = 30000;            // 连不上 30 秒后进配网
-constexpr const char* NVS_NS_WIFI = "wifi";                 // NVS 命名空间
-constexpr const char* NVS_KEY_SSID = "ssid";
-constexpr const char* NVS_KEY_PASS = "pass";
-constexpr const char* NVS_KEY_HOST = "host";                 // 服务器 IP
 }
 
 class WaveshareST7789 : public Adafruit_ST7789 {
@@ -252,11 +248,15 @@ WaveshareST7789 tft(TFT_CS, TFT_DC, TFT_RST);
 JPEGDEC jpeg;
 I2SClass i2sIn;
 I2SClass i2sOut;
-WebsocketsClient wsCam;
-WebsocketsClient wsAud;
-WiFiClient ttsClient;
 DeviceConfig deviceConfig;
 DeviceProvisioning provisioning(Serial, deviceConfig);
+DeviceLink deviceLink(deviceConfig);
+DeviceSetup setupPortal(deviceConfig, deviceLink);
+DeviceSocket wsCam(deviceConfig);
+DeviceSocket wsAud(deviceConfig);
+NetworkClient ttsPlainClient;
+NetworkClientSecure ttsSecureClient;
+NetworkClient* ttsClient = &ttsPlainClient;
 
 typedef camera_fb_t* fb_ptr_t;
 QueueHandle_t qFrames = nullptr;
@@ -315,9 +315,6 @@ volatile uint8_t speakerVolumePercent = 78;
 // === 配网相关全局状态 ===
 // 前移至此定义：taskHttpPlay / maintainSockets 等较早的函数会用到 cfgServerHost，
 // C++ 需先声明后使用。凭据只存 NVS；无配置时进入配置热点。
-WebServer apWebServer(80);
-DNSServer apDnsServer;
-bool apConfigMode = false;
 unsigned long bootStartMs = 0;
 String cfgSsid = "";
 String cfgPass = "";
@@ -923,7 +920,7 @@ bool displayAnimJPEG(const char* filename, uint16_t* targetBuffer, bool drawIfBu
   return true;
 }
 
-void drawStatusBanner(const String& line1, const String& line2) {
+void drawConnectionBanner(const String& line1, const String& line2, const String& detail) {
   // 采用和表情帧完全一样的"占满屏"套路：
   //   1. 在 PSRAM 里拿一块 pageW x pageH 的横向画布，先按人眼正方向画 banner；
   //   2. 把画布做 CCW 90° 旋转到 240 x 284 的输出 buffer；
@@ -963,15 +960,16 @@ void drawStatusBanner(const String& line1, const String& line2) {
     canvas.print(s);
   };
 
-  printCentered("CAT ROBOT", 54, COLOR_ACCENT, 3);
+  printCentered("CYBER MIAO", 54, COLOR_ACCENT, 3);
   canvas.drawFastHLine((pageW - 120) / 2, 98, 120, COLOR_MUTED);
   printCentered(line1, 114, COLOR_PRIMARY, 2);
   printCentered(line2, 148, COLOR_MUTED, 1);
+  printCentered(detail, 172, COLOR_ACCENT, 1);
 
   int barW = pageW - 60;
   int barX = (pageW - barW) / 2;
   canvas.drawRoundRect(barX, pageH - 46, barW, 26, 8, COLOR_PRIMARY);
-  printCentered(ipToString(WiFi.localIP()), pageH - 38, COLOR_ACCENT, 1);
+  printCentered(ipToString(setupPortal.active() ? WiFi.softAPIP() : WiFi.localIP()), pageH - 38, COLOR_ACCENT, 1);
 
   // CCW 90° 把 pageW x pageH 的画布旋转到 TFT_W x TFT_H（240 x 284）输出 buffer：
   //   dst[pageW-1 - x][y] = src[y][x]
@@ -1669,7 +1667,7 @@ void initScreen() {
   uint8_t bri = 255;
   tft.sendCommand(0x53, &ctrl, 1);
   tft.sendCommand(0x51, &bri, 1);
-  drawStatusBanner("BOOT", "init screen");
+  drawConnectionBanner("BOOT", "init screen", "");
 }
 
 void initI2SIn() {
@@ -1704,15 +1702,15 @@ static inline void mono16_to_stereo32_msb(const int16_t* input, size_t sampleCou
 void taskHttpPlay(void*) {
   static int32_t outLR[1024 * 2];
   auto streamReadable = [&]() -> bool {
-    return ttsClient.connected() || ttsClient.available() > 0;
+    return ttsClient->connected() || ttsClient->available() > 0;
   };
 
   auto readLine = [&](String& out, uint32_t timeoutMs) -> bool {
     out = "";
     uint32_t start = millis();
     while (millis() - start < timeoutMs) {
-      while (ttsClient.available()) {
-        char c = static_cast<char>(ttsClient.read());
+      while (ttsClient->available()) {
+        char c = static_cast<char>(ttsClient->read());
         if (c == '\r') continue;
         if (c == '\n') return true;
         out += c;
@@ -1727,10 +1725,10 @@ void taskHttpPlay(void*) {
     size_t got = 0;
     uint32_t start = millis();
     while (got < need) {
-      int avail = ttsClient.available();
+      int avail = ttsClient->available();
       if (avail > 0) {
         int take = min(avail, static_cast<int>(need - got));
-        int readCount = ttsClient.read(dst + got, take);
+        int readCount = ttsClient->read(dst + got, take);
         if (readCount > 0) {
           got += readCount;
           continue;
@@ -1749,28 +1747,34 @@ void taskHttpPlay(void*) {
   }
 
   while (true) {
-    if (!ttsAudioAvailable) {
+    if (!ttsAudioAvailable || WiFi.status() != WL_CONNECTED || !deviceLink.allowBusiness()) {
+      ttsAudioAvailable = false;
       vTaskDelay(pdMS_TO_TICKS(80));
       continue;
     }
 
-    ttsClient.stop();
-    if (!ttsClient.connect(cfgServerHost.c_str(), deviceConfig.network().port)) {
+    ttsClient->stop();
+    if (!ttsClient->connect(cfgServerHost.c_str(), deviceConfig.network().port, 4000)) {
       ttsAudioAvailable = false;
       micEnabled = true;
       delay(300);
       continue;
     }
-    String request = String("GET /stream.wav HTTP/1.1\r\n") +
+    String path = deviceConfig.network().accounts ? "/api/devices/" + deviceConfig.deviceId() + "/stream.wav" : "/stream.wav";
+    String request = "GET " + path + " HTTP/1.1\r\n" +
                      "Host: " + cfgServerHost + ":" + String(deviceConfig.network().port) + "\r\n" +
+                     (deviceConfig.network().accounts ? "Authorization: " + deviceConfig.authorization() + "\r\n" : String()) +
                      "Connection: close\r\n\r\n";
-    ttsClient.print(request);
+    ttsClient->print(request);
 
     bool headerOk = false;
     bool isChunked = false;
     uint32_t chunkLeft = 0;
     String line;
-    while (readLine(line, 1200)) {
+    // 先检查状态，禁止把认证错误或重定向响应当作音频播放。
+    bool statusOk = readLine(line, 5000) && (line.startsWith("HTTP/1.1 200 ") || line.startsWith("HTTP/1.0 200 "));
+    uint32_t headerStarted = millis();
+    while (statusOk && millis() - headerStarted < 5000 && readLine(line, 1200)) {
       String lower = line;
       lower.toLowerCase();
       if (lower.startsWith("transfer-encoding:") && lower.indexOf("chunked") >= 0) {
@@ -1782,8 +1786,9 @@ void taskHttpPlay(void*) {
       }
     }
     if (!headerOk) {
-      ttsClient.stop();
+      ttsClient->stop();
       ttsAudioAvailable = false;
+      micEnabled = true;
       continue;
     }
 
@@ -1827,7 +1832,7 @@ void taskHttpPlay(void*) {
 
     uint8_t riff[12];
     if (!readBody(riff, 12, 1200) || memcmp(riff, "RIFF", 4) != 0 || memcmp(riff + 8, "WAVE", 4) != 0) {
-      ttsClient.stop();
+      ttsClient->stop();
       ttsAudioAvailable = false;
       micEnabled = true;
       continue;
@@ -1842,7 +1847,7 @@ void taskHttpPlay(void*) {
 
     while (!gotData) {
       if (!readBody(chunkHeader, 8, 1200)) {
-        ttsClient.stop();
+        ttsClient->stop();
         break;
       }
       uint32_t chunkSize = static_cast<uint32_t>(chunkHeader[4]) |
@@ -1851,10 +1856,11 @@ void taskHttpPlay(void*) {
                            (static_cast<uint32_t>(chunkHeader[7]) << 24);
 
       if (memcmp(chunkHeader, "fmt ", 4) == 0) {
+        if (chunkSize < 16 || chunkSize > 4096) break;
         uint8_t fmtBuf[32];
         size_t readSize = min<size_t>(chunkSize, sizeof(fmtBuf));
         if (!readBody(fmtBuf, readSize, 1200)) {
-          ttsClient.stop();
+          ttsClient->stop();
           break;
         }
         if (chunkSize > readSize) {
@@ -1863,7 +1869,7 @@ void taskHttpPlay(void*) {
           while (left > 0) {
             size_t take = min<size_t>(left, sizeof(dump));
             if (!readBody(dump, take, 1200)) {
-              ttsClient.stop();
+              ttsClient->stop();
               break;
             }
             left -= take;
@@ -1878,7 +1884,7 @@ void taskHttpPlay(void*) {
         gotFmt = true;
       } else if (memcmp(chunkHeader, "data", 4) == 0) {
         if (!gotFmt) {
-          ttsClient.stop();
+          ttsClient->stop();
           break;
         }
         gotData = true;
@@ -1888,7 +1894,7 @@ void taskHttpPlay(void*) {
         while (left > 0) {
           size_t take = min<size_t>(left, sizeof(dump));
           if (!readBody(dump, take, 1200)) {
-            ttsClient.stop();
+            ttsClient->stop();
             break;
           }
           left -= take;
@@ -1905,7 +1911,7 @@ void taskHttpPlay(void*) {
     if (!(numChannels == 1 && bitsPerSample == 16 &&
           (sampleRate == 8000 || sampleRate == 12000 || sampleRate == 16000 || sampleRate == 24000))) {
       LOGF("[TTS] unsupported fmt ch=%u bits=%u sr=%u\n", numChannels, bitsPerSample, sampleRate);
-      ttsClient.stop();
+      ttsClient->stop();
       ttsAudioAvailable = false;
       micEnabled = true;
       continue;
@@ -1916,7 +1922,7 @@ void taskHttpPlay(void*) {
     micEnabled = false;
     resetMouthState();
 
-    while (ttsAudioAvailable && streamReadable()) {
+    while (ttsAudioAvailable && streamReadable() && deviceLink.allowBusiness()) {
       uint8_t inBuf[2048];
       uint32_t bytes20 = (sampleRate * 2 * 20) / 1000;
       if (bytes20 < 2) bytes20 = 2;
@@ -1950,7 +1956,7 @@ void taskHttpPlay(void*) {
     resetMouthState();
     ttsAudioAvailable = false;
     micEnabled = true;
-    ttsClient.stop();
+    ttsClient->stop();
     initI2SOut(TTS_RATE);
   }
 }
@@ -2326,6 +2332,10 @@ void handleAudioSetting(const String& param, int value) {
 }
 
 void setupWebSocketCallbacks() {
+  if (deviceConfig.network().accounts && deviceConfig.hasCredential()) {
+    wsCam.addHeader("Authorization", deviceConfig.authorization());
+    wsAud.addHeader("Authorization", deviceConfig.authorization());
+  }
   wsCam.onEvent([](WebsocketsEvent event, String) {
     if (event == WebsocketsEvent::ConnectionOpened) {
       camWsReady = true;
@@ -2650,149 +2660,13 @@ void setupWebSocketCallbacks() {
   });
 }
 
-// ===================== 配网模式（AP + Captive Portal） =====================
-// 凭据只从 NVS 读取，没有配置时进入设备热点。
-// 连不上超过 AP_CONFIG_TIMEOUT_MS 后开软 AP 热点，手机连热点即弹配网页。
-// 全局变量 wifiPrefs/apWebServer/apDnsServer/apConfigMode/bootStartMs/cfgSsid/cfgPass/cfgServerHost
-// 已前移到文件顶部全局变量区（speakerVolumePercent 之后），避免较早函数引用不到。
-
-static const char AP_INDEX_HTML[] PROGMEM = R"rawliteral(
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>赛博小喵 WiFi 配网</title>
-<style>
-body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;background:#0a0e16;color:#e6f0ff;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}
-.card{background:#141a28;padding:26px;border-radius:16px;width:92%;max-width:400px;box-shadow:0 8px 40px rgba(0,0,0,.5)}
-h1{font-size:20px;margin:0 0 6px}
-p{color:#7f95b8;font-size:13px;margin:0 0 18px}
-input{width:100%;box-sizing:border-box;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #2a3a55;background:#0f1626;color:#e6f0ff;font-size:15px}
-.row{display:flex;gap:10px;margin-top:14px}
-.row button{flex:1;margin-top:0}
-button{width:100%;padding:12px;border-radius:10px;border:0;background:#3ec6f0;color:#04121e;font-size:16px;font-weight:600;cursor:pointer}
-button.ghost{background:#1d2b42;color:#9fb4d8}
-.nets{margin-top:18px}
-.net{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#0f1626;border-radius:10px;margin:6px 0;cursor:pointer;border:1px solid #1d2b42}
-.net:active{border-color:#3ec6f0}
-.net .name{font-size:14px}
-.net .rssi{font-size:12px;color:#7f95b8}
-.hint{font-size:13px;color:#ffb020;margin-top:12px;white-space:pre-wrap;display:none}
-</style>
-</head>
-<body>
-<div class="card">
-<h1>赛博小喵 · WiFi 配网</h1>
-<p>输入 WiFi 与服务器 IP，保存后设备会自动连接并重启。</p>
-<input id="ssid" placeholder="WiFi 名称 (SSID)">
-<input id="pass" type="password" placeholder="WiFi 密码">
-<input id="host" placeholder="服务器 IP (如 192.168.1.100)">
-<div class="row">
-<button onclick="save()">保存并连接</button>
-<button class="ghost" onclick="scanNets()">扫描 WiFi</button>
-</div>
-<div id="hint" class="hint"></div>
-<div class="nets" id="nets"></div>
-</div>
-<script>
-function scanNets(){
-var box=document.getElementById('nets');
-box.innerHTML='扫描中...';
-fetch('/scan').then(r=>r.json()).then(function(list){
-if(list.length===0){box.innerHTML='未发现 WiFi';return;}
-box.innerHTML=list.map(function(n){return '<div class="net" onclick="pick(this)"><span class="name">'+n.ssid+'</span><span class="rssi">'+n.rssi+'</span></div>';}).join('');
-}).catch(function(){box.innerHTML='扫描失败';});
-}
-function pick(el){document.getElementById('ssid').value=el.querySelector('.name').textContent;}
-function save(){
-var ssid=document.getElementById('ssid').value.trim();
-var pass=document.getElementById('pass').value;
-var host=document.getElementById('host').value.trim();
-if(!ssid){showHint('请输入 WiFi 名称');return;}
-showHint('正在连接并保存...');
-fetch('/connect?ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent(pass)+'&host='+encodeURIComponent(host))
-.then(r=>r.text()).then(showHint).catch(function(){showHint('保存失败');});
-}
-function showHint(t){var h=document.getElementById('hint');h.textContent=t;h.style.display='block';}
-</script>
-</body>
-</html>
-)rawliteral";
-
+// ===================== 网络配置与设备绑定 =====================
 void loadWiFiConfig() {
   if (!deviceConfig.begin()) { LOGLN("[CONFIG] invalid saved config; setup required"); return; }
   cfgSsid = deviceConfig.network().ssid;
   cfgPass = deviceConfig.network().password;
   cfgServerHost = deviceConfig.network().host;
   LOGLN("[CONFIG] saved configuration loaded");
-}
-
-bool saveWiFiConfig(const String& ssid, const String& pass, const String& host, String& error) {
-  DeviceNetworkConfig candidate = deviceConfig.network();
-  candidate.ssid = ssid; candidate.password = pass;
-  return DeviceConfig::parseServerUrl(host, candidate, error) && deviceConfig.saveNetwork(candidate, error);
-}
-
-void handleApRoot() {
-  apWebServer.send_P(200, "text/html", AP_INDEX_HTML);
-}
-
-void handleApScan() {
-  int n = WiFi.scanNetworks();
-  String json = "[";
-  for (int i = 0; i < n; ++i) {
-    if (i) json += ",";
-    String ssid = WiFi.SSID(i);
-    ssid.replace("\\", "\\\\");
-    ssid.replace("\"", "\\\"");
-    json += "{\"ssid\":\"" + ssid + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
-  }
-  json += "]";
-  WiFi.scanDelete();
-  apWebServer.send(200, "application/json", json);
-}
-
-void handleApConnect() {
-  String ssid = apWebServer.arg("ssid");
-  String pass = apWebServer.arg("pass");
-  String host = apWebServer.arg("host");
-  ssid.trim();
-  if (ssid.length() == 0) {
-    apWebServer.send(400, "text/plain", "SSID 不能为空");
-    return;
-  }
-  String error;
-  if (!saveWiFiConfig(ssid, pass, host, error)) { apWebServer.send(400, "text/plain", error); return; }
-  cfgSsid = ssid;
-  cfgPass = pass;
-  if (host.length() > 0) cfgServerHost = host;
-
-  // 切 AP+STA 共存：保留配网热点，同时连接外部 WiFi，连接成功后把 IP 返回给页面
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(AP_CONFIG_SSID, AP_CONFIG_PASS);
-  WiFi.begin(cfgSsid.c_str(), cfgPass.c_str());
-  unsigned long deadline = millis() + 15000;
-  while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
-    delay(200);
-  }
-  if (WiFi.status() == WL_CONNECTED) {
-    String ip = ipToString(WiFi.localIP());
-    LOGF("[WIFI] config connected ip=%s\n", ip.c_str());
-    startTone(1319, 200, 45);
-    apWebServer.send(200, "text/plain",
-                     "连接成功，设备 IP: " + ip + "\n服务器 IP: " + cfgServerHost + "\n即将重启进入工作模式...");
-    delay(800);
-    ESP.restart();
-  } else {
-    LOGLN("[WIFI] config connect failed, back to AP only");
-    apWebServer.send(200, "text/plain", "连接失败，请检查密码后重试");
-    delay(300);  // 让失败提示先发出去，再切回纯 AP
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_CONFIG_SSID, AP_CONFIG_PASS);
-    apWebServer.begin();
-    apDnsServer.start(53, "*", WiFi.softAPIP());
-  }
 }
 
 // 播放配网语音提示 /config_prompt.pcm（24kHz/16bit/mono，由 server/gen_config_prompt.py
@@ -2837,37 +2711,18 @@ bool playConfigPrompt() {
   return true;
 }
 
-void startApConfigMode() {
-  if (apConfigMode) return;
-  apConfigMode = true;
-  LOGLN("[WIFI] entering AP config mode");
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(AP_CONFIG_SSID, AP_CONFIG_PASS);
-  // 屏幕提示（内置字体不支持中文，用英文；底部会显示 AP IP 192.168.4.1）
-  drawStatusBanner("WIFI SETUP", "join AP & open web");
-  // 播放配网语音提示；缺少 /config_prompt.pcm 时退化为三声蜂鸣
-  if (!playConfigPrompt()) {
-    startTone(988, 160, 45); delay(120);
-    startTone(988, 160, 45); delay(120);
-    startTone(1319, 220, 45);
+void startApConfigMode(bool manual) {
+  bool wasActive = setupPortal.active();
+  if (!setupPortal.start(manual)) { LOGLN("[SETUP] protected AP unavailable"); return; }
+  if (!wasActive && WiFi.status() != WL_CONNECTED && !ttsPlaying && !ttsAudioAvailable) {
+    if (!playConfigPrompt()) startTone(988, 160, 30);
   }
-  apWebServer.on("/", HTTP_GET, handleApRoot);
-  apWebServer.on("/scan", HTTP_GET, handleApScan);
-  apWebServer.on("/connect", HTTP_GET, handleApConnect);
-  apWebServer.onNotFound(handleApRoot);
-  apWebServer.begin();
-  apDnsServer.start(53, "*", WiFi.softAPIP());
-  LOGF("[WIFI] AP ready ssid=%s ip=%s\n", AP_CONFIG_SSID, ipToString(WiFi.softAPIP()).c_str());
-}
-
-void serveApConfig() {
-  apDnsServer.processNextRequest();
-  apWebServer.handleClient();
+  expressionDirty = true;
 }
 
 void connectWiFi() {
-  if (!cfgSsid.length() || !cfgServerHost.length()) { startApConfigMode(); return; }
-  WiFi.mode(WIFI_STA);
+  if (!cfgSsid.length() || !cfgServerHost.length()) { startApConfigMode(false); return; }
+  WiFi.mode(setupPortal.active() ? WIFI_AP_STA : WIFI_STA);
   WiFi.setSleep(false);
   lastWiFiRetryMs = millis();
   lastWiFiStatus = WiFi.status();
@@ -2876,55 +2731,84 @@ void connectWiFi() {
 }
 
 void maintainWiFi() {
-  if (apConfigMode) {
-    serveApConfig();
-    return;
-  }
+  setupPortal.poll();
   wl_status_t status = WiFi.status();
   if (status != lastWiFiStatus) {
     lastWiFiStatus = status;
     if (status == WL_CONNECTED) {
       LOGLN("[WIFI] connected: " + ipToString(WiFi.localIP()));
       startTone(262, 120, 24);
-      expressionDirty = true;
-    } else {
-      LOGF("[WIFI] status=%d\n", static_cast<int>(status));
-      expressionDirty = true;
     }
+    expressionDirty = true;
   }
-
-  if (status == WL_CONNECTED) return;
-
-  // 超过配网超时还没连上，进入 AP 配网模式
-  if (millis() - bootStartMs >= AP_CONFIG_TIMEOUT_MS) {
-    startApConfigMode();
+  if (status == WL_CONNECTED) {
+    DeviceLinkSnapshot link = deviceLink.snapshot();
+    if (deviceConfig.network().accounts && !link.bound) startApConfigMode(false);
+    else if (deviceLink.allowBusiness()) setupPortal.closeAutomatic();
     return;
   }
-
-  uint32_t now = millis();
-  if (now - lastWiFiRetryMs >= WIFI_RETRY_INTERVAL_MS) {
+  if (millis() - bootStartMs >= AP_CONFIG_TIMEOUT_MS) startApConfigMode(false);
+  // AP+STA 共存，手机停在设置页时仍能恢复 Wi-Fi 并查询云端配对结果。
+  if (cfgSsid.length() && cfgServerHost.length() && millis() - lastWiFiRetryMs >= WIFI_RETRY_INTERVAL_MS) {
     WiFi.disconnect(false, false);
     connectWiFi();
   }
 }
 
-void maintainSockets() {
-  if (apConfigMode) return;  // 配网模式下不尝试连接 server
-  // 新身份与 TLS 连接将在下一项改动接入；不会回退匿名或明文。
-  if (deviceConfig.network().accounts || deviceConfig.network().tls) return;
-  uint32_t now = millis();
-  if (WiFi.status() != WL_CONNECTED) return;
+bool refreshConnectionScreen() {
+  DeviceLinkSnapshot link = deviceLink.snapshot();
+  bool needed = setupPortal.active() || (deviceConfig.network().accounts && !link.bound)
+      || (deviceConfig.network().tls && !DeviceLink::clockReady());
+  static bool wasVisible = false;
+  static uint32_t lastDrawAt = 0;
+  static String previous;
+  if (!needed) {
+    if (wasVisible) { expressionDirty = true; crossfadeActive = false; previous = ""; }
+    wasVisible = false; return false;
+  }
+  String title;
+  if (link.pairingCode.length()) title = link.pairingCode;
+  else switch (link.status) {
+    case DeviceLinkStatus::NeedCredential: title = "USB ID REQUIRED"; break;
+    case DeviceLinkStatus::CredentialInvalid: title = "CREDENTIAL INVALID"; break;
+    case DeviceLinkStatus::WaitingClock: title = "SYNCING TIME"; break;
+    case DeviceLinkStatus::ServerOffline: title = "SERVER OFFLINE"; break;
+    case DeviceLinkStatus::Unbound: title = "GETTING PAIR CODE"; break;
+    default: title = setupPortal.active() ? "DEVICE SETUP" : "CONNECTING";
+  }
+  String subtitle = setupPortal.active() ? "AP " + deviceConfig.setupSsid() : deviceConfig.deviceId();
+  if (setupPortal.active() && link.pairingCode.length()) subtitle += " / " + String(link.expiresIn) + "s";
+  String detail = setupPortal.active() ? "KEY " + deviceConfig.setupPassword() : deviceConfig.serverUrl();
+  String key = title + subtitle + detail;
+  if (!wasVisible || key != previous || millis() - lastDrawAt >= 2000) {
+    drawConnectionBanner(title, subtitle, detail);
+    previous = key; lastDrawAt = millis();
+  }
+  wasVisible = true;
+  return true;
+}
 
-  if (!wsCam.available() && now - lastCamRetryMs >= 2000) {
+void maintainSockets() {
+  uint32_t now = millis();
+  if (WiFi.status() != WL_CONNECTED || !deviceLink.allowBusiness()) {
+    camWsReady = false; audWsReady = false; runAudioStream = false; ttsAudioAvailable = false;
+    if (wsCam.available()) wsCam.close();
+    if (wsAud.available()) wsAud.close();
+    return;
+  }
+
+  if (!wsCam.available() && now - lastCamRetryMs >= 5000) {
     lastCamRetryMs = now;
-    if (wsCam.connect(cfgServerHost.c_str(), deviceConfig.network().port, CAM_WS_PATH)) {
+    String path = deviceConfig.network().accounts ? "/ws/devices/" + deviceConfig.deviceId() + "/camera" : CAM_WS_PATH;
+    if (wsCam.connect(cfgServerHost.c_str(), deviceConfig.network().port, path)) {
       LOGLN("[WS-CAM] connect request sent");
     }
   }
 
-  if (!wsAud.available() && now - lastAudRetryMs >= 3000) {
+  if (!wsAud.available() && now - lastAudRetryMs >= 5000) {
     lastAudRetryMs = now;
-    if (wsAud.connect(cfgServerHost.c_str(), deviceConfig.network().port, AUD_WS_PATH)) {
+    String path = deviceConfig.network().accounts ? "/ws/devices/" + deviceConfig.deviceId() + "/audio" : AUD_WS_PATH;
+    if (wsAud.connect(cfgServerHost.c_str(), deviceConfig.network().port, path)) {
       LOGLN("[WS-AUD] connect request sent");
     }
   }
@@ -2948,7 +2832,6 @@ void taskWsService(void*) {
 }
 
 void refreshExpressionScreenIfNeeded() {
-  if (apConfigMode) return;  // 配网模式下保持"WIFI SETUP"提示画面，不被表情动画覆盖
   if (screenPageMode != SCREEN_PAGE_EXPRESSION) return;
   uint32_t now = millis();
   if (coverInfoMode) {
@@ -2984,6 +2867,7 @@ void refreshExpressionScreenIfNeeded() {
 }
 
 void setup() {
+  Serial.setRxBufferSize(2048);
   Serial.begin(115200);
   delay(300);
   randomSeed(esp_random());
@@ -3032,7 +2916,7 @@ void setup() {
   centerCatPose();
 
   initScreen();
-  if (LittleFS.begin(true)) {
+  if (LittleFS.begin(false)) {
     LOGLN("[FS] LittleFS ready");
     scanAnimationFolders();
     scanMouthAssets();
@@ -3043,12 +2927,17 @@ void setup() {
   // 这里直接初始化 I2S 即可。
   initI2SIn();
   initI2SOut();
+  loadWiFiConfig();
+  ttsSecureClient.useBuiltinCACertBundle();
+  ttsSecureClient.setHandshakeTimeout(8);
+  ttsClient = deviceConfig.network().tls ? static_cast<NetworkClient*>(&ttsSecureClient) : &ttsPlainClient;
+  if (!wsCam.begin() || !wsAud.begin()) LOGLN("[WS] socket lock unavailable");
   setupWebSocketCallbacks();
   setScreenPageMode(SCREEN_PAGE_EXPRESSION);
   noteInteraction();
   bootStartMs = millis();
-  loadWiFiConfig();
   connectWiFi();
+  if (!deviceLink.begin()) LOGLN("[LINK] background task unavailable");
 
   // 任务 / 核心分配：
   //   core 0：mic_cap(4)/ws_srv(4)/mic_upl(3)/cam_cap(3)/cam_send(2) + WiFi/TCP stack
@@ -3068,11 +2957,11 @@ void setup() {
 
 void loop() {
   provisioning.poll();
-  if (provisioning.shouldReboot()) ESP.restart();
-  if (provisioning.takeSetupRequest()) startApConfigMode();
+  if (provisioning.shouldReboot() || setupPortal.shouldReboot()) ESP.restart();
+  if (provisioning.takeSetupRequest()) startApConfigMode(true);
   maintainWiFi();
   serviceDirectPoseControl();
   scheduleIdleActionIfNeeded();
-  refreshExpressionScreenIfNeeded();
+  if (!refreshConnectionScreen()) refreshExpressionScreenIfNeeded();
   delay(5);
 }

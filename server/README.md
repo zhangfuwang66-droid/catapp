@@ -105,3 +105,5 @@ python -m uvicorn app:app --app-dir server --host 127.0.0.1 --port 8081 --worker
 浏览器访问 `http://127.0.0.1:8081/`。本例仅供本机开发，云端部署还需配置域名、HTTPS、服务进程和备份。网页资源在 `server/web/`，桌面构建配置已包含资源目录；本阶段没有重新打包 exe。旧固件仍应使用 `local` 模式，新身份协议固件完成前不能直接切换实物。
 
 后端测试：从仓库根目录设置 `PYTHONPATH=server`，运行 `python -m unittest discover -s server/tests -v`。浏览器测试为 `node server/tests/web_ui_test.cjs`，需要可用的 Playwright、浏览器与服务器 Python 依赖；可通过 `PYTHON_EXECUTABLE` 指定解释器，`BROWSER_EXECUTABLE` 指定浏览器，`NODE_PATH` 指向 Playwright 所在的 `node_modules`。测试只启动回环地址的临时服务，用模拟账号和数据库验证页面操作，不调用真实模型或写入硬件；截图存入已忽略的 `artifacts/web-tests/`。
+
+新版固件通过设备 Bearer 查询 `GET /api/devices/{device_id}/binding`，未绑定时调用 `POST /api/devices/{device_id}/pairing` 申请配对码。响应包含原来的 `expires_at` 和新增的 `expires_in`（服务器计算的剩余秒数，最大 300），便于尚未同步时钟的本地调试设备倒计时。配对码只在设备屏幕及受保护的设备热点页显示，长期凭证仅通过 USB 配发。固件与工具见 [USB 配置说明](../firmware/tools/README.md)；实际烧录与 TLS、真实模型对话仍待实物联调。

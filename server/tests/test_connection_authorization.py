@@ -64,14 +64,26 @@ class ConnectionCleanupTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 finished.set()
 
-        with patch.object(DeviceAuthorization, "is_valid", AsyncMock(return_value=True)):
-            task = asyncio.create_task(authorizer.run(authorization, handler))
+        async def cancellation_args(coroutine):
+            started.clear()
+            finished.clear()
+            task = asyncio.create_task(coroutine)
             await asyncio.wait_for(started.wait(), 1)
             task.cancel("caller shutdown")
             with self.assertRaises(asyncio.CancelledError) as result:
                 await task
-        self.assertEqual(result.exception.args, ("caller shutdown",))
-        self.assertTrue(finished.is_set())
+            self.assertTrue(finished.is_set())
+            return result.exception.args
+
+        async def await_child():
+            return await asyncio.create_task(handler())
+
+        # Python 3.10 在 await 子任务时可能丢失取消消息；以同一解释器的
+        # 原生行为作对照，仍要求清理完成、取消继续传播且不替换可用的消息。
+        expected = await cancellation_args(await_child())
+        with patch.object(DeviceAuthorization, "is_valid", AsyncMock(return_value=True)):
+            actual = await cancellation_args(authorizer.run(authorization, handler))
+        self.assertEqual(actual, expected)
         self.assertFalse(authorizer.leases)
 
 

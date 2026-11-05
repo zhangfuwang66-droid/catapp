@@ -10,6 +10,8 @@
 
 也可运行 `start-server.ps1`。安装依赖使用 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`。
 
+实时对话和普通多模态调用默认使用 `qwen3.8-omni-flash`，分别可通过 `QWEN_REALTIME_MODEL` 和 `QWEN_OMNI_MODEL` 覆盖。实时对话仍使用 DashScope Realtime WebSocket 接口；此模型在该接口下的可用性、音色和会话参数兼容性需要真实云端联调确认。视觉问答、文本摘要和情绪解析继续使用各自配置的模型。
+
 运行模块直接保留在本目录；辅助的配网语音生成工具放在 `tools/`，它需要访问云端 TTS，生成的 `config_prompt.pcm` 用于 ESP32 资源烧录。
 
 `.venv/`、`.env`、`models/`、`records/` 和 Python 缓存均不提交 Git。桌面模式的数据默认写入 `%LOCALAPPDATA%\CyberMiao`，直接运行服务器时默认写入本目录。
@@ -65,7 +67,7 @@ python server/tools/migrate_memory.py --database artifacts/data/memory.sqlite3 -
 
 ## 第二阶段：账号基础（开发中）
 
-服务器状态已按设备拆分，`app.py` 管理路由，`device_runtime.py` 管理单台设备的会话与任务。默认 `CYBERMIAO_ACCESS_MODE=local` 保留原固件使用方式，访问范围限制在本机和私有局域网。账号模式使用 `accounts`，设备接口已经接入凭证、登录和归属检查；账号网页、固件及 TLS 联调尚未完成，正式部署仍按第二阶段计划执行。
+服务器状态已按设备拆分，`app.py` 管理路由，`device_runtime.py` 管理单台设备的会话与任务。默认 `CYBERMIAO_ACCESS_MODE=local` 保留原固件使用方式，访问范围限制在本机和私有局域网。账号模式使用 `accounts`，设备接口已接入凭证、登录和归属检查。账号网页已完成本地浏览器验证；新版固件与实物 TLS 联调尚未完成，正式部署仍按第二阶段计划执行。
 
 先安装更新后的依赖，再从仓库根目录创建账号：
 
@@ -87,3 +89,19 @@ python server/tools/identity_admin.py --database artifacts/data/memory.sqlite3 d
 凭证文件只生成一次并拒绝覆盖，已被 Git 忽略。此命令不会烧录设备；后续通过 USB 配发。`device-rotate` 配合同样的 `--credential-output` 可生成新凭证并撤销旧凭证；`device-revoke --device-id ...` 停用设备，不更换主人或转移历史记忆。若签发后文件写盘失败，使用轮换命令配发新凭证，不能从数据库取回原文。
 
 账号模式使用 `/api/devices/{device_id}/...` 和 `/ws/devices/{device_id}/audio|camera|ui|viewer`。旧匿名入口关闭。设备麦克风、摄像头、播放流使用 `Authorization: Bearer ...`；网页通过 HttpOnly Cookie 登录，写请求附带 `Origin` 与 `/api/auth/session` 返回的 `X-CSRF-Token`。设备凭证不接受 URL 参数，也不能用于读取网页记忆和控制接口。网页退出会结束自己的订阅，设备语音可继续工作。
+
+## 账号网页本地联调
+
+账号模式首页 `/` 提供登录、设备列表、配对码输入、在线状态、记忆查看、确认清除与停用。控制台为 `/console/{device_id}`，打开时验证登录和设备归属；页面的请求、画面与控制都使用该设备的接口，HTTPS 页面使用 WSS。退出、切换账号或权限失效会断开旧订阅，清除聊天、画面、活动图片和播放内容。页面刷新不会把 Cookie 或设备凭证写入浏览器本地存储。
+
+从仓库根目录运行开发服务示例（先安装服务器依赖，配置 API Key，并在同一个数据库创建账号）：
+
+```powershell
+$env:CYBERMIAO_ACCESS_MODE = 'accounts'
+$env:CYBERMIAO_MEMORY_DB_PATH = (Join-Path (Get-Location) 'artifacts/data/memory.sqlite3')
+python -m uvicorn app:app --app-dir server --host 127.0.0.1 --port 8081 --workers 1
+```
+
+浏览器访问 `http://127.0.0.1:8081/`。本例仅供本机开发，云端部署还需配置域名、HTTPS、服务进程和备份。网页资源在 `server/web/`，桌面构建配置已包含资源目录；本阶段没有重新打包 exe。旧固件仍应使用 `local` 模式，新身份协议固件完成前不能直接切换实物。
+
+后端测试：从仓库根目录设置 `PYTHONPATH=server`，运行 `python -m unittest discover -s server/tests -v`。浏览器测试为 `node server/tests/web_ui_test.cjs`，需要可用的 Playwright、浏览器与服务器 Python 依赖；可通过 `PYTHON_EXECUTABLE` 指定解释器，`BROWSER_EXECUTABLE` 指定浏览器，`NODE_PATH` 指向 Playwright 所在的 `node_modules`。测试只启动回环地址的临时服务，用模拟账号和数据库验证页面操作，不调用真实模型或写入硬件；截图存入已忽略的 `artifacts/web-tests/`。

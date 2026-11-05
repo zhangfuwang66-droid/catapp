@@ -6,7 +6,8 @@ from async_helpers import run_blocking
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
@@ -22,10 +23,10 @@ from device_runtime import (
     MEMORY_DEBUG_API_ENABLED,
 )
 from device_registry import DeviceRegistry
-from index_html import INDEX_HTML
+from web_pages import WEB_ROOT, console_html, portal_html
 from memory_store import MemoryManager, MemoryStore
 from identity_store import IdentityStore
-from access_control import AccessSettings, LocalAccessMiddleware, authorize_runtime
+from access_control import AccessSettings, LocalAccessMiddleware, authorize_runtime, require_session
 from connection_authorization import ConnectionAuthorizer, AuthorizedStreamingResponse
 from auth_routes import router as auth_router
 from device_routes import router as devices_router
@@ -59,8 +60,24 @@ async def run_authorized_websocket(ws: WebSocket, handler):
 
 
 @router.get("/", response_class=HTMLResponse)
-def root():
-    return get_index_html()
+def root(request: Request):
+    return portal_html() if request.app.state.access.mode == "accounts" else get_index_html()
+
+
+@router.get("/console/{device_id}", response_class=HTMLResponse)
+async def device_console(device_id: str, request: Request):
+    if request.app.state.access.mode != "accounts":
+        return RedirectResponse("/", status_code=303)
+    try:
+        user = await require_session(request)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return RedirectResponse("/?notice=login", status_code=303)
+        raise
+    device = await run_blocking(request.app.state.identities.owned_device, device_id, user.id)
+    if device is None:
+        raise HTTPException(status_code=404, detail="设备不存在或无权访问")
+    return console_html(device_id, account_mode=True)
 
 
 @router.get("/api/health", response_class=PlainTextResponse)
@@ -228,7 +245,7 @@ async def tft_setting(param: str='', value: int=0, runtime: DeviceRuntime = Depe
 
 
 def get_index_html():
-    return INDEX_HTML
+    return console_html()
 
 
 def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memory_messages,
@@ -287,6 +304,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.include_router(router)
     application.include_router(auth_router)
     application.include_router(devices_router)
+    application.mount("/web", StaticFiles(directory=str(WEB_ROOT)), name="web")
     application.add_middleware(LocalAccessMiddleware, settings=access)
     return application
 

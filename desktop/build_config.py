@@ -39,6 +39,7 @@ def collect_bundle_files():
     datas += [(str(APP_ROOT / "assets" / "icon.ico"), "assets"),
               (str(APP_ROOT / "assets" / "icon.png"), "assets"),
               (str(APP_ROOT / "VERSION"), "."),
+              (str(SERVER_ROOT / "web"), "server/web"),
               (str(prepare_model()), "server/models")]
     # CustomTkinter 的字体和主题 JSON 必须随单文件 exe 一同打包。
     datas += collect_data_files("customtkinter")

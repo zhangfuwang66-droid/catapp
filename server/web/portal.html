@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>我的小喵 · Cyber Miao</title>
+  <link rel="stylesheet" href="/web/portal.css">
+  <script src="/web/portal.js" defer></script>
+</head>
+<body>
+  <svg class="symbols" aria-hidden="true"><defs>
+    <symbol id="cat" viewBox="0 0 80 80"><path d="M16 36 13 14l22 13a40 40 0 0 1 10 0l22-13-3 22c5 6 7 12 6 19-2 14-15 21-30 21S12 69 10 55c-1-7 1-13 6-19Z" fill="currentColor"/><path d="M26 46v7m28-7v7" stroke="var(--cat-eye,#121720)" stroke-width="5" stroke-linecap="round"/><path d="m36 59 4 3 4-3" stroke="var(--cat-eye,#121720)" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs></svg>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="赛博小喵首页"><span class="brand-icon"><svg><use href="#cat"/></svg></span><span>Cyber Miao<small>赛博小喵</small></span></a>
+    <div class="account" id="accountBar" hidden><span class="avatar" id="avatar"></span><span id="username"></span><button class="quiet" id="logoutBtn" type="button">退出登录</button></div>
+    <span class="top-note" id="topNote">陪伴，从一次连接开始</span>
+  </header>
+
+  <main>
+    <section class="login-layout" id="loginView" hidden>
+      <div class="welcome">
+        <p class="eyebrow"><span class="live-dot"></span> YOUR LITTLE COMPANION</p>
+        <h1>每一次见面，<br>都接着上次的故事。</h1>
+        <p class="intro">连接你的小喵，让聊天里的小事，<br class="desktop-break">慢慢变成属于你们的记忆。</p>
+        <div class="cat-stage" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><svg class="hero-cat"><use href="#cat"/></svg><span class="spark spark-one">✧</span><span class="spark spark-two">✦</span><span class="stage-label">A LITTLE CAT. A LOT OF STORIES.</span></div>
+        <div class="welcome-notes"><span>独立设备</span><span>专属记忆</span><span>随时连接</span></div>
+      </div>
+      <div class="login-card">
+        <span class="overline">WELCOME BACK</span><h2>你好，欢迎回来</h2><p class="muted">登录账号，看看你的小喵。</p>
+        <form id="loginForm">
+          <label for="loginUsername">账号</label><input id="loginUsername" name="username" autocomplete="username" required maxlength="32" placeholder="请输入账号" spellcheck="false" autocapitalize="none">
+          <label for="loginPassword">密码</label><input id="loginPassword" name="password" type="password" autocomplete="current-password" required maxlength="128" placeholder="请输入密码">
+          <p class="form-error" id="loginError" role="alert"></p>
+          <button class="primary wide" id="loginBtn" type="submit">登录我的小喵 <svg><use href="#arrow"/></svg></button>
+        </form>
+        <p class="login-help">请使用管理员为你创建的账号。<br>忘记密码时，请联系管理员重设。</p>
+      </div>
+    </section>
+
+    <section class="workspace" id="devicesView" hidden>
+      <aside class="sidebar"><div class="side-label">我的空间</div><div class="side-item active"><svg><use href="#cat"/></svg>我的小喵<span id="sideCount">0</span></div><div class="side-tip"><span>一点小提醒</span><p>同一只小喵的聊天记忆属于绑定它的主人账号。</p></div></aside>
+      <div class="workspace-main">
+        <div class="page-heading"><div><p class="eyebrow">MY COMPANIONS</p><h1>我的小喵<span class="count" id="deviceCount">0</span></h1><p class="muted">你的陪伴伙伴，都在这里。</p></div><button class="primary" id="addDeviceBtn" type="button"><svg><use href="#plus"/></svg>添加小喵</button></div>
+        <div class="summary-strip"><span><i class="live-dot"></i><strong id="onlineCount">0</strong> 台在线</span><span>每台小喵独立保存聊天记忆</span><button class="quiet" id="refreshBtn" type="button">刷新状态 ↻</button></div>
+        <p id="pageError" class="form-error" role="alert"></p>
+        <div id="deviceGrid" class="device-grid"></div>
+        <div class="empty-state" id="emptyState" hidden><div class="empty-cat"><svg><use href="#cat"/></svg></div><h2>把你的第一只小喵带回家</h2><p>让小喵连接网络，在它的配网页面获取配对码，<br>点击“添加小喵”，就能把它绑定到你的账号。</p><button class="secondary" id="emptyAddBtn" type="button">输入设备配对码 <svg><use href="#arrow"/></svg></button></div>
+        <details class="guide"><summary>第一次连接？看看这三个步骤<span>＋</span></summary><div class="guide-steps"><div><b>01</b><h3>让小喵联网</h3><p>在设备的配网页面配置 Wi-Fi 和服务地址。</p></div><div><b>02</b><h3>输入配对码</h3><p>获取小喵的临时配对码，在这里添加设备。</p></div><div><b>03</b><h3>开始你们的对话</h3><p>进入控制台，查看画面、聊天和自己的记忆。</p></div></div></details>
+        <p class="workspace-footer">Cyber Miao <span>·</span> 小小身体，长长陪伴</p>
+      </div>
+    </section>
+    <p id="loading" class="loading" role="status">正在打开你的小喵空间…</p>
+  </main>
+
+  <dialog id="pairDialog" class="dialog"><form id="pairForm"><div class="dialog-top"><span class="overline">NEW COMPANION</span><button class="close" type="button" data-close="pairDialog" aria-label="关闭">×</button></div><h2>认识一只新小喵</h2><p class="muted">输入设备配网页面显示的配对码。<br>配对码 5 分钟有效，只能使用一次。</p><label for="pairCode">设备配对码</label><input class="pair-code" id="pairCode" placeholder="ABCD-EFGH" required maxlength="9" autocomplete="off" spellcheck="false" autocapitalize="characters" pattern="[A-Za-z0-9]{4}-?[A-Za-z0-9]{4}"><p id="pairError" class="form-error" role="alert"></p><button id="pairBtn" class="primary wide" type="submit">绑定到我的账号 <svg><use href="#arrow"/></svg></button><p class="dialog-note">配对前，设备需已完成身份配置并连接到本服务。</p></form></dialog>
+
+  <dialog id="memoryDialog" class="dialog memory-dialog"><div class="dialog-top"><span class="overline">YOUR SHARED STORIES</span><button class="close" type="button" data-close="memoryDialog" aria-label="关闭记忆">×</button></div><h2 id="memoryTitle">小喵的记忆</h2><p class="muted">这里展示近期摘要、长期记忆和尚未总结的近期消息。</p><p id="memoryError" class="form-error" role="alert"></p><div id="memoryContent" class="memory-content"></div><details class="danger-zone" id="clearDetails"><summary>清除这只小喵的聊天记忆</summary><p>会结束当前对话并删除此设备的聊天、摘要和长期记忆。绑定关系和其他设备不受影响。此操作不能撤销。</p><form id="clearForm"><label for="clearDeviceId" id="clearLabel">输入设备编号以确认</label><input id="clearDeviceId" autocomplete="off" spellcheck="false"><button id="clearBtn" class="danger" type="submit" disabled>确认清除记忆</button></form></details></dialog>
+
+  <dialog id="revokeDialog" class="dialog"><form id="revokeForm"><div class="dialog-top"><span class="overline">DEVICE ACCESS</span><button class="close" type="button" data-close="revokeDialog" aria-label="关闭">×</button></div><h2>停用这只小喵？</h2><p class="muted">停用会结束设备连接并撤销凭证，保留主人绑定和历史记忆。恢复使用时需联系管理员重新配发凭证。</p><label for="revokeDeviceId" id="revokeLabel">输入设备编号以确认</label><input id="revokeDeviceId" autocomplete="off" spellcheck="false"><p id="revokeError" class="form-error" role="alert"></p><button id="revokeBtn" class="danger wide" type="submit" disabled>确认停用设备</button></form></dialog>
+  <div class="notice" id="notice" role="status" hidden></div>
+</body>
+</html>

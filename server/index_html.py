@@ -11,7 +11,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Meow · Cat Robot Console</title>
+  <title>小喵控制台 · Cyber Miao</title>
+  <script>const CONSOLE_CONTEXT = __CYBERMIAO_CONTEXT__;</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
@@ -46,6 +47,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
       --serif:'Playfair Display',Georgia,serif;
     }
     *{box-sizing:border-box;margin:0;padding:0}
+    [hidden]{display:none!important}
+    body.auth-pending main{visibility:hidden}
+    .console-account{position:relative;z-index:45;display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:12px 28px;background:#151925;border-bottom:1px solid var(--border);font-size:12px;color:var(--fg-soft)}
+    .console-account a{color:var(--accent-1);text-decoration:none}
+    .console-account button{margin-left:auto}
+    .access-error{position:fixed;top:35%;left:50%;transform:translateX(-50%);max-width:90vw;padding:20px;background:var(--bg-3);border:1px solid var(--border-strong);border-radius:12px;z-index:50}
     *::selection{background:rgba(124,140,255,.35);color:#fff}
     html,body{height:100%}
     html{scroll-behavior:smooth}
@@ -635,7 +642,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
     .footer .dots span.on{background:var(--good);box-shadow:0 0 6px var(--good)}
   </style>
 </head>
-<body>
+<body class="__CYBERMIAO_BODY_CLASS__">
+<div id="consoleAccount" class="console-account" hidden><a href="/">← 我的设备</a><span id="consoleAccountName"></span><button id="consoleLogout" class="btn sm" onclick="logoutConsole()">退出登录</button></div>
+<p id="consoleAccessError" class="access-error" role="alert" hidden></p>
 <!-- SVG icon sprite -->
 <svg width="0" height="0" style="position:absolute">
   <defs>
@@ -741,7 +750,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
               <div class="tag"><svg><use href="#i-cam"/></svg></div>
               <div>
                 <div class="title">实时画面</div>
-                <div class="subtitle">ESP32 Camera · H.264 over WebSocket</div>
+                <div class="subtitle">ESP32 Camera · JPEG 实时画面</div>
               </div>
               <div class="side">
                 <button class="btn sm ghost" onclick="disconnectCamera()"><svg><use href="#i-close"/></svg>断开</button>
@@ -765,7 +774,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
               <div class="tag"><svg><use href="#i-chat"/></svg></div>
               <div>
                 <div class="title">语音 & 对话</div>
-                <div class="subtitle">Qwen 3.5 Omni Realtime · 实时双工</div>
+                <div class="subtitle">Qwen3.8-Omni-Flash · 实时双工</div>
               </div>
               <div class="side">
                 <button class="btn sm ghost" onclick="disconnectUI()"><svg><use href="#i-close"/></svg>断开</button>
@@ -988,6 +997,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
 
 <div id="toasts" class="toasts"></div>
 
+<script src="/web/console_access.js"></script>
 <script>
 let wsViewer = null;
 let wsUi = null;
@@ -1067,8 +1077,9 @@ function toast(kind, text){
 }
 
 function startLocalTtsAudio(src){
+  if(!consoleReady) return;
   stopLocalTtsAudio();
-  localTtsAudio = new Audio(src || ('/stream.wav?local=' + Date.now()));
+  localTtsAudio = new Audio(consoleMediaUrl(src || devicePath('/stream.wav?local=' + Date.now())));
   localTtsAudio.autoplay = true;
   localTtsAudio.preload = 'auto';
   localTtsAudio.play().catch(() => {
@@ -1101,28 +1112,38 @@ function addMessage(text, kind){
 
 /* ---- camera ---- */
 function connectCamera(){
-  if(wsViewer) wsViewer.close();
-  const host = location.host || 'localhost:8081';
-  wsViewer = new WebSocket('ws://' + host + '/ws/viewer');
-  wsViewer.binaryType = 'arraybuffer';
-  wsViewer.onopen = () => { setConn(camStatus, footerCam, true, '画面已连'); };
-  wsViewer.onclose = () => { setConn(camStatus, footerCam, false, '画面未连'); };
-  wsViewer.onerror = () => { setConn(camStatus, footerCam, false, '画面错误'); };
-  wsViewer.onmessage = (e) => {
+  if(!consoleReady) return;
+  disconnectCamera();
+  const socket = new WebSocket(consoleSocketUrl('viewer'));
+  wsViewer = socket;
+  const epoch = consoleEpoch;
+  socket.binaryType = 'arraybuffer';
+  socket.onopen = () => { if(wsViewer === socket) setConn(camStatus, footerCam, true, '画面已连'); };
+  socket.onclose = (event) => { if(wsViewer === socket){ setConn(camStatus, footerCam, false, '画面未连'); consoleSocketClosed(event); } };
+  socket.onerror = () => { if(wsViewer === socket) setConn(camStatus, footerCam, false, '画面错误'); };
+  socket.onmessage = (e) => {
+    if(wsViewer !== socket || epoch !== consoleEpoch) return;
     if(!(e.data instanceof ArrayBuffer)) return;
     const blob = new Blob([e.data], {type:'image/jpeg'});
     const url = URL.createObjectURL(blob);
     const img = new Image();
     img.onload = () => {
+      if(wsViewer !== socket || epoch !== consoleEpoch) { URL.revokeObjectURL(url); return; }
       ctx.clearRect(0,0,canvas.width,canvas.height);
       ctx.drawImage(img,0,0,canvas.width,canvas.height);
       URL.revokeObjectURL(url);
       lastFrameAt = Date.now();
     };
+    img.onerror = () => URL.revokeObjectURL(url);
     img.src = url;
   };
 }
-function disconnectCamera(){ if(wsViewer) wsViewer.close(); }
+function disconnectCamera(){
+  const socket = wsViewer; wsViewer = null;
+  if(socket) socket.close();
+  ctx.clearRect(0,0,canvas.width,canvas.height); lastFrameAt = 0;
+  setConn(camStatus, footerCam, false, '画面未连');
+}
 
 setInterval(()=>{
   if(!lastFrameAt) { visionTimer.textContent = '—'; return; }
@@ -1132,15 +1153,17 @@ setInterval(()=>{
 
 /* ---- UI WS ---- */
 function connectUI(){
-  if(wsUi) wsUi.close();
-  const host = location.host || 'localhost:8081';
-  wsUi = new WebSocket('ws://' + host + '/ws_ui');
-  wsUi.onopen = () => { setConn(uiStatus, footerUi, true, '控制已连'); };
-  wsUi.onclose = () => { setConn(uiStatus, footerUi, false, '控制未连'); };
-  wsUi.onerror = () => { setConn(uiStatus, footerUi, false, '控制错误'); };
-  wsUi.onmessage = (e) => handleUiMessage(e.data);
+  if(!consoleReady) return;
+  disconnectUI();
+  chatBox.querySelectorAll('.chat-line').forEach(row => row.remove()); partialText.textContent = '';
+  const socket = new WebSocket(consoleSocketUrl('ui'));
+  wsUi = socket;
+  socket.onopen = () => { if(wsUi === socket) setConn(uiStatus, footerUi, true, '控制已连'); };
+  socket.onclose = (event) => { if(wsUi === socket){ setConn(uiStatus, footerUi, false, '控制未连'); consoleSocketClosed(event); } };
+  socket.onerror = () => { if(wsUi === socket) setConn(uiStatus, footerUi, false, '控制错误'); };
+  socket.onmessage = (e) => { if(wsUi === socket && consoleReady) handleUiMessage(e.data); };
 }
-function disconnectUI(){ if(wsUi) wsUi.close(); }
+function disconnectUI(){ const socket = wsUi; wsUi = null; if(socket) socket.close(); setConn(uiStatus, footerUi, false, '控制未连'); }
 
 function handleUiMessage(data){
   if(data.startsWith('PARTIAL:')){
@@ -1204,7 +1227,7 @@ function setPerformanceMode(on){
     wsUi.send(msg);
   } else {
     // 没连上控制 WS 时，通过 HTTP 兜底切换
-    fetch('/performance_mode?active=' + (on?1:0), {method:'POST'})
+    deviceFetch('/performance_mode?active=' + (on?1:0), {method:'POST'})
       .then(r=>r.json()).then(j=>applyPerformanceMode(j))
       .catch(()=>toast('error','切换失败，请先连接控制 WS'));
   }
@@ -1236,12 +1259,14 @@ function toggleVisionScreen(){
   toast('error', '请先连接控制通道');
 }
 
-function sendRaw(message){ if(wsUi && wsUi.readyState === 1) wsUi.send(message); }
+function sendRaw(message){
+  if(consoleReady && wsUi && wsUi.readyState === 1) { wsUi.send(message); return true; }
+  toast('error', '控制通道未连接，请先连接控制'); return false;
+}
 function sendPrompt(){
   const text = document.getElementById('promptText').value.trim();
   if(!text) return;
-  sendRaw('PROMPT:' + text);
-  document.getElementById('promptText').value = '';
+  if(sendRaw('PROMPT:' + text)) document.getElementById('promptText').value = '';
 }
 function sendRepeat(){
   const text = document.getElementById('repeatText').value.trim();
@@ -1319,7 +1344,7 @@ function updateScreenBrightness(value){
 function toggleRecording(){
   const url = recordingOn ? '/record/stop' : '/record/start';
   recToggleBtn.disabled = true;
-  fetch(url, {method:'POST'})
+  deviceFetch(url, {method:'POST'})
     .then(r=>r.json())
     .then(data=>{
       if(data && data.state){ applyRecordState(data.state); }
@@ -1358,14 +1383,15 @@ function renderTimeline(){
     const idx = entriesCache.length - i;
     row.innerHTML = [
       '<div class="thumb"><img alt="" loading="lazy"></div>',
-      '<div class="meta"><div class="time">'+ (entry.time_label || '') +'</div><div class="desc"></div></div>',
+      '<div class="meta"><div class="time"></div><div class="desc"></div></div>',
       '<div class="idx">#'+ String(idx).padStart(3,'0') +'</div>'
     ].join('');
     const img = row.querySelector('img');
-    img.src = entry.image_url;
+    row.querySelector('.time').textContent = entry.time_label || '';
+    try { img.src = consoleMediaUrl(entry.image_url); } catch(error) { return; }
     img.alt = entry.description || '';
     row.querySelector('.thumb').addEventListener('click', ()=>{
-      document.getElementById('lightboxImg').src = entry.image_url;
+      document.getElementById('lightboxImg').src = consoleMediaUrl(entry.image_url);
       document.getElementById('lightbox').classList.add('on');
     });
     row.querySelector('.desc').textContent = entry.description || '(描述生成中)';
@@ -1405,7 +1431,7 @@ function askRecord(){
   if(!q) return;
   addMessage('[记录问] ' + q, 'rec');
   askInput.value = '';
-  fetch('/record/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question:q})})
+  deviceFetch('/record/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question:q})})
     .then(r=>r.json())
     .then(data=>{ if(data && data.answer) addMessage('[记录答复] ' + data.answer, 'rec'); })
     .catch(err=>addMessage('[记录答复] 提问失败：' + err, 'rec'));
@@ -1415,7 +1441,7 @@ function runAnalysis(){
   if(!entriesCache.length){ toast('error','还没有记录可供分析'); return; }
   recStateEl.textContent = '分析中';
   heroStatus.textContent = '分析中';
-  fetch('/record/analyze', {method:'POST'})
+  deviceFetch('/record/analyze', {method:'POST'})
     .then(r=>r.json())
     .then(data=>{
       recStateEl.textContent = recordingOn ? '记录中' : '待命';
@@ -1589,7 +1615,7 @@ function applyTranslationState(state){
 }
 
 function fetchInitialRecordState(){
-  fetch('/record/state').then(r=>r.json()).then(data=>{
+  deviceFetch('/record/state').then(r=>r.json()).then(data=>{
     if(data && data.state){ applyRecordState(data.state); }
     if(data && Array.isArray(data.entries)){ entriesCache = data.entries; renderTimeline(); }
   }).catch(()=>{});
@@ -1606,7 +1632,7 @@ document.querySelectorAll('.nav-links a').forEach(a=>{
 renderTranslatePairs();
 applyTranslationState({active:false, pair:selectedTranslatePair, current:'', source:'', finalized:false});
 
-setTimeout(()=>{ connectUI(); fetchInitialRecordState(); }, 400);
+initializeConsole();
 </script>
 </body>
 </html>"""

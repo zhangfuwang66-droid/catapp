@@ -10,11 +10,11 @@ from typing import Awaitable, Callable, Optional
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-REALTIME_MODEL = os.getenv("QWEN_REALTIME_MODEL", "qwen3.5-omni-plus-realtime")
-REALTIME_VOICE = os.getenv("QWEN_REALTIME_VOICE", "Sunnybobi")
+REALTIME_MODEL = os.getenv("QWEN_REALTIME_MODEL", "qwen3.8-omni-flash-realtime")
+REALTIME_VOICE = os.getenv("QWEN_REALTIME_VOICE", "Tina")
 REALTIME_TURN_DETECTION = os.getenv("QWEN_REALTIME_TURN_DETECTION", "server_vad")
 REALTIME_TURN_THRESHOLD = float(os.getenv("QWEN_REALTIME_TURN_THRESHOLD", "0.5"))
-REALTIME_TURN_SILENCE_MS = int(os.getenv("QWEN_REALTIME_TURN_SILENCE_MS", "900"))
+REALTIME_TURN_SILENCE_MS = int(os.getenv("QWEN_REALTIME_TURN_SILENCE_MS", "600"))
 REALTIME_PREFIX_PADDING_MS = int(os.getenv("QWEN_REALTIME_PREFIX_PADDING_MS", "500"))
 REALTIME_INPUT_TRANSCRIPTION_MODEL = os.getenv("QWEN_REALTIME_TRANSCRIPTION_MODEL", "gummy-realtime-v1")
 REALTIME_WS_URL = os.getenv("QWEN_REALTIME_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
@@ -37,9 +37,11 @@ class OmniRealtimeSession:
         on_error: Callable[[str], Awaitable[None]],
         on_debug: Optional[Callable[[str], Awaitable[None]]] = None,
         get_latest_image_bytes: Optional[Callable[[], bytes]] = None,
+        voice: Optional[str] = None,
     ):
         self.loop = loop
         self.system_prompt = system_prompt
+        self.voice = voice or REALTIME_VOICE
         self.on_input_transcript = on_input_transcript
         self.on_output_text_delta = on_output_text_delta
         self.on_output_audio = on_output_audio
@@ -154,7 +156,7 @@ class OmniRealtimeSession:
     async def _update_session(self):
         session_config = {
             "modalities": ["text", "audio"],
-            "voice": REALTIME_VOICE,
+            "voice": self.voice,
             "instructions": self.system_prompt,
             "input_audio_format": "pcm",
             "output_audio_format": "pcm",
@@ -192,6 +194,21 @@ class OmniRealtimeSession:
             await self._debug("session.update pushed (instructions refreshed)")
         except Exception as exc:
             await self._debug(f"update_instructions failed: {exc}")
+
+    async def set_voice(self, new_voice: str):
+        """切换输出音色，热更新到当前 realtime 会话；若会话未就绪则缓存到下次连接。"""
+        if not new_voice:
+            return
+        self.voice = new_voice
+        ws = self._ws
+        if ws is None or self._ws_is_closed(ws) or not self._connected:
+            await self._debug(f"set_voice cached (session not ready): {new_voice}")
+            return
+        try:
+            await self._send_event({"type": "session.update", "session": {"voice": new_voice}})
+            await self._debug(f"set_voice pushed: {new_voice}")
+        except Exception as exc:
+            await self._debug(f"set_voice failed: {exc}")
 
     async def append_audio(self, pcm_chunk: bytes):
         if not pcm_chunk:

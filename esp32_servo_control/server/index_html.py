@@ -256,50 +256,6 @@ INDEX_HTML = r"""<!DOCTYPE html>
     .btn.rec.on{background:rgba(255,77,109,.08);border:1px solid rgba(255,77,109,.5);color:#ffd3dc;box-shadow:none}
     .btn.rec.on:hover{background:rgba(255,77,109,.14)}
     .btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
-    /* ===== Performance Mode（极速画面模式） ===== */
-    .btn.perf{
-      background:linear-gradient(135deg,#3b2a12 0%,#6b4a13 100%);
-      border:1px solid rgba(255,196,86,.45);
-      color:#ffe3a3;
-      box-shadow:0 6px 20px rgba(255,196,86,.18);
-      font-weight:600;
-    }
-    .btn.perf:hover{filter:brightness(1.12);border-color:rgba(255,196,86,.7)}
-    .btn.perf.on{
-      background:linear-gradient(135deg,#ffb347 0%,#ff6a6a 100%);
-      color:#1a0a00;
-      border:1px solid rgba(255,255,255,.55);
-      box-shadow:0 8px 26px rgba(255,128,80,.55),inset 0 0 0 1px rgba(255,255,255,.15);
-    }
-    .btn.perf.on:hover{filter:brightness(1.05)}
-    .perf-banner{
-      position:sticky;top:57px;z-index:39;
-      margin:0;padding:10px 28px;
-      background:linear-gradient(90deg,rgba(255,179,71,.18) 0%,rgba(255,106,106,.22) 100%);
-      border-bottom:1px solid rgba(255,196,86,.35);
-      backdrop-filter:blur(12px) saturate(140%);
-      display:none;align-items:center;gap:14px;
-      font-size:13px;color:#ffe8c2;
-    }
-    .perf-banner.on{display:flex}
-    .perf-banner .dot{
-      width:8px;height:8px;border-radius:50%;background:#ffb347;
-      box-shadow:0 0 0 4px rgba(255,179,71,.2);
-      animation:perfPulse 1.4s ease-in-out infinite;
-    }
-    @keyframes perfPulse{
-      0%,100%{box-shadow:0 0 0 4px rgba(255,179,71,.18)}
-      50%{box-shadow:0 0 0 8px rgba(255,179,71,.05)}
-    }
-    .perf-banner b{color:#fff;font-weight:600}
-    .perf-banner .tag{
-      font-family:var(--mono);font-size:11px;letter-spacing:.08em;
-      padding:3px 8px;border-radius:6px;
-      background:rgba(255,255,255,.08);border:1px solid rgba(255,196,86,.35);color:#ffe3a3;
-    }
-    /* 开启极速模式时把其它控制面板做一点点暗化，提醒用户 */
-    body.perf-on .card:not(#vision){opacity:.42;filter:saturate(.7);pointer-events:none;transition:opacity .2s ease}
-    body.perf-on .hero{opacity:.55;transition:opacity .2s ease}
     .icon-btn{
       width:34px;height:34px;border-radius:9px;
       display:inline-flex;align-items:center;justify-content:center;
@@ -495,6 +451,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       transition:all .2s;display:inline-flex;align-items:center;gap:6px;
     }
     .chip:hover{background:rgba(124,140,255,.12);color:#fff;border-color:rgba(124,140,255,.5);transform:translateY(-1px)}
+    .chip.on{background:rgba(124,140,255,.20);color:#fff;border-color:rgba(124,140,255,.65);box-shadow:0 0 0 1px rgba(124,140,255,.30)}
     .chip .emo{font-size:14px}
     .actions-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
     @media (max-width:680px){ .actions-grid{grid-template-columns:repeat(3,1fr)} }
@@ -684,22 +641,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <span id="camStatus" class="pill off"><span class="dot"></span><span>画面未连</span></span>
       <span id="uiStatus" class="pill off"><span class="dot"></span><span>控制未连</span></span>
       <span id="recStatus" class="pill"><span class="dot"></span><span>未在记录</span></span>
-      <button id="perfBtn" class="btn sm perf" onclick="togglePerformanceMode()" title="开启后将关闭对话/翻译/手势/记录/TFT屏，把所有网络和算力让给摄像头">
-        <svg><use href="#i-bolt"/></svg><span id="perfBtnText">极速画面</span>
-      </button>
     </div>
   </nav>
-
-  <div id="perfBanner" class="perf-banner">
-    <span class="dot"></span>
-    <span class="tag">PERF · ON</span>
-    <span>
-      <b>极速画面模式已开启</b> —— 对话 / 同传 / 手势 / 记录 / TFT 屏推送均已暂停，所有带宽与算力用于摄像头画面。
-    </span>
-    <button class="btn sm" style="margin-left:auto" onclick="setPerformanceMode(false)">
-      <svg><use href="#i-close"/></svg>退出极速模式
-    </button>
-  </div>
 
   <section class="hero">
     <div class="hero-inner">
@@ -724,7 +667,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
         </div>
         <div class="stat">
           <div class="label">Model</div>
-          <div class="val" style="font-size:15px">Qwen-VL · Qwen-Plus</div>
+          <div class="val" style="font-size:15px">Qwen3.8-Flash</div>
           <div class="trend">视觉描述 & 活动分析</div>
         </div>
       </div>
@@ -765,7 +708,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
               <div class="tag"><svg><use href="#i-chat"/></svg></div>
               <div>
                 <div class="title">语音 & 对话</div>
-                <div class="subtitle">Qwen 3.5 Omni Realtime · 实时双工</div>
+                <div class="subtitle">Qwen3.8-Omni-Flash-Realtime · 实时双工</div>
               </div>
               <div class="side">
                 <button class="btn sm ghost" onclick="disconnectUI()"><svg><use href="#i-close"/></svg>断开</button>
@@ -778,6 +721,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
                   <div class="chat-partial" id="partialText">等待语音或文本输入…</div>
                 </div>
               </div>
+              <div class="section-title">音色选择</div>
+              <div class="chip-row" id="voiceChips" style="margin-bottom:16px"></div>
               <div class="section-title">快速发送</div>
               <div class="input-group" style="margin-bottom:10px">
                 <svg class="leading"><use href="#i-chat"/></svg>
@@ -794,7 +739,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
               <div class="tag"><svg><use href="#i-translate"/></svg></div>
               <div>
                 <div class="title">同声传译</div>
-                <div class="subtitle">Real-time Simultaneous Interpreter · Qwen Omni</div>
+                <div class="subtitle">Real-time Simultaneous Interpreter · Qwen3.8-Omni-Flash-Realtime</div>
               </div>
               <div class="side">
                 <span id="trState" class="state"><span class="dot"></span><span id="trStateText">未激活</span></span>
@@ -1004,10 +949,12 @@ let translationPairs = [
 let translationState = {active:false, pair:'zh-en', current:'', source:'', finalized:false};
 let selectedTranslatePair = 'zh-en';
 
-/* ---- performance mode（极速画面模式） ---- */
-let performanceModeActive = false;
 let rawPwmTestMode = false;
 let visionScreenPinned = false;
+
+/* ---- voice selection（音色选择） ---- */
+let voiceOptions = [];
+let currentVoice = 'Tina';
 
 const canvas = document.getElementById('videoCanvas');
 const ctx = canvas.getContext('2d');
@@ -1163,20 +1110,21 @@ function handleUiMessage(data){
       translationPairs = init.translation_pairs;
       renderTranslatePairs();
     }
-    if(init.performance_mode){
-      applyPerformanceMode(init.performance_mode);
-    }
     if(init.vision_screen){
       applyVisionScreenState(init.vision_screen);
+    }
+    if(Array.isArray(init.voices) && init.voices.length){
+      voiceOptions = init.voices;
+      renderVoiceChips(init.current_voice || 'Tina');
     }
   } else if(data.startsWith('RECORD:')){
     try { handleRecordEvent(JSON.parse(data.substring(7))); } catch(e){}
   } else if(data.startsWith('TRANSLATE:')){
     try { applyTranslationState(JSON.parse(data.substring(10))); } catch(e){}
-  } else if(data.startsWith('PERFMODE:')){
-    try { applyPerformanceMode(JSON.parse(data.substring(9))); } catch(e){}
   } else if(data.startsWith('VISPIN:')){
     try { applyVisionScreenState(JSON.parse(data.substring(7))); } catch(e){}
+  } else if(data.startsWith('VOICE:')){
+    try { applyVoiceState(JSON.parse(data.substring(6))); } catch(e){}
   } else if(data.startsWith('LOCALAUDIO:PLAY:')){
     startLocalTtsAudio(data.substring(16));
   } else if(data === 'LOCALAUDIO:START'){
@@ -1186,33 +1134,42 @@ function handleUiMessage(data){
   }
 }
 
-/* ---- performance mode helpers ---- */
-function applyPerformanceMode(state){
-  const active = !!(state && state.active);
-  performanceModeActive = active;
-  const btn = document.getElementById('perfBtn');
-  const btnText = document.getElementById('perfBtnText');
-  const banner = document.getElementById('perfBanner');
-  if(btn){ btn.classList.toggle('on', active); }
-  if(btnText){ btnText.textContent = active ? '关闭极速' : '极速画面'; }
-  if(banner){ banner.classList.toggle('on', active); }
-  document.body.classList.toggle('perf-on', active);
+/* ---- voice selection helpers ---- */
+function renderVoiceChips(selected){
+  currentVoice = selected || 'Tina';
+  const wrap = document.getElementById('voiceChips');
+  if(!wrap) return;
+  wrap.innerHTML = '';
+  voiceOptions.forEach((v) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip' + (v.value === currentVoice ? ' on' : '');
+    chip.textContent = v.label;
+    chip.title = v.value;
+    chip.onclick = () => selectVoice(v.value);
+    wrap.appendChild(chip);
+  });
 }
-function setPerformanceMode(on){
-  const msg = 'PERFMODE:' + (on ? 'ON' : 'OFF');
+function applyVoiceState(state){
+  if(!state || !state.value) return;
+  currentVoice = state.value;
+  const chips = document.querySelectorAll('#voiceChips .chip');
+  chips.forEach((chip) => {
+    chip.classList.toggle('on', chip.title === currentVoice);
+  });
+}
+function selectVoice(value){
+  if(!value) return;
+  currentVoice = value;
+  const chips = document.querySelectorAll('#voiceChips .chip');
+  chips.forEach((chip) => {
+    chip.classList.toggle('on', chip.title === value);
+  });
   if(wsUi && wsUi.readyState === 1){
-    wsUi.send(msg);
+    wsUi.send('VOICE:' + value);
+    toast('success', '已切换音色：' + value);
   } else {
-    // 没连上控制 WS 时，通过 HTTP 兜底切换
-    fetch('/performance_mode?active=' + (on?1:0), {method:'POST'})
-      .then(r=>r.json()).then(j=>applyPerformanceMode(j))
-      .catch(()=>toast('error','切换失败，请先连接控制 WS'));
+    toast('error', '请先连接控制通道');
   }
-  if(on) toast('info','极速画面模式开启，其它功能暂停');
-  else   toast('success','已退出极速画面模式');
-}
-function togglePerformanceMode(){
-  setPerformanceMode(!performanceModeActive);
 }
 
 function applyVisionScreenState(state){

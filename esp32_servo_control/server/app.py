@@ -93,7 +93,7 @@ from omni_client import (
     stream_chat,
 )
 from index_html import INDEX_HTML
-from omni_realtime_client import OmniRealtimeSession
+from omni_realtime_client import REALTIME_VOICE, OmniRealtimeSession
 from voice_command import (
     match_voice_action,
     match_voice_expression,
@@ -157,6 +157,23 @@ VISUAL_DIALOG_SYSTEM_PROMPT = (
     + "- 如果画面不够清楚，也要先说出你目前能看到的部分，再补一句“还不太确定，凑近一点我再看看”。\n"
     + "- 回复保持 1 到 2 句话，仍然用小喵的语气。"
 )
+
+# 实时语音对话（qwen3.8-omni-flash-realtime）可选的输出音色。
+# value 为 session.audio.output.voice 的取值，label 为网页展示的中文名。
+REALTIME_VOICE_OPTIONS = [
+    {"value": "Tina", "label": "甜甜 · 甜暖女声"},
+    {"value": "Cici", "label": "绵绵 · 邻家妹妹"},
+    {"value": "Momo", "label": "茉兔 · 撒娇搞怪"},
+    {"value": "Qiao", "label": "小乔妹 · 甜妹个性"},
+    {"value": "Serena", "label": "苏瑶 · 温柔小姐姐"},
+    {"value": "Cindy", "label": "林欣宜 · 台湾嗲嗲"},
+    {"value": "Mia", "label": "舒然 · 温柔生活"},
+    {"value": "Katerina", "label": "卡捷琳娜 · 御姐"},
+    {"value": "Raymond", "label": "林川野 · 清亮男声"},
+    {"value": "Zane", "label": "泽恩 · 磁性男声"},
+    {"value": "Evan", "label": "江晨 · 男大学生"},
+    {"value": "Ryan", "label": "甜茶 · 戏感男声"},
+]
 
 TFT_SCREEN_W = 240
 TFT_SCREEN_H = 284
@@ -223,13 +240,6 @@ cover_monitor_task: Optional[asyncio.Task] = None
 cover_interaction_task: Optional[asyncio.Task] = None
 esp32_audio_priority_active: bool = False
 
-# === Performance Mode（极速画面模式）状态 ===
-# 该模式与所有其他功能隔离：只在各业务入口的最前面做 early-return 判断，
-# 不改变任何现有控制流。开启时暂停：AI 文本对话、复述、同声传译、手势跟踪、
-# 活动记录、realtime 语音会话、以及推送到 ESP32 TFT 屏的画面；并把 ESP32
-# 摄像头 FPS 提升到极限，把网络和算力全留给摄像头画面。
-PERFORMANCE_MODE_FPS = int(os.getenv("PERFORMANCE_MODE_FPS", "30"))
-performance_mode_active: bool = False
 # TFT 不再推屏幕帧后，下行带宽全部让给相机上行 + TTS 音频，帧率整体上调
 CAMERA_IDLE_FPS = max(0, int(os.getenv("CAMERA_IDLE_FPS", "3")))
 CAMERA_PREVIEW_FPS = max(1, int(os.getenv("CAMERA_PREVIEW_FPS", "10")))
@@ -282,6 +292,8 @@ translation_last_update_at: float = 0.0
 translation_finalized: bool = False
 translation_reveal_cursor: int = 0
 current_realtime_session: Optional["OmniRealtimeSession"] = None
+# 当前实时语音对话的输出音色（可被网页切换，热更新到会话）
+current_realtime_voice: str = REALTIME_VOICE
 # 每次需要彻底换脑（如进入/退出翻译模式）时 +1；ws_audio 侧发现变化后
 # 会关闭旧 realtime 会话并按当前模式重建，把模型上下文历史一并清空
 realtime_restart_epoch: int = 0
@@ -859,9 +871,6 @@ async def notify_screen_mode():
 
 
 def desired_esp32_camera_fps() -> int:
-    # 极速画面模式：直接把带宽/算力全部给摄像头（ESP32 固件内部会 clamp 到硬件上限）
-    if performance_mode_active:
-        return PERFORMANCE_MODE_FPS
     if camera_on_demand_requests > 0:
         return CAMERA_ON_DEMAND_FPS
     if audio_priority_mode_active():
@@ -906,9 +915,6 @@ ENABLE_ESP32_SCREEN_PUSH = os.getenv("ENABLE_ESP32_SCREEN_PUSH", "0") == "1"
 async def push_screen_frame_once(force: bool = False):
     global screen_sender_last_push_at, screen_sender_last_mode
     if not ENABLE_ESP32_SCREEN_PUSH:
-        return
-    # 极速画面模式：不再向 ESP32 推送 TFT 屏画面，空出算力与摄像头 WS 带宽
-    if performance_mode_active:
         return
     if current_screen_mode == SCREEN_MODE_EXPRESSION:
         return
@@ -1136,9 +1142,6 @@ async def _apply_visual_dialogue_prompt_to_session(active: bool) -> None:
 async def activate_translation_mode(pair: str, *, voice_trigger: bool = False):
     global translation_active, translation_pair, translation_current_text, translation_input_text
     global translation_finalized, translation_last_update_at, realtime_restart_epoch
-    if performance_mode_active:
-        await ui_broadcast_final("[极速模式] 已暂停：同声传译当前不可用")
-        return
     pair = pair if pair in TRANSLATION_LANG_PAIRS else DEFAULT_TRANSLATION_PAIR
     already_on = translation_active and translation_pair == pair
     info = TRANSLATION_LANG_PAIRS.get(pair, {})
@@ -1281,52 +1284,6 @@ async def _send_ui_expression(emotion: str):
         await send_esp32_command(f"EXPR:{emotion}", allow_during_audio_priority=False)
         return await send_cat_emotion_actions(esp32_audio_ws, emotion, clear_first=True)
     return 0
-
-
-# === Performance Mode（极速画面模式） ===
-# 该区块完全独立，只通过 `performance_mode_active` 这一个布尔量和下面的
-# 开/关切换函数影响现有逻辑；所有现有业务只在自己的入口做 early-return 判断，
-# 其它控制流保持原样，不会被此功能"改造"。
-async def _broadcast_performance_mode_state() -> None:
-    payload = {
-        "active": performance_mode_active,
-        "fps_target": PERFORMANCE_MODE_FPS if performance_mode_active else 0,
-    }
-    await ui_broadcast_raw("PERFMODE:" + json.dumps(payload, ensure_ascii=False))
-
-
-async def set_performance_mode(active: bool, reason: str = "") -> bool:
-    """开启/关闭极速画面模式。返回是否发生状态切换。"""
-    global performance_mode_active, current_realtime_session
-    active = bool(active)
-    if active == performance_mode_active:
-        await _broadcast_performance_mode_state()
-        return False
-    performance_mode_active = active
-    print(f"[PERF] performance mode -> {'ON' if active else 'OFF'} reason={reason or 'manual'}", flush=True)
-
-    if active:
-        # 打开时：立刻释放所有会占用算力/带宽的资源
-        if current_realtime_session is not None:
-            with contextlib.suppress(Exception):
-                await current_realtime_session.cancel_response()
-            current_realtime_session = None
-        with contextlib.suppress(Exception):
-            await hard_reset_audio("performance_mode_on")
-        with contextlib.suppress(Exception):
-            await stop_current_recognition()
-        # 释放主机摄像头（仅在 HOST_CAMERA 屏幕模式时可能占用）
-        with contextlib.suppress(Exception):
-            _release_host_camera_capture()
-        # 通知 ESP32 暂时不用播放 TTS / 放动画
-        if esp32_audio_ws and esp32_audio_ws.client_state == WebSocketState.CONNECTED:
-            with contextlib.suppress(Exception):
-                await esp32_audio_ws.send_text("STOP")
-    # 无论开/关，都同步一次 FPS 指令给 ESP32
-    with contextlib.suppress(Exception):
-        await sync_esp32_camera_fps()
-    await _broadcast_performance_mode_state()
-    return True
 
 
 async def _send_hand_tracking_expression(emotion: str):
@@ -1603,9 +1560,6 @@ def _record_state_dict() -> Dict[str, Any]:
 async def _record_tick_once() -> Optional[Dict[str, Any]]:
     global recording_entry_seq
     if not recording_active:
-        return None
-    # 极速画面模式下跳过本轮记录：不写盘、不调用视觉描述模型
-    if performance_mode_active:
         return None
     jpeg_bytes = _latest_camera_jpeg_bytes()
     if not jpeg_bytes:
@@ -1977,11 +1931,6 @@ async def hand_tracking_loop():
     print("[HAND] tracking loop started", flush=True)
     while True:
         try:
-            # 极速画面模式下完全跳过，避免 MediaPipe 推理抢占 CPU
-            if performance_mode_active:
-                await reset_hand_tracking_state(send_idle=False)
-                await asyncio.sleep(0.5)
-                continue
             if camera_cover_active or camera_cover_interaction_active:
                 await reset_hand_tracking_state(send_idle=False)
                 await asyncio.sleep(0.2)
@@ -2051,9 +2000,6 @@ def _set_playing_task_marker(release_event: Optional[asyncio.Event]):
 
 async def start_ai_with_text(user_text: str):
     global current_partial, current_emotion
-    if performance_mode_active:
-        await ui_broadcast_final("[极速模式] 已暂停：文本对话当前不可用")
-        return
     visual_turn = await sync_visual_dialogue_turn(user_text)
     action_hit = None if visual_turn else match_voice_action(user_text)
     expr_hit = None if visual_turn else match_voice_expression(user_text)
@@ -2168,9 +2114,6 @@ async def start_ai_with_text(user_text: str):
 
 async def start_tts_repeat(user_text: str):
     global latest_repeat_wav, latest_repeat_token
-    if performance_mode_active:
-        await ui_broadcast_final("[极速模式] 已暂停：复述当前不可用")
-        return
     await reset_hand_tracking_state(send_idle=False)
 
     async def _runner():
@@ -2291,6 +2234,25 @@ def repeat_wav():
 register_stream_route(app)
 
 
+async def set_realtime_voice(voice: str) -> bool:
+    """切换实时语音对话的输出音色，并热更新到当前会话、广播给所有网页。"""
+    global current_realtime_voice
+    valid = {v["value"] for v in REALTIME_VOICE_OPTIONS}
+    voice = (voice or "").strip()
+    if not voice or voice not in valid:
+        return False
+    current_realtime_voice = voice
+    session = current_realtime_session
+    if session is not None:
+        try:
+            await session.set_voice(voice)
+        except Exception as exc:
+            print(f"[VOICE] set_voice failed: {exc}", flush=True)
+    await ui_broadcast_raw("VOICE:" + json.dumps({"value": voice}, ensure_ascii=False))
+    print(f"[VOICE] voice -> {voice}", flush=True)
+    return True
+
+
 @app.websocket("/ws_ui")
 async def ws_ui(ws: WebSocket):
     await ws.accept()
@@ -2304,13 +2266,11 @@ async def ws_ui(ws: WebSocket):
                 {"pair": k, "name": v.get("name", k), "display": v.get("display", k)}
                 for k, v in TRANSLATION_LANG_PAIRS.items()
             ],
-            "performance_mode": {
-                "active": performance_mode_active,
-                "fps_target": PERFORMANCE_MODE_FPS if performance_mode_active else 0,
-            },
             "vision_screen": {
                 "pinned": vision_screen_pinned,
             },
+            "voices": REALTIME_VOICE_OPTIONS,
+            "current_voice": current_realtime_voice,
         }
         await ws.send_text("INIT:" + json.dumps(init, ensure_ascii=False))
         await ws.send_text("SCREENMODE:" + SCREEN_MODE_LABELS.get(current_screen_mode, "expression"))
@@ -2354,6 +2314,8 @@ async def ws_ui(ws: WebSocket):
             elif msg.startswith("VISIONSCREEN:"):
                 arg = msg[len("VISIONSCREEN:"):].strip().upper()
                 await set_vision_screen_pinned(arg in ("1", "ON", "TRUE"), reason="ui")
+            elif msg.startswith("VOICE:"):
+                await set_realtime_voice(msg[len("VOICE:"):].strip())
             elif msg.startswith("TRANSLATE_START:"):
                 pair = msg[len("TRANSLATE_START:"):].strip() or DEFAULT_TRANSLATION_PAIR
                 async with interrupt_lock:
@@ -2361,13 +2323,6 @@ async def ws_ui(ws: WebSocket):
             elif msg == "TRANSLATE_STOP":
                 async with interrupt_lock:
                     await deactivate_translation_mode(reason="ui_stop")
-            elif msg.startswith("PERFMODE:"):
-                arg = msg[len("PERFMODE:"):].strip().upper()
-                await set_performance_mode(arg in ("1", "ON", "TRUE"), reason="ui")
-            elif performance_mode_active:
-                # 极速画面模式下，其它透传到 ESP32 的控制指令一律静默丢弃，
-                # 避免占用任何带宽/触发 ESP32 端消耗。
-                continue
             elif esp32_audio_ws and esp32_audio_ws.client_state == WebSocketState.CONNECTED:
                 await send_esp32_command(msg)
     except WebSocketDisconnect:
@@ -2474,6 +2429,7 @@ async def ws_audio(ws: WebSocket):
                 on_error=on_realtime_error,
                 on_debug=on_realtime_debug,
                 get_latest_image_bytes=_current_realtime_image_bytes,
+                voice=current_realtime_voice,
             )
             current_realtime_session = new_session
             await new_session.ensure_connected()
@@ -2589,7 +2545,9 @@ async def ws_audio(ws: WebSocket):
         # 0.65：realtime 输出峰值接近满幅，固件端还有 speakerVolume 增益，
         # 系数过大时累积增益会把功放推饱和，产生"电音"失真
         pcm16 = audioop.mul(audio_bytes, 2, 0.65)
-        if pcm16 and stream_clients:
+        # 始终先预缓冲（写入 recent_pcm_chunks），即使 ESP32 还没连上 /stream.wav。
+        # 否则音频 delta 比 ESP32 建连更早到达时会被直接丢弃，短回复开头就"有文字没声音"。
+        if pcm16:
             await broadcast_pcm16_realtime(pcm16)
 
     async def on_response_started():
@@ -2705,11 +2663,6 @@ async def ws_audio(ws: WebSocket):
                     audio_total_bytes = 0
                     audio_log_started_at = time.monotonic()
                     print("[WS_AUDIO] START command received", flush=True)
-                    if performance_mode_active:
-                        print("[WS_AUDIO] START ignored: performance mode active", flush=True)
-                        await ui_broadcast_partial("（极速画面模式开启中，已暂停语音会话）")
-                        await ws.send_text("OK:STARTED")
-                        continue
                     if API_KEY:
                         session_epoch = realtime_restart_epoch
                         await start_realtime_session()
@@ -2892,27 +2845,6 @@ async def screen_mode_control(mode: Optional[int] = None):
     if mode is not None:
         await set_screen_mode(mode, reason="http")
     return {"ok": True, "mode": current_screen_mode, "label": SCREEN_MODE_LABELS.get(current_screen_mode)}
-
-
-@app.get("/performance_mode")
-async def performance_mode_get():
-    return {
-        "ok": True,
-        "active": performance_mode_active,
-        "fps_target": PERFORMANCE_MODE_FPS if performance_mode_active else 0,
-    }
-
-
-@app.post("/performance_mode")
-async def performance_mode_set(active: Optional[int] = None):
-    if active is None:
-        raise HTTPException(status_code=400, detail="active is required (0 or 1)")
-    await set_performance_mode(bool(active), reason="http")
-    return {
-        "ok": True,
-        "active": performance_mode_active,
-        "fps_target": PERFORMANCE_MODE_FPS if performance_mode_active else 0,
-    }
 
 
 @app.get("/camera_setting")

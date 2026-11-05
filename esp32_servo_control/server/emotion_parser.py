@@ -48,7 +48,7 @@ def analyze_emotion(text: str) -> str:
     try:
         client = _make_client()
         response = client.chat.completions.create(
-            model=os.getenv("QWEN_MODEL", "qwen-turbo"),
+            model=os.getenv("QWEN_MODEL", "qwen3.8-flash"),
             messages=[
                 {"role": "system", "content": EMOTION_EXTRACT_PROMPT},
                 {"role": "user", "content": text.strip()[:500]},

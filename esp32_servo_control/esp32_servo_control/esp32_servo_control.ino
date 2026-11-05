@@ -41,7 +41,9 @@ constexpr const char* CAM_WS_PATH = "/ws/camera";
 constexpr const char* AUD_WS_PATH = "/ws_audio";
 
 constexpr int SERVO_COUNT = 4;
+// 实际接线：GPIO8=头上下，GPIO43=左耳，GPIO44=右耳，GPIO4=身体左右
 constexpr int SERVO_PINS[SERVO_COUNT] = {8, 43, 44, 4};
+// trim 顺序对应 {头上下, 左耳, 右耳, 身体左右}；身体左右初始位置逆时针偏了 10°，这里 +10 修正
 constexpr int SERVO_TRIM[SERVO_COUNT] = {0, 0, 0, 0};
 constexpr bool SERVO_INVERT[SERVO_COUNT] = {false, false, false, false};
 constexpr int SERVO_MIN_US = 500;
@@ -533,18 +535,18 @@ uint32_t queueBuiltinAction(uint8_t actionId, bool clearFirst = true) {
   auto scaleAround = [&](int value, int neutral, float factor) -> int {
     return neutral + static_cast<int>(lroundf((value - neutral) * factor));
   };
-  // Idle 动作整体调性：左右转头更克制，耳朵摆动更小。
+  // Idle 动作整体调性：左右转头、耳朵摆动都调到更明显。
   auto idleYawAt = [&](int center, int delta) -> int {
-    int scaledCenter = scaleAround(center, 90, 0.68f);
-    int scaledDelta = max(1, static_cast<int>(lroundf(delta * 0.68f)));
+    int scaledCenter = scaleAround(center, 90, 1.0f);
+    int scaledDelta = max(1, static_cast<int>(lroundf(delta * 1.0f)));
     return yawAt(scaledCenter, scaledDelta);
   };
   auto idlePitchAt = [&](int center, int delta) -> int {
     return pitchAt(center, delta);
   };
   auto idleEarAt = [&](int center, int delta) -> int {
-    int scaledCenter = scaleAround(center, 90, 0.60f);
-    int scaledDelta = max(1, static_cast<int>(lroundf(delta * 0.60f)));
+    int scaledCenter = scaleAround(center, 90, 0.9f);
+    int scaledDelta = max(1, static_cast<int>(lroundf(delta * 0.9f)));
     return earAt(scaledCenter, scaledDelta);
   };
 
@@ -2939,14 +2941,17 @@ void maintainSockets() {
   uint32_t now = millis();
   if (WiFi.status() != WL_CONNECTED) return;
 
-  if (!wsCam.available() && now - lastCamRetryMs >= 2000) {
+  // 用 onEvent 维护的 ready 标志判断是否要重连，而不是 available()。
+  // available() 在连接刚建立（握手完成瞬间）可能短暂返回 false，导致
+  // 误判为"没连上"再发一次 connect()，把刚建好的连接顶掉 -> 反复断开重连。
+  if (!camWsReady && now - lastCamRetryMs >= 2000) {
     lastCamRetryMs = now;
     if (wsCam.connect(cfgServerHost.c_str(), SERVER_PORT, CAM_WS_PATH)) {
       LOGLN("[WS-CAM] connect request sent");
     }
   }
 
-  if (!wsAud.available() && now - lastAudRetryMs >= 3000) {
+  if (!audWsReady && now - lastAudRetryMs >= 3000) {
     lastAudRetryMs = now;
     if (wsAud.connect(cfgServerHost.c_str(), SERVER_PORT, AUD_WS_PATH)) {
       LOGLN("[WS-AUD] connect request sent");

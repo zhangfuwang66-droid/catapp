@@ -304,7 +304,7 @@ P.append(_table(
         ["5", "/", "HTTP", "网页控制台页面"],
         ["6", "/api/health", "HTTP", "健康检查"],
         ["7", "/record/*", "HTTP", "记录分析（开始/停止/问答/图表）"],
-        ["8", "/servo*、/performance_mode、/camera_setting", "HTTP", "姿态/模式/参数控制"],
+        ["8", "/servo*、/camera_setting", "HTTP", "姿态/参数控制"],
     ],
     widths=[1, 4, 2, 5],
 ))

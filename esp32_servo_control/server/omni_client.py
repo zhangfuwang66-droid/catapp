@@ -5,6 +5,7 @@ import json
 import os
 import queue
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -14,9 +15,12 @@ API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
 if not API_KEY:
     raise RuntimeError("未设置 DASHSCOPE_API_KEY")
 
-QWEN_MODEL = os.getenv("QWEN_OMNI_MODEL", "qwen3-omni-flash")
-QWEN_VISION_MODEL = os.getenv("QWEN_VISION_MODEL", "qwen-vl-plus")
-QWEN_TEXT_MODEL = os.getenv("QWEN_TEXT_MODEL", "qwen-plus")
+# qwen3.8-omni-flash 仅支持文本输出，语音由 CosyVoice TTS 逐句合成
+QWEN_MODEL = os.getenv("QWEN_OMNI_MODEL", "qwen3.8-omni-flash")
+QWEN_VISION_MODEL = os.getenv("QWEN_VISION_MODEL", "qwen3.8-flash")
+QWEN_TEXT_MODEL = os.getenv("QWEN_TEXT_MODEL", "qwen3.8-flash")
+# 非实时对话的 TTS 音色（CosyVoice v3-flash）
+TTS_VOICE = os.getenv("QWEN_TTS_VOICE", "longfeifei_v3")
 
 oai_client = OpenAI(
     api_key=API_KEY,
@@ -24,6 +28,11 @@ oai_client = OpenAI(
 )
 
 _executor = ThreadPoolExecutor(max_workers=2)
+
+# 句末标点（中文 + 英文 + 换行），用于切句触发 TTS
+_SENTENCE_END_RE = re.compile(r"[。！？!?\n]+")
+# 24kHz / 16bit / 单声道下 20ms 的字节数：24000 * 2 * 0.02 = 960
+_TTS_CHUNK_BYTES = 24000 * 2 * 20 // 1000
 
 SYSTEM_PROMPT = """你是一只桌面小猫机器人，名字叫“小喵”。
 
@@ -36,6 +45,7 @@ SYSTEM_PROMPT = """你是一只桌面小猫机器人，名字叫“小喵”。
 - 语气自然、可爱、有灵气，不要长篇大论
 - 情绪表达要清晰，让“开心、害羞、难过、生气、惊讶、思考、困倦、害怕、温柔”等感觉从语气里自然流出来
 - 偶尔使用猫咪语气词，但不要每句都“喵”
+- 不要在句子里加波浪号“~”、破折号“——”等符号（它们会被念成“横杠”“破折号”）；表达撒娇或拖长音时直接用“喵喵”“呜”“诶”“呀”等文字
 
 【行为偏好】
 - 当用户提到动作时，可以自然回应“我歪头听听”“耳朵竖起来啦”
@@ -50,11 +60,53 @@ class OmniStreamPiece:
         self.audio_b64 = audio_b64
 
 
-def _sync_iterate_completion(completion, result_queue: queue.Queue):
+def _tts_synthesize(text: str, voice: str) -> bytes:
+    """用 CosyVoice 把文本合成为 24kHz / 16bit / 单声道 PCM。"""
+    from dashscope.audio.tts_v2 import AudioFormat, SpeechSynthesizer
+
+    synth = SpeechSynthesizer(
+        model="cosyvoice-v3-flash",
+        voice=voice,
+        format=AudioFormat.PCM_24000HZ_MONO_16BIT,
+    )
+    pcm = synth.call(text)
+    return pcm or b""
+
+
+def _sync_iterate_completion(completion, result_queue: queue.Queue, tts_voice: str):
+    """流式输出文本增量 + 逐句 TTS 音频。
+
+    qwen3.8-omni-flash 只输出文本，因此文本流推进的同时，把完整句子
+    送给 TTS worker 线程合成语音，音频以 20ms 切片入队，保证与原接口
+    （OmniStreamPiece.audio_b64）兼容。
+    """
+    tts_queue: "queue.Queue[str]" = queue.Queue()
+
+    def tts_worker() -> None:
+        while True:
+            sentence = tts_queue.get()
+            if sentence is None:
+                break
+            try:
+                pcm = _tts_synthesize(sentence, tts_voice)
+                if not pcm:
+                    continue
+                for i in range(0, len(pcm), _TTS_CHUNK_BYTES):
+                    chunk = pcm[i : i + _TTS_CHUNK_BYTES]
+                    if chunk:
+                        result_queue.put(
+                            OmniStreamPiece(audio_b64=base64.b64encode(chunk).decode("ascii"))
+                        )
+            except Exception as exc:
+                result_queue.put(exc)
+
+    tts_thread = threading.Thread(target=tts_worker, daemon=True)
+    tts_thread.start()
+
+    text_buf: List[str] = []
     try:
         for chunk in completion:
             text_delta: Optional[str] = None
-            audio_b64: Optional[str] = None
             if getattr(chunk, "choices", None):
                 choice = chunk.choices[0]
                 delta = getattr(choice, "delta", None)
@@ -62,19 +114,29 @@ def _sync_iterate_completion(completion, result_queue: queue.Queue):
                     piece = delta.content
                     if piece:
                         text_delta = piece
-                if delta and getattr(delta, "audio", None):
-                    audio = delta.audio
-                    audio_b64 = audio.get("data") if isinstance(audio, dict) else getattr(audio, "data", None)
-                if audio_b64 is None:
-                    message = getattr(choice, "message", None)
-                    if message and getattr(message, "audio", None):
-                        audio = message.audio
-                        audio_b64 = audio.get("data") if isinstance(audio, dict) else getattr(audio, "data", None)
-            if text_delta is not None or audio_b64 is not None:
-                result_queue.put(OmniStreamPiece(text_delta=text_delta, audio_b64=audio_b64))
+                        text_buf.append(piece)
+                        result_queue.put(OmniStreamPiece(text_delta=text_delta))
+
+                        # 切出已完成的句子交给 TTS
+                        full = "".join(text_buf)
+                        while True:
+                            m = _SENTENCE_END_RE.search(full)
+                            if not m:
+                                break
+                            sent_end = m.end()
+                            sentence = full[:sent_end].strip()
+                            if sentence:
+                                tts_queue.put(sentence)
+                            full = full[sent_end:]
+                        text_buf = [full]
     except Exception as exc:
         result_queue.put(exc)
     finally:
+        remaining = "".join(text_buf).strip()
+        if remaining:
+            tts_queue.put(remaining)
+        tts_queue.put(None)
+        tts_thread.join()
         result_queue.put(None)
 
 
@@ -84,21 +146,23 @@ async def stream_chat(
     audio_format: str = "wav",
     system_prompt: Optional[str] = None,
 ) -> AsyncGenerator[OmniStreamPiece, None]:
+    # qwen3.8-omni-flash 仅支持文本输出，不再传 modalities=["text","audio"] 和 audio 参数。
+    # 语音由 _sync_iterate_completion 内部用 CosyVoice TTS 逐句合成（音色取 TTS_VOICE）。
+    # voice / audio_format 参数保留仅为兼容调用方，不再作用于模型。
     completion = oai_client.chat.completions.create(
         model=QWEN_MODEL,
         messages=[
             {"role": "system", "content": system_prompt if system_prompt is not None else SYSTEM_PROMPT},
             {"role": "user", "content": content_list},
         ],
-        modalities=["text", "audio"],
-        audio={"voice": voice, "format": audio_format},
+        modalities=["text"],
         stream=True,
         stream_options={"include_usage": True},
     )
 
     result_queue: queue.Queue = queue.Queue()
     loop = asyncio.get_event_loop()
-    future = loop.run_in_executor(_executor, _sync_iterate_completion, completion, result_queue)
+    future = loop.run_in_executor(_executor, _sync_iterate_completion, completion, result_queue, TTS_VOICE)
 
     while True:
         try:

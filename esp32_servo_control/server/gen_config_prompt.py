@@ -24,8 +24,8 @@ OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config_prom
 
 def main() -> None:
     synthesizer = SpeechSynthesizer(
-        model="cosyvoice-v1",
-        voice="longxiaochun",
+        model="cosyvoice-v3-flash",
+        voice="longxiaochun_v3",
         format=AudioFormat.PCM_24000HZ_MONO_16BIT,
     )
     pcm = synthesizer.call(PROMPT_TEXT)

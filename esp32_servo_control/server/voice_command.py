@@ -82,6 +82,7 @@ VOICE_ACTION_MAP = [
     (["歪头", "歪一下头", "侧着头"], ["CATPOSE:CLEAR", "CATPOSE:62,98,72,280", "CATPOSE:90,90,90,220"], False),
     (["竖耳朵", "把耳朵竖起来", "认真听"], ["CATPOSE:CLEAR", "CATPOSE:90,84,34,260", "CATPOSE:90,90,90,220"], False),
     (["耷拉耳朵", "耳朵垂下来"], ["CATPOSE:CLEAR", "CATPOSE:90,108,132,340", "CATPOSE:90,90,90,240"], False),
+    (["抖耳", "抖一抖耳朵", "动动耳朵", "抖耳朵", "甩耳朵"], ["CATPOSE:CLEAR", "CATPOSE:90,90,60,120", "CATPOSE:90,90,132,140", "CATPOSE:90,90,74,120", "CATPOSE:90,90,96,140", "CATPOSE:90,90,90,160"], False),
     (["看左边", "向左看"], ["CATPOSE:CLEAR", "CATPOSE:50,92,80,320", "CATPOSE:90,90,90,220"], False),
     (["看右边", "向右看"], ["CATPOSE:CLEAR", "CATPOSE:130,92,80,320", "CATPOSE:90,90,90,220"], False),
 ]

@@ -1607,7 +1607,8 @@ void startTone(uint16_t freq, uint16_t durationMs, uint8_t volumePercent) {
 }
 
 bool initCamera() {
-  camera_config_t config;
+  // 新版核心会读取 jpeg_buffer_size 等扩展字段，未显式配置的字段必须使用零值默认值。
+  camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
   config.pin_d0 = CAM_PIN_D0;
@@ -1622,8 +1623,8 @@ bool initCamera() {
   config.pin_pclk = CAM_PIN_PCLK;
   config.pin_vsync = CAM_PIN_VSYNC;
   config.pin_href = CAM_PIN_HREF;
-  config.pin_sscb_sda = CAM_PIN_SIOD;
-  config.pin_sscb_scl = CAM_PIN_SIOC;
+  config.pin_sccb_sda = CAM_PIN_SIOD;
+  config.pin_sccb_scl = CAM_PIN_SIOC;
   config.pin_pwdn = CAM_PIN_PWDN;
   config.pin_reset = CAM_PIN_RESET;
   config.xclk_freq_hz = 20000000;

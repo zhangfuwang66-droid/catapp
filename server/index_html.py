@@ -1195,6 +1195,14 @@ function handleUiMessage(data){
     }
   } else if(data.startsWith('RECORD:')){
     try { handleRecordEvent(JSON.parse(data.substring(7))); } catch(e){}
+  } else if(data.startsWith('KNOWLEDGE:')){
+    try {
+      const info = JSON.parse(data.substring(10));
+      if(info.unavailable) addMessage('[资料库] 本轮检索暂不可用。', 'rec');
+      else if(Array.isArray(info.sources) && info.sources.length) {
+        addMessage('[检索资料] ' + info.sources.map(source => source.filename + ' · 片段 ' + source.ordinal).join('；'), 'rec');
+      }
+    } catch(e){}
   } else if(data.startsWith('TRANSLATE:')){
     try { applyTranslationState(JSON.parse(data.substring(10))); } catch(e){}
   } else if(data.startsWith('PERFMODE:')){

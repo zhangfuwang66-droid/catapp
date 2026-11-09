@@ -23,6 +23,7 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from starlette.websockets import WebSocketState
 from runtime_paths import DATA_ROOT, model_path
+from knowledge_service import format_for_prompt
 
 if sys.platform.startswith("win"):
     try:
@@ -711,10 +712,11 @@ async def _viewer_sender_loop(state: CameraViewerState) -> None:
 class DeviceRuntime:
     """一只设备的连接、模型、音视频与活动状态；只读资源在模块内共享。"""
 
-    def __init__(self, device_id: str, user_id: str, memory_manager: MemoryManager, *, storage=None):
+    def __init__(self, device_id: str, user_id: str, memory_manager: MemoryManager, *, storage=None, knowledge=None):
         self.device_id = device_id
         self.user_id = user_id
         self.memory_manager = memory_manager
+        self.knowledge = knowledge
         self.records_dir = str(Path(RECORDS_DIR) / device_id)
         self.storage = storage or RuntimeStorage(Path(RECORDS_DIR), protected_paths=lambda: {
             entry["image_path"] for entry in self.recording_entries
@@ -2132,6 +2134,21 @@ class DeviceRuntime:
             log_event(f"[MEMORY] UI conversation unavailable: {type(exc).__name__}", flush=True)
             return None, empty
 
+    async def knowledge_context(self, user_text: str) -> str:
+        """归属只取运行时身份，资料仅注入本轮，不存为用户的长期记忆。"""
+        if self.knowledge is None:
+            return ""
+        try:
+            hits = await self.knowledge.search(self.user_id, user_text)
+        except Exception as exc:
+            log_event(f"[KNOWLEDGE] chat lookup failed: {type(exc).__name__}", flush=True)
+            await self.ui_broadcast_raw('KNOWLEDGE:{"sources":[],"unavailable":true}')
+            return "\n\n本轮资料检索暂不可用，不要声称已查阅主人的文档。"
+        await self.ui_broadcast_raw("KNOWLEDGE:" + json.dumps({"sources": [
+            {"filename": hit["filename"], "ordinal": hit["ordinal"]} for hit in hits
+        ]}, ensure_ascii=False))
+        return format_for_prompt(hits)
+
     async def start_ai_with_text(self, user_text: str):
         if self.performance_mode_active:
             await self.ui_broadcast_final("[极速模式] 已暂停：文本对话当前不可用")
@@ -2151,6 +2168,7 @@ class DeviceRuntime:
             text_buf: List[str] = []
             emotion_sent = False
             content_list: List[Dict[str, Any]] = []
+            knowledge_prompt = await self.knowledge_context(user_text) if not action_hit and not expr_hit else ""
             try:
                 jpeg_bytes = await self.capture_camera_frame_on_demand(store_for_visual=visual_turn, force_fresh=True)
                 img_b64 = await asyncio.get_running_loop().run_in_executor(None, prepare_ai_vision_image_b64, jpeg_bytes)
@@ -2179,7 +2197,7 @@ class DeviceRuntime:
                     system_prompt=_memory_context_prompt(
                         VISUAL_DIALOG_SYSTEM_PROMPT if visual_turn else SYSTEM_PROMPT,
                         memory_context,
-                    ),
+                    ) + knowledge_prompt,
                 ):
                     if piece.text_delta:
                         text_buf.append(piece.text_delta)

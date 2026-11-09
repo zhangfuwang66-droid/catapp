@@ -275,11 +275,11 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
         on_error=_log_memory_error,
     )
     storage = RuntimeStorage(Path(RECORDS_DIR), storage_settings)
-    devices = DeviceRegistry(manager, storage=storage)
-    storage.protected_paths = devices.protected_record_paths
     access = access if access is not None else AccessSettings.from_environment()
     identities = IdentityStore(manager.store.path)
     knowledge = knowledge_service if knowledge_service is not None else KnowledgeService(KnowledgeStore(manager.store.path))
+    devices = DeviceRegistry(manager, storage=storage, knowledge=knowledge)
+    storage.protected_paths = devices.protected_record_paths
     connections = ConnectionAuthorizer(identities)
     backups = DatabaseBackups(manager.store.path, backup_settings if backup_settings is not None else BackupSettings.from_environment())
 

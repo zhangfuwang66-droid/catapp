@@ -18,11 +18,23 @@ from PIL import Image
 from support import server_app
 from access_control import AccessSettings
 from memory_store import MemoryStore, SummaryResult
+from knowledge_service import KnowledgeService
+from knowledge_store import KnowledgeStore
 import device_runtime
 
 
 async def summarize(messages):
     return SummaryResult(summary="浏览器测试的模拟摘要")
+
+
+class OfflineEmbeddings:
+    model = "offline-web-test"
+
+    async def embed(self, texts, *, timeout=8):
+        raise ConnectionError("simulated offline embeddings")
+
+    async def close(self):
+        pass
 
 
 def main():
@@ -32,7 +44,8 @@ def main():
             stack.enter_context(patch.object(device_runtime, setting, False))
         stack.enter_context(patch.object(device_runtime, "API_KEY", ""))
         store = MemoryStore(directory / "accounts.sqlite3")
-        app = server_app.create_app(store=store, summarizer=summarize, access=AccessSettings("accounts"))
+        app = server_app.create_app(store=store, summarizer=summarize, access=AccessSettings("accounts"),
+            knowledge_service=KnowledgeService(KnowledgeStore(store.path), embedder=OfflineEmbeddings()))
         identities = app.state.identities
         for name in ("alice", "bob"):
             user = identities.create_user(name, name + "-test-password")
@@ -49,8 +62,9 @@ def main():
             runtime.last_frames.append((time.time(), image.getvalue()))
         new_device = identities.register_device("cat-new", "新来的小喵")
         pair = identities.request_pairing(new_device.device_id, new_device.token)
-        local = server_app.create_app(store=MemoryStore(directory / "local.sqlite3"), summarizer=summarize,
-                                       access=AccessSettings("local"))
+        local_store = MemoryStore(directory / "local.sqlite3")
+        local = server_app.create_app(store=local_store, summarizer=summarize, access=AccessSettings("local"),
+            knowledge_service=KnowledgeService(KnowledgeStore(local_store.path), embedder=OfflineEmbeddings()))
         servers = []
         urls = []
         for application in (app, local):

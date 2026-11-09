@@ -4,7 +4,7 @@ import asyncio
 from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.requests import ClientDisconnect
 
@@ -12,6 +12,7 @@ from access_control import require_origin, require_session, require_session_writ
 from async_helpers import run_blocking
 from document_parser import MAX_UPLOAD_BYTES, SUPPORTED_EXTENSIONS
 from knowledge_store import KnowledgeLimit
+from web_pages import knowledge_html
 
 router = APIRouter()
 
@@ -41,6 +42,17 @@ async def writer(request: Request):
         return (await require_session_write(request)).id
     require_origin(request)
     return request.app.state.default_user_id
+
+
+@router.get("/knowledge", response_class=HTMLResponse)
+async def page(request: Request):
+    try:
+        await owner(request)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return RedirectResponse("/?notice=login", status_code=303)
+        raise
+    return knowledge_html(request.app.state.access.mode)
 
 
 @router.get("/api/knowledge")

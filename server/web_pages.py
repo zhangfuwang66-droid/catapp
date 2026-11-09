@@ -12,6 +12,11 @@ def portal_html() -> str:
     return (WEB_ROOT / "portal.html").read_text(encoding="utf-8")
 
 
+def knowledge_html(mode) -> str:
+    return (WEB_ROOT / "knowledge.html").read_text(encoding="utf-8").replace(
+        "__KNOWLEDGE_CONTEXT__", json.dumps({"mode": mode}, ensure_ascii=True))
+
+
 def console_html(device_id=None, *, account_mode=False) -> str:
     context = json.dumps({"mode": "accounts" if account_mode else "local", "device_id": device_id}, ensure_ascii=True)
     return INDEX_HTML.replace("__CYBERMIAO_CONTEXT__", context.replace("<", "\\u003c")).replace(

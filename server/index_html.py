@@ -643,7 +643,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   </style>
 </head>
 <body class="__CYBERMIAO_BODY_CLASS__">
-<div id="consoleAccount" class="console-account" hidden><a href="/">← 我的设备</a><span id="consoleAccountName"></span><button id="consoleLogout" class="btn sm" onclick="logoutConsole()">退出登录</button></div>
+<div id="consoleAccount" class="console-account" hidden><a href="/">← 我的设备</a><a href="/knowledge">我的资料库</a><span id="consoleAccountName"></span><button id="consoleLogout" class="btn sm" onclick="logoutConsole()">退出登录</button></div>
 <p id="consoleAccessError" class="access-error" role="alert" hidden></p>
 <!-- SVG icon sprite -->
 <svg width="0" height="0" style="position:absolute">
@@ -687,6 +687,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <a href="#translate">同传</a>
       <a href="#record">记录</a>
       <a href="#hardware">硬件</a>
+      <a href="/knowledge">资料库 ↗</a>
     </div>
     <div class="nav-sep"></div>
     <div class="nav-actions">

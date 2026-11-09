@@ -1898,7 +1898,7 @@ void taskHttpPlay(void*) {
     resetMouthState();
     uint8_t inBuf[2048];
     const size_t bytes20 = (sampleRate * 2 * 20) / 1000;
-    uint32_t lastReceiveMs = millis(), lastFeedMs = 0, countedRebuffers = 0;
+    uint32_t lastProgressMs = millis(), lastFeedMs = 0, countedRebuffers = 0;
     bool sourceFinished = false, fedAudio = false;
 
     while (ttsAudioAvailable && deviceLink.allowBusiness()) {
@@ -1907,9 +1907,10 @@ void taskHttpPlay(void*) {
         const size_t received = pcm.receive(body);
         const uint32_t readMs = millis() - readStarted;
         if (readMs > runtimeDiagnostics.playbackMaxReadMs.load()) runtimeDiagnostics.playbackMaxReadMs = readMs;
-        if (received) lastReceiveMs = millis();
+        if (received) lastProgressMs = millis();
         sourceFinished = body.done();
-        if (!sourceFinished && millis() - lastReceiveMs >= 1500) {
+        // 缓冲背压期间没有新网络字节是正常现象；仍在播放时不算读超时。
+        if (!sourceFinished && millis() - lastProgressMs >= 1500) {
           ++runtimeDiagnostics.playbackReadTimeouts;
           sourceFinished = true;
         }
@@ -1949,6 +1950,7 @@ void taskHttpPlay(void*) {
         runtimeDiagnostics.playbackMaxFeedGapMs = feedMs - lastFeedMs;
       }
       lastFeedMs = feedMs;
+      lastProgressMs = feedMs;
       fedAudio = true;
     }
     if (body.failed()) ++runtimeDiagnostics.playbackBodyErrors;

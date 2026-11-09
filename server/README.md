@@ -157,6 +157,8 @@ python server/tools/memory_database.py restore --backup artifacts/backups/memory
 
 创建数据库只是部署准备。实际保存聊天还需要运行后端，并把 `CYBERMIAO_MEMORY_DB_PATH` 指向该数据库；设备认证和账号绑定方法见下方“账号与设备接入”，云端环境另见[部署说明](deploy/README.md)。
 
+云端有域名和同机 HTTPS 反向代理后，可使用 `python server/cloud_public_entry.py`，并设置 `CYBERMIAO_PUBLIC_URL=https://cat.example.com`。它沿用测试入口的数据目录、systemd Key 和备份设置，强制账号模式、单 worker、回环监听，只接受来自 `127.0.0.1` 的转发头，使登录 Cookie 正确使用 Secure，网页来源与 WebSocket 来源按配置的域名校验。它不会自动申请证书或启动代理；反向代理需覆盖客户端传来的转发头、支持 WebSocket Upgrade，并关闭私有请求的访问日志。`cloud_test_entry.py` 继续用于 SSH 隧道，忽略公网地址和转发头。相关本地测试覆盖登录、Cookie、CSRF、WebSocket、非信任代理及配置拒绝，真实证书与实体固件的 TLS 连接仍需部署后验收。
+
 ## 旧测试记忆迁移
 
 旧测试身份的数据不会自动交给首个账号。`tools/migrate_memory.py` 默认以只读方式核对源身份、目标账号和设备绑定，仅显示数量，不输出聊天。先创建真实账号、完成设备绑定，并在设备开始产生新聊天前决定是否迁移。目标已有会话、归属不符、源为真实账号或数据引用异常时都会拒绝。

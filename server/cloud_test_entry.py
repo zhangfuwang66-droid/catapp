@@ -41,23 +41,28 @@ def prepare_environment():
     return data_dir, port
 
 
-def main():
+def run_server(prepare, *, proxy_headers=False):
     if os.name != "nt":
         os.umask(0o077)
     try:
-        data_dir, port = prepare_environment()
+        data_dir, port = prepare()
         from runtime_logging import configure_logging
         configure_logging(data_dir / "logs")
     except (OSError, ValueError) as exc:
-        print(f"云端测试入口启动失败：{exc}", file=sys.stderr)
+        print(f"云端入口启动失败：{exc}", file=sys.stderr)
         return 1
 
     import uvicorn
     from app import app
 
     uvicorn.run(app, host="127.0.0.1", port=port, workers=1, log_config=None,
-                log_level="info", access_log=False, proxy_headers=False)
+                log_level="info", access_log=False, proxy_headers=proxy_headers,
+                forwarded_allow_ips="127.0.0.1")
     return 0
+
+
+def main():
+    return run_server(prepare_environment)
 
 
 if __name__ == "__main__":

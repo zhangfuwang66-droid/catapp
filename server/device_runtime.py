@@ -2199,6 +2199,8 @@ class DeviceRuntime:
                         memory_context,
                     ) + knowledge_prompt,
                 ):
+                    if getattr(piece, "notice", None):
+                        await self.ui_broadcast_final("[提示] " + piece.notice)
                     if piece.text_delta:
                         text_buf.append(piece.text_delta)
                         full_text = "".join(text_buf)

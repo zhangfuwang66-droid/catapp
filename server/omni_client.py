@@ -5,10 +5,12 @@ import json
 import os
 import queue
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from openai import OpenAI
+from openai import OpenAI, BadRequestError
+from runtime_logging import log_event
 
 API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
 if not API_KEY:
@@ -24,6 +26,7 @@ oai_client = OpenAI(
 )
 
 _executor = ThreadPoolExecutor(max_workers=2)
+_text_only_output = threading.Event()
 
 SYSTEM_PROMPT = """你是一只桌面小猫机器人，名字叫“小喵”。
 
@@ -45,14 +48,17 @@ SYSTEM_PROMPT = """你是一只桌面小猫机器人，名字叫“小喵”。
 
 
 class OmniStreamPiece:
-    def __init__(self, text_delta: Optional[str] = None, audio_b64: Optional[str] = None):
+    def __init__(self, text_delta: Optional[str] = None, audio_b64: Optional[str] = None, notice: Optional[str] = None):
         self.text_delta = text_delta
         self.audio_b64 = audio_b64
+        self.notice = notice
 
 
-def _sync_iterate_completion(completion, result_queue: queue.Queue):
+def _sync_iterate_completion(completion, result_queue: queue.Queue, cancelled=None):
     try:
         for chunk in completion:
+            if cancelled is not None and cancelled.is_set():
+                break
             text_delta: Optional[str] = None
             audio_b64: Optional[str] = None
             if getattr(chunk, "choices", None):
@@ -75,7 +81,44 @@ def _sync_iterate_completion(completion, result_queue: queue.Queue):
     except Exception as exc:
         result_queue.put(exc)
     finally:
+        try:
+            completion.close()
+        except Exception:
+            pass
         result_queue.put(None)
+
+
+def _sync_chat(request, result_queue, cancelled):
+    # 请求建立和流读取均在线程中，避免同步 SDK 阻塞实时语音事件循环。
+    text_only = _text_only_output.is_set()
+    if text_only:
+        request = {**request, "modalities": ["text"]}
+        request.pop("audio", None)
+    try:
+        try:
+            completion = oai_client.chat.completions.create(**request)
+        except BadRequestError as exc:
+            payload = exc.body if isinstance(exc.body, dict) else {}
+            payload = payload.get("error", payload)
+            message = str(payload.get("message", "")).lower() if isinstance(payload, dict) else ""
+            code = payload.get("code") if isinstance(payload, dict) else None
+            if text_only or code != "invalid_parameter_error" or not all(
+                    word in message for word in ("does not support", "modalities", "audio")):
+                raise
+            # 仅明确不支持音频输出的参数错误降为文本；鉴权/额度等错误继续报错。
+            _text_only_output.set()
+            text_only = True
+            log_event("[OMNI] audio output unsupported; using text output", flush=True)
+            request = {**request, "modalities": ["text"]}
+            request.pop("audio", None)
+            completion = oai_client.chat.completions.create(**request)
+        if text_only and not cancelled.is_set():
+            result_queue.put(OmniStreamPiece(notice="本次文字回复不播放声音，语音对话请使用小喵的麦克风。"))
+    except Exception as exc:
+        result_queue.put(exc)
+        result_queue.put(None)
+        return
+    _sync_iterate_completion(completion, result_queue, cancelled)
 
 
 async def stream_chat(
@@ -84,7 +127,7 @@ async def stream_chat(
     audio_format: str = "wav",
     system_prompt: Optional[str] = None,
 ) -> AsyncGenerator[OmniStreamPiece, None]:
-    completion = oai_client.chat.completions.create(
+    request = dict(
         model=QWEN_MODEL,
         messages=[
             {"role": "system", "content": system_prompt if system_prompt is not None else SYSTEM_PROMPT},
@@ -97,22 +140,24 @@ async def stream_chat(
     )
 
     result_queue: queue.Queue = queue.Queue()
-    loop = asyncio.get_event_loop()
-    future = loop.run_in_executor(_executor, _sync_iterate_completion, completion, result_queue)
-
-    while True:
-        try:
-            item = result_queue.get_nowait()
-        except queue.Empty:
-            await asyncio.sleep(0.005)
-            continue
-        if item is None:
-            break
-        if isinstance(item, Exception):
-            raise item
-        yield item
-
-    await future
+    cancelled = threading.Event()
+    loop = asyncio.get_running_loop()
+    future = loop.run_in_executor(_executor, _sync_chat, request, result_queue, cancelled)
+    try:
+        while True:
+            try:
+                item = result_queue.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.005)
+                continue
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield item
+        await future
+    finally:
+        cancelled.set()
 
 
 def _sync_describe_image(jpeg_bytes: bytes) -> str:

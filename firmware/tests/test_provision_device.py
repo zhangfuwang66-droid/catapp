@@ -102,7 +102,7 @@ class ProvisionDeviceTests(unittest.TestCase):
     def test_diagnostics_cli_is_read_only_and_filters_nested_private_fields(self):
         stream = FakeSerial(diagnostics={
             "wifi_connected": True, "camera_init_error": 0, "link_state": "bound",
-            "socket_phase": "audio_connect", "free_heap_bytes": 32000,
+            "socket_phase": "audio_connect", "free_heap_bytes": 32000, "tls_psram_preferred": True,
             "device_token": "diagnostic-secret", "raw_log": "diagnostic-secret",
             "camera_transport": {"last_http_status": 101, "bytes_sent": 4096,
                                  "authorization": "diagnostic-secret"},
@@ -117,12 +117,14 @@ class ProvisionDeviceTests(unittest.TestCase):
         self.assertNotIn("diagnostic-secret", output.getvalue())
         self.assertNotIn("unexpected-private-field", output.getvalue())
         diagnostics = json.loads(output.getvalue())["diagnostics"]
+        self.assertIs(diagnostics["tls_psram_preferred"], True)
         self.assertEqual(diagnostics["camera_transport"], {"last_http_status": 101, "bytes_sent": 4096})
         self.assertEqual(diagnostics["audio_transport"]["last_tls_error"], -32512)
 
     def test_diagnostics_rejects_invalid_types_and_unrestricted_text(self):
         stream = FakeSerial(diagnostics={
             "wifi_connected": "private-text", "rssi_dbm": False, "free_heap_bytes": 2**64,
+            "tls_psram_preferred": "private-text",
             "link_state": "private-text", "socket_phase": ["private-text"],
             "audio_transport": {"last_tls_error": "private-text", "connect_pending": 1},
         })

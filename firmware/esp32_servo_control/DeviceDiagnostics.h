@@ -9,6 +9,7 @@ enum class SocketServicePhase { Waiting, Gate, CameraConnect, AudioConnect, Came
 struct DeviceRuntimeDiagnostics {
   std::atomic<int32_t> cameraInitError{-1};
   std::atomic<bool> microphoneReady{false}, speakerReady{false};
+  std::atomic<bool> tlsPsramPreferred{false};
   std::atomic<uint32_t> capturedFrames{0}, captureFailures{0}, sentFrames{0}, cameraSendFailures{0};
   std::atomic<uint32_t> capturedAudioChunks{0}, sentAudioChunks{0}, audioSendFailures{0};
   std::atomic<uint32_t> taskStartFailures{0}, socketHeartbeatMs{0};

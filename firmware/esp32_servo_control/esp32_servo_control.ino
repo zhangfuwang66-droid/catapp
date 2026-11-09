@@ -19,6 +19,7 @@
 #include "DeviceLink.h"
 #include "DeviceSetup.h"
 #include "DeviceDiagnostics.h"
+#include "DeviceTlsMemory.h"
 #include <esp_heap_caps.h>
 
 // 串口日志总开关。播放 TTS 期间，Serial.print 在 USB-CDC / UART 上是同步写入，
@@ -2892,6 +2893,7 @@ void addRuntimeDiagnostics(cJSON* object) {
   cJSON_AddBoolToObject(object, "wifi_connected", WiFi.status() == WL_CONNECTED);
   cJSON_AddNumberToObject(object, "rssi_dbm", WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127);
   cJSON_AddBoolToObject(object, "clock_ready", DeviceLink::clockReady());
+  cJSON_AddBoolToObject(object, "tls_psram_preferred", runtimeDiagnostics.tlsPsramPreferred.load());
   cJSON_AddStringToObject(object, "link_state", DeviceLink::statusName(link.status));
   cJSON_AddBoolToObject(object, "bound", link.bound);
   cJSON_AddNumberToObject(object, "free_heap_bytes", ESP.getFreeHeap());
@@ -2929,6 +2931,8 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   randomSeed(esp_random());
+
+  runtimeDiagnostics.tlsPsramPreferred = DeviceTlsMemory::begin();
 
   // 摄像头必须在所有大块 ps_malloc 之前最先初始化。
   // esp32-camera 的 cam_dma_config 要分配大块连续 PSRAM 帧缓冲，

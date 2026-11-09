@@ -29,6 +29,8 @@ python firmware/tools/provision_device.py --port COM3 diagnostics
 
 `task_start_failures` 为 0 表示任务均创建成功；位 0～7 依次为摄像头采集、摄像头发送、麦克风采集、麦克风上传、WebSocket 服务、音频播放、舵机动作、账号连接任务。`camera_init_error` 为 0 表示初始化成功；`last_http_status: 101` 只表示收到升级响应，不能代替收到真实音视频的验收。
 
+`tls_psram_preferred: true` 表示启动网络任务前已为 mbedTLS 安装 PSRAM 优先的分配器，外部内存分配失败时回退内部堆；没有 PSRAM 或核心不支持运行时分配器钩子时为 false。`last_tls_error: -32512` 是 TLS 内存分配失败，应结合内部堆、最大连续块和 PSRAM 余量排查，不能据此判断为 API Key 或证书错误。
+
 诊断不返回 SSID、密码、设备凭证、配对码、聊天正文或原始错误文本；电脑端也对嵌套字段进行白名单和类型过滤。旧版固件不支持时会报错，需要升级主程序后再使用。普通串口日志仍默认关闭。
 
 ## 设备热点与账号配对

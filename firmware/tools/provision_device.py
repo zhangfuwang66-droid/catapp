@@ -17,7 +17,7 @@ DEVICE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 TOKEN = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
 PUBLIC_FIELDS = {"protocol", "device_id", "credential_configured", "pending_reboot", "identity_saved",
                  "has_wifi", "server_url", "mode", "setup_ssid", "ok"}
-DIAGNOSTIC_BOOLEANS = {"wifi_connected", "clock_ready", "bound", "i2s_input_ready", "i2s_output_ready",
+DIAGNOSTIC_BOOLEANS = {"wifi_connected", "clock_ready", "tls_psram_preferred", "bound", "i2s_input_ready", "i2s_output_ready",
                        "camera_ws_ready", "audio_ws_ready", "audio_stream_enabled", "microphone_enabled",
                        "tts_playing", "queues_ready"}
 DIAGNOSTIC_INTEGERS = {"uptime_ms", "rssi_dbm", "free_heap_bytes", "largest_internal_block_bytes",

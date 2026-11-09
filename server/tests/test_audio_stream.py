@@ -3,7 +3,7 @@
 import asyncio
 import unittest
 
-from audio_stream import AudioStream, BYTES_PER_20MS_16K
+from audio_stream import AudioStream
 
 
 class AudioStreamTests(unittest.IsolatedAsyncioTestCase):
@@ -17,8 +17,8 @@ class AudioStreamTests(unittest.IsolatedAsyncioTestCase):
         try:
             self.assertTrue((await anext(left)).startswith(b"RIFF"))
             self.assertTrue((await anext(right)).startswith(b"RIFF"))
-            self.assertEqual(await anext(left), a.ljust(BYTES_PER_20MS_16K, b"\0"))
-            self.assertEqual(await anext(right), b.ljust(BYTES_PER_20MS_16K, b"\0"))
+            self.assertEqual(await anext(left), a)
+            self.assertEqual(await anext(right), b)
             first.set_playing_task_marker(asyncio.Event())
             second.set_playing_task_marker(asyncio.Event())
             await first.hard_reset_audio()
@@ -26,7 +26,7 @@ class AudioStreamTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(second.is_playing_now())
             self.assertEqual(len(second.stream_clients), 1)
             await second.broadcast_pcm16_realtime(b)
-            self.assertEqual(await anext(right), b.ljust(BYTES_PER_20MS_16K, b"\0"))
+            self.assertEqual(await anext(right), b)
         finally:
             await left.aclose()
             await right.aclose()
@@ -58,6 +58,62 @@ class AudioStreamTests(unittest.IsolatedAsyncioTestCase):
         response = audio.response()
         self.assertEqual(audio.stream_clients, set())
         await response.body_iterator.aclose()
+
+    async def test_model_fragmentation_preserves_pcm_samples_and_duration(self):
+        # 同一秒的 24 kHz PCM，不同模型事件长度不能改变它的内容或时长。
+        import math
+        import struct
+
+        audio = AudioStream()
+        pcm = struct.pack("<24000h", *(round(18000 * math.sin(i * math.tau * 440 / 24000))
+                                     for i in range(24000)))
+        response = audio.response().body_iterator
+        try:
+            await anext(response)
+            offset = 0
+            sizes = (6144, 100, 1920, 258, 4096)
+            while offset < len(pcm):
+                size = sizes[(offset // 2) % len(sizes)]
+                await audio.broadcast_pcm16_realtime(pcm[offset:offset + size])
+                offset += size
+            next(iter(audio.stream_clients)).q.put_nowait(None)
+            emitted = b"".join([chunk async for chunk in response])
+            self.assertEqual(len(emitted), len(pcm), "分块不能插入静音、延长语音")
+            self.assertEqual(emitted, pcm, "采样顺序和数值必须保持不变")
+        finally:
+            await response.aclose()
+
+    async def test_model_pause_does_not_insert_synthetic_silence(self):
+        audio = AudioStream()
+        response = audio.response().body_iterator
+        pending = None
+        try:
+            await anext(response)
+            audio.set_playing_task_marker(asyncio.Event())
+            pending = asyncio.create_task(anext(response))
+            await asyncio.sleep(.18)  # 超过流生成器的 120 ms 查询间隔。
+            self.assertFalse(pending.done(), "等待模型数据时不能凭空插入 20 ms 静音")
+            samples = b"\x12\x34" * 30
+            await audio.broadcast_pcm16_realtime(samples)
+            self.assertEqual(await asyncio.wait_for(pending, timeout=1), samples)
+        finally:
+            if pending is not None:
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+            await response.aclose()
+            await audio.hard_reset_audio()
+
+    async def test_final_partial_audio_block_is_emitted_without_padding(self):
+        audio = AudioStream()
+        pcm = b"\x56\x78" * 97
+        await audio.broadcast_pcm16_realtime(pcm)
+        response = audio.response().body_iterator
+        try:
+            await anext(response)
+            next(iter(audio.stream_clients)).q.put_nowait(None)
+            self.assertEqual(b"".join([chunk async for chunk in response]), pcm)
+        finally:
+            await response.aclose()
 
 
 if __name__ == "__main__":

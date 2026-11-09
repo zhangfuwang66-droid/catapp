@@ -13,7 +13,6 @@ STREAM_SR = 24000
 STREAM_CH = 1
 STREAM_SW = 2
 BYTES_PER_20MS_16K = STREAM_SR * STREAM_SW * 20 // 1000
-SILENCE_20MS = bytes(BYTES_PER_20MS_16K)
 STREAM_QUEUE_MAX = 3000
 STREAM_PREBUFFER_CHUNKS = 80
 STREAM_IDLE_GRACE_SEC = 3.0
@@ -107,16 +106,15 @@ class AudioStream:
                     try:
                         chunk = await asyncio.wait_for(client.q.get(), timeout=0.12)
                     except asyncio.TimeoutError:
-                        if self.is_playing_now():
-                            yield SILENCE_20MS
-                            last_emit_at = loop.time()
-                        elif loop.time() - last_emit_at > STREAM_IDLE_GRACE_SEC:
+                        if not self.is_playing_now() and loop.time() - last_emit_at > STREAM_IDLE_GRACE_SEC:
                             break
                         continue
                     if client.abort_event.is_set() or chunk is None:
                         break
                     if chunk:
-                        yield chunk.ljust(BYTES_PER_20MS_16K, b"\x00")
+                        # HTTP 分块不代表音频帧边界。补零会在连续语音中插入静音，
+                        # 改变时长并造成波形跳变；播放端负责网络抖动缓冲。
+                        yield chunk
                         last_emit_at = loop.time()
             finally:
                 self.stream_clients.discard(client)

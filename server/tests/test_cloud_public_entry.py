@@ -30,21 +30,27 @@ PUBLIC_URL = "https://cat.example.test"
 
 
 class PublicConfigurationTests(unittest.TestCase):
-    def test_only_https_domain_origins_are_accepted_and_normalized(self):
+    def test_https_domain_and_ipv4_origins_are_accepted_and_normalized(self):
         valid = {
             PUBLIC_URL: PUBLIC_URL,
             "https://CAT.Example.Test:443/": PUBLIC_URL,
             "https://cat.example.test:8443/": PUBLIC_URL + ":8443",
+            "https://192.0.2.5": "https://192.0.2.5",
+            "https://192.0.2.5:443/": "https://192.0.2.5",
+            "https://192.0.2.5:8443/": "https://192.0.2.5:8443",
         }
         for value, expected in valid.items():
             with self.subTest(value=value), patch.dict(os.environ, {"CYBERMIAO_PUBLIC_URL": value}, clear=True):
                 self.assertEqual(cloud_public_entry.public_url_from_environment(), expected)
-        for value in ("", "http://cat.example.test", "https://192.0.2.5", "https://[::1]",
+        for value in ("", "http://cat.example.test", "http://192.0.2.5", "https://[::1]",
                       "https://localhost", PUBLIC_URL + "/console", PUBLIC_URL + "?secret=example",
                       PUBLIC_URL + "#fragment", "https://name:password@cat.example.test",
                       PUBLIC_URL + ":0", PUBLIC_URL + ":65536", PUBLIC_URL + ":",
                       "https://cat_example.test", "https://-cat.example.test", "https://猫.example.test",
-                      "https://cat.\nexample.test", "https://[bad-address", "https://cat.example.test\\evil"):
+                      "https://cat.\nexample.test", "https://[bad-address", "https://cat.example.test\\evil",
+                      "https://999.0.2.5", "https://192.000.2.5", "https://192.2.5",
+                      "https://3221225989", "https://192.0.2.5.", "https://192.0.2.5:",
+                      "https://192.0.2.5/path", "https://name:password@192.0.2.5"):
             with self.subTest(value=value), patch.dict(os.environ, {"CYBERMIAO_PUBLIC_URL": value}, clear=True):
                 with self.assertRaises(ValueError):
                     cloud_public_entry.public_url_from_environment()
@@ -94,6 +100,15 @@ class PublicConfigurationTests(unittest.TestCase):
 
 class PublicProcessTests(unittest.TestCase):
     def test_proxy_login_secure_cookie_websocket_and_origin_checks(self):
+        self.check_proxy_origin(PUBLIC_URL)
+
+    def test_ipv4_proxy_login_secure_cookie_websocket_and_origin_checks(self):
+        self.check_proxy_origin("https://192.0.2.5")
+
+    def test_ipv4_nondefault_port_keeps_origin_boundary(self):
+        self.check_proxy_origin("https://192.0.2.5:8443")
+
+    def check_proxy_origin(self, public_url):
         with tempfile.TemporaryDirectory(prefix="cybermiao-proxy-test-") as folder, ExitStack() as stack:
             root = Path(folder)
             database = root / "memory.sqlite3"
@@ -110,7 +125,7 @@ class PublicProcessTests(unittest.TestCase):
             environment.pop("CREDENTIALS_DIRECTORY", None)
             environment.update({
                 "CYBERMIAO_DATA_DIR": folder, "CYBERMIAO_CLOUD_TEST_PORT": str(port),
-                "CYBERMIAO_PUBLIC_URL": PUBLIC_URL, "DASHSCOPE_API_KEY": "simulated-proxy-key",
+                "CYBERMIAO_PUBLIC_URL": public_url, "DASHSCOPE_API_KEY": "simulated-proxy-key",
                 "HAND_TRACKING_ENABLED": "0", "COVER_INTERACTION_ENABLED": "0",
             })
             process = subprocess.Popen([sys.executable, str(SERVER_ROOT / "cloud_public_entry.py")],
@@ -118,7 +133,7 @@ class PublicProcessTests(unittest.TestCase):
                                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
             stack.callback(tunnel_tests.CloudTestProcessTests.stop_process, process)
             client = stack.enter_context(httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=3,
-                                                      trust_env=False, headers={"Host": "cat.example.test",
+                                                      trust_env=False, headers={"Host": public_url.removeprefix("https://"),
                                                       "X-Forwarded-Proto": "https"}))
             deadline = time.monotonic() + 30
             while True:
@@ -136,15 +151,19 @@ class PublicProcessTests(unittest.TestCase):
             self.assertEqual(client.get("/api/auth/mode").json()["mode"], "accounts")
             self.assertEqual(client.get("/api/knowledge").status_code, 401)
             credentials = {"username": "alice", "password": "alice-test-password"}
-            self.assertEqual(client.post("/api/auth/login", json=credentials,
-                             headers={"Origin": "https://other.example.test"}).status_code, 403)
-            login = client.post("/api/auth/login", json=credentials, headers={"Origin": PUBLIC_URL})
+            for other_origin in ("https://other.example.test", public_url.replace("https://", "http://"),
+                                 "https://192.0.2.5:8443" if public_url == "https://192.0.2.5"
+                                 else "https://192.0.2.5"):
+                if other_origin != public_url:
+                    self.assertEqual(client.post("/api/auth/login", json=credentials,
+                                     headers={"Origin": other_origin}).status_code, 403)
+            login = client.post("/api/auth/login", json=credentials, headers={"Origin": public_url})
             self.assertEqual(login.status_code, 200)
             for flag in ("secure", "httponly", "samesite=strict"):
                 self.assertIn(flag, login.headers["set-cookie"].lower())
             # TLS 由反向代理终结；测试客户端到回环上游是 HTTP，手动转发该模拟会话。
             cookie = login.headers["set-cookie"].split(";", 1)[0]
-            headers = {"Cookie": cookie, "Origin": PUBLIC_URL}
+            headers = {"Cookie": cookie, "Origin": public_url}
             self.assertEqual(client.get("/api/auth/session", headers=headers).status_code, 200)
             self.assertEqual(client.get("/api/knowledge", headers=headers).status_code, 200)
             ws_url = f"ws://127.0.0.1:{port}/ws/devices/cat-alice/viewer"

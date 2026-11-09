@@ -10,7 +10,7 @@ from cloud_test_entry import prepare_environment as prepare_test_environment, ru
 
 def public_url_from_environment():
     url = os.getenv("CYBERMIAO_PUBLIC_URL", "").strip()
-    message = "CYBERMIAO_PUBLIC_URL 必须是使用域名的 HTTPS 站点地址，不含路径或凭据"
+    message = "CYBERMIAO_PUBLIC_URL 必须是使用域名或 IPv4 的 HTTPS 站点地址，不含路径或凭据"
     try:
         parsed = urlsplit(url)
         host = parsed.hostname or ""
@@ -23,12 +23,9 @@ def public_url_from_environment():
                            for label in host.split("."))
                 or (port is not None and not 1 <= port <= 65535)):
             raise ValueError(message)
-        try:
-            ipaddress.ip_address(host)
-        except ValueError:
-            pass
-        else:
-            raise ValueError(message)
+        # 全数字和点组成的主机必须是规范 IPv4，拒绝错误地址及前导零写法。
+        if re.fullmatch(r"[0-9.]+", host):
+            ipaddress.IPv4Address(host)
         # 不接受空端口或其他解析后会消失的地址写法。
         authority = host if port is None else f"{host}:{port}"
         if parsed.netloc.lower() != authority:

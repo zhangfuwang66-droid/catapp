@@ -157,7 +157,9 @@ python server/tools/memory_database.py restore --backup artifacts/backups/memory
 
 创建数据库只是部署准备。实际保存聊天还需要运行后端，并把 `CYBERMIAO_MEMORY_DB_PATH` 指向该数据库；设备认证和账号绑定方法见下方“账号与设备接入”，云端环境另见[部署说明](deploy/README.md)。
 
-云端有域名和同机 HTTPS 反向代理后，可使用 `python server/cloud_public_entry.py`，并设置 `CYBERMIAO_PUBLIC_URL=https://cat.example.com`。它沿用测试入口的数据目录、systemd Key 和备份设置，强制账号模式、单 worker、回环监听，只接受来自 `127.0.0.1` 的转发头，使登录 Cookie 正确使用 Secure，网页来源与 WebSocket 来源按配置的域名校验。它不会自动申请证书或启动代理；反向代理需覆盖客户端传来的转发头、支持 WebSocket Upgrade，并关闭私有请求的访问日志。`cloud_test_entry.py` 继续用于 SSH 隧道，忽略公网地址和转发头。相关本地测试覆盖登录、Cookie、CSRF、WebSocket、非信任代理及配置拒绝，真实证书与实体固件的 TLS 连接仍需部署后验收。
+云端配置同机 HTTPS 反向代理后，可使用 `python server/cloud_public_entry.py`，并设置 `CYBERMIAO_PUBLIC_URL=https://cat.example.com`；没有域名时，也可使用具有匹配 IP 证书的 IPv4 地址，例如 `https://192.0.2.5`（文档示例地址，部署时替换为自己的公网 IP）。两种地址均可指定 HTTPS 端口，例如 `:8443`。它沿用测试入口的数据目录、systemd Key 和备份设置，强制账号模式、单 worker、回环监听，只接受来自 `127.0.0.1` 的转发头，使登录 Cookie 正确使用 Secure，网页来源与 WebSocket 来源按配置的完整站点地址校验。入口拒绝明文 HTTP、非规范 IPv4、IPv6 字面地址、路径和 URL 凭据。
+
+入口不会自动申请证书或启动代理；反向代理需覆盖客户端传来的转发头、支持 WebSocket Upgrade，并关闭私有请求的访问日志。IP 证书必须包含对应的 IP SAN，域名证书不能代替；Let's Encrypt 的 IP 证书有效期为 160 小时，应配置自动续期及代理重载。`cloud_test_entry.py` 继续用于 SSH 隧道，忽略公网地址和转发头。相关本地测试覆盖域名与 IPv4 的登录、Cookie、CSRF、WebSocket、非信任代理及配置拒绝，真实证书与实体固件的 TLS 连接仍需部署后验收。
 
 ## 旧测试记忆迁移
 
@@ -208,7 +210,7 @@ $env:CYBERMIAO_MEMORY_DB_PATH = (Join-Path (Get-Location) 'artifacts/data/memory
 python -m uvicorn app:app --app-dir server --host 127.0.0.1 --port 8081 --workers 1
 ```
 
-浏览器访问 `http://127.0.0.1:8081/`。本例仅供本机开发，云端部署还需配置域名、HTTPS、服务进程和备份。网页资源在 `server/web/`，桌面构建配置已包含资源目录；这些源码更新尚未重新打包进 `v0.2.0`。旧固件应继续使用 `local` 模式，设备升级到支持身份协议的固件并完成凭证配发后，才能切换到 `accounts`。
+浏览器访问 `http://127.0.0.1:8081/`。本例仅供本机开发，云端部署还需配置匹配域名或公网 IP 的 HTTPS 证书、服务进程和备份。网页资源在 `server/web/`，桌面构建配置已包含资源目录；这些源码更新尚未重新打包进 `v0.2.0`。旧固件应继续使用 `local` 模式，设备升级到支持身份协议的固件并完成凭证配发后，才能切换到 `accounts`。
 
 后端测试：从仓库根目录设置 `PYTHONPATH=server`，运行 `python -m unittest discover -s server/tests -v`。浏览器测试为 `node server/tests/web_ui_test.cjs`，需要可用的 Playwright、浏览器与服务器 Python 依赖；可通过 `PYTHON_EXECUTABLE` 指定解释器，`BROWSER_EXECUTABLE` 指定浏览器，`NODE_PATH` 指向 Playwright 所在的 `node_modules`。测试只启动回环地址的临时服务，用模拟账号和数据库验证页面操作，不调用真实模型或写入硬件；截图存入已忽略的 `artifacts/web-tests/`。
 

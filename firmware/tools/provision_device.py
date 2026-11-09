@@ -21,6 +21,8 @@ DIAGNOSTIC_BOOLEANS = {"wifi_connected", "clock_ready", "tls_psram_preferred", "
                        "camera_ws_ready", "audio_ws_ready", "audio_stream_enabled", "microphone_enabled",
                        "tts_playing", "queues_ready"}
 DIAGNOSTIC_INTEGERS = {"uptime_ms", "rssi_dbm", "free_heap_bytes", "largest_internal_block_bytes",
+                       "speaker_volume_percent", "playback_pcm_bytes", "playback_read_timeouts",
+                       "playback_body_errors", "playback_write_retries",
                        "minimum_free_heap_bytes", "free_psram_bytes", "camera_init_error", "captured_frames",
                        "capture_failures", "sent_frames", "camera_send_failures", "camera_fps",
                        "captured_audio_chunks", "sent_audio_chunks", "audio_send_failures",

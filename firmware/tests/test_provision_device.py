@@ -103,6 +103,7 @@ class ProvisionDeviceTests(unittest.TestCase):
         stream = FakeSerial(diagnostics={
             "wifi_connected": True, "camera_init_error": 0, "link_state": "bound",
             "socket_phase": "audio_connect", "free_heap_bytes": 32000, "tls_psram_preferred": True,
+            "speaker_volume_percent": 78, "playback_pcm_bytes": 48000, "playback_body_errors": 0,
             "device_token": "diagnostic-secret", "raw_log": "diagnostic-secret",
             "camera_transport": {"last_http_status": 101, "bytes_sent": 4096,
                                  "authorization": "diagnostic-secret"},
@@ -118,6 +119,8 @@ class ProvisionDeviceTests(unittest.TestCase):
         self.assertNotIn("unexpected-private-field", output.getvalue())
         diagnostics = json.loads(output.getvalue())["diagnostics"]
         self.assertIs(diagnostics["tls_psram_preferred"], True)
+        self.assertEqual(diagnostics["playback_pcm_bytes"], 48000)
+        self.assertEqual(diagnostics["playback_body_errors"], 0)
         self.assertEqual(diagnostics["camera_transport"], {"last_http_status": 101, "bytes_sent": 4096})
         self.assertEqual(diagnostics["audio_transport"]["last_tls_error"], -32512)
 

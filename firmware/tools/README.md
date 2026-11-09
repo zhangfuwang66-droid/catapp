@@ -31,6 +31,8 @@ python firmware/tools/provision_device.py --port COM3 diagnostics
 
 `tls_psram_preferred: true` 表示启动网络任务前已为 mbedTLS 安装 PSRAM 优先的分配器，外部内存分配失败时回退内部堆；没有 PSRAM 或核心不支持运行时分配器钩子时为 false。`last_tls_error: -32512` 是 TLS 内存分配失败，应结合内部堆、最大连续块和 PSRAM 余量排查，不能据此判断为 API Key 或证书错误。
 
+播放读取修复版还会返回 `speaker_volume_percent`、`playback_pcm_bytes`（送入 I2S 的 PCM 字节数）、`playback_read_timeouts`、`playback_body_errors` 和 `playback_write_retries`。它们用于区分网络读超时、HTTP 分块损坏和 I2S 写入停顿；字节数增加不能证明扬声器没有失真，仍需听感验收。旧固件不会返回这些新增字段。
+
 诊断不返回 SSID、密码、设备凭证、配对码、聊天正文或原始错误文本；电脑端也对嵌套字段进行白名单和类型过滤。旧版固件不支持时会报错，需要升级主程序后再使用。普通串口日志仍默认关闭。
 
 ## 设备热点与账号配对

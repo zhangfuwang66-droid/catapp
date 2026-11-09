@@ -20,6 +20,7 @@
 #include "DeviceSetup.h"
 #include "DeviceDiagnostics.h"
 #include "DeviceTlsMemory.h"
+#include "HttpAudioBody.h"
 #include <esp_heap_caps.h>
 
 // 串口日志总开关。播放 TTS 期间，Serial.print 在 USB-CDC / UART 上是同步写入，
@@ -1701,7 +1702,8 @@ static inline void mono16_to_stereo32_msb(const int16_t* input, size_t sampleCou
   for (size_t i = 0; i < sampleCount; ++i) {
     int32_t sample = static_cast<int32_t>(static_cast<float>(input[i]) * gain);
     sample = constrain(sample, -32768, 32767);
-    int32_t packed = sample << 16;
+    // 负有符号整数左移在 C++ 中未定义；乘法对整个 int16 范围都可表示。
+    int32_t packed = sample * 65536;
     outputLR[i * 2] = packed;
     outputLR[i * 2 + 1] = packed;
   }
@@ -1727,26 +1729,6 @@ void taskHttpPlay(void*) {
       delay(1);
     }
     return false;
-  };
-
-  auto readNRaw = [&](uint8_t* dst, size_t need, uint32_t timeoutMs) -> bool {
-    size_t got = 0;
-    uint32_t start = millis();
-    while (got < need) {
-      int avail = ttsClient->available();
-      if (avail > 0) {
-        int take = min(avail, static_cast<int>(need - got));
-        int readCount = ttsClient->read(dst + got, take);
-        if (readCount > 0) {
-          got += readCount;
-          continue;
-        }
-      }
-      if (!streamReadable()) return false;
-      if (millis() - start > timeoutMs) return false;
-      delay(1);
-    }
-    return true;
   };
 
   LOGLN("[TTS] task ready");
@@ -1777,7 +1759,6 @@ void taskHttpPlay(void*) {
 
     bool headerOk = false;
     bool isChunked = false;
-    uint32_t chunkLeft = 0;
     String line;
     // 先检查状态，禁止把认证错误或重定向响应当作音频播放。
     bool statusOk = readLine(line, 5000) && (line.startsWith("HTTP/1.1 200 ") || line.startsWith("HTTP/1.0 200 "));
@@ -1800,42 +1781,10 @@ void taskHttpPlay(void*) {
       continue;
     }
 
+    HttpAudioBody<NetworkClient> body(*ttsClient, isChunked,
+                                    []() -> uint32_t { return millis(); }, []() { delay(1); });
     auto readBody = [&](uint8_t* dst, size_t need, uint32_t timeoutMs) -> bool {
-      size_t filled = 0;
-      uint32_t start = millis();
-      while (filled < need) {
-        if (!streamReadable()) return false;
-        if (isChunked) {
-          if (chunkLeft == 0) {
-            String chunkLine;
-            if (!readLine(chunkLine, timeoutMs)) return false;
-            int semicolon = chunkLine.indexOf(';');
-            if (semicolon >= 0) chunkLine = chunkLine.substring(0, semicolon);
-            chunkLine.trim();
-            uint32_t sz = 0;
-            if (sscanf(chunkLine.c_str(), "%x", &sz) != 1) return false;
-            if (sz == 0) {
-              String dummy;
-              readLine(dummy, 200);
-              return false;
-            }
-            chunkLeft = sz;
-          }
-          size_t piece = min(static_cast<size_t>(chunkLeft), need - filled);
-          if (!readNRaw(dst + filled, piece, timeoutMs)) return false;
-          filled += piece;
-          chunkLeft -= piece;
-          if (chunkLeft == 0) {
-            uint8_t crlf[2];
-            if (!readNRaw(crlf, 2, 200)) return false;
-          }
-        } else {
-          if (!readNRaw(dst + filled, need - filled, timeoutMs)) return false;
-          filled = need;
-        }
-        if (millis() - start > timeoutMs) return false;
-      }
-      return true;
+      return body.read(dst, need, timeoutMs) == need;
     };
 
     uint8_t riff[12];
@@ -1929,36 +1878,45 @@ void taskHttpPlay(void*) {
     ttsPlaying = true;
     micEnabled = false;
     resetMouthState();
+    uint8_t inBuf[2048];
+    size_t pendingBytes = 0;
 
     while (ttsAudioAvailable && streamReadable() && deviceLink.allowBusiness()) {
-      uint8_t inBuf[2048];
       uint32_t bytes20 = (sampleRate * 2 * 20) / 1000;
       if (bytes20 < 2) bytes20 = 2;
-      if (!readBody(inBuf, bytes20, 1500)) {
-        break;
+      const size_t received = body.read(inBuf + pendingBytes, bytes20 - pendingBytes, 1500);
+      const size_t filled = pendingBytes + received;
+      if (filled < bytes20 && !body.done()) ++runtimeDiagnostics.playbackReadTimeouts;
+      if (filled < 2) {
+        if (body.done() || !received) break;
+        pendingBytes = filled;
+        continue;
       }
-      size_t filled = bytes20;
-      while (filled + bytes20 <= sizeof(inBuf)) {
-        if (!readBody(inBuf + filled, bytes20, 4)) break;
-        filled += bytes20;
-      }
-      if (filled & 1) filled -= 1;
-      if (filled == 0) continue;
-      size_t sampleCount = filled / 2;
+      const size_t sampleCount = filled / 2;
       updateMouthFromAudioChunk(reinterpret_cast<int16_t*>(inBuf), sampleCount);
       mono16_to_stereo32_msb(reinterpret_cast<int16_t*>(inBuf), sampleCount, outLR,
                             static_cast<float>(speakerVolumePercent) / 100.0f);
       size_t totalBytes = sampleCount * 2 * sizeof(int32_t);
       size_t offset = 0;
+      uint32_t lastWriteProgress = millis();
       while (offset < totalBytes) {
         size_t wrote = i2sOut.write(reinterpret_cast<uint8_t*>(outLR) + offset, totalBytes - offset);
         if (wrote == 0) {
+          ++runtimeDiagnostics.playbackWriteRetries;
+          if (!ttsAudioAvailable || !deviceLink.allowBusiness() || millis() - lastWriteProgress > 500) break;
           vTaskDelay(pdMS_TO_TICKS(1));
         } else {
           offset += wrote;
+          lastWriteProgress = millis();
         }
       }
+      runtimeDiagnostics.playbackBytes += offset / (2 * sizeof(int32_t)) * sizeof(int16_t);
+      if (offset < totalBytes) break;
+      pendingBytes = filled & 1;
+      if (pendingBytes) inBuf[0] = inBuf[filled - 1];
+      if (body.done()) break;
     }
+    if (body.failed()) ++runtimeDiagnostics.playbackBodyErrors;
 
     ttsPlaying = false;
     resetMouthState();
@@ -2913,6 +2871,11 @@ void addRuntimeDiagnostics(cJSON* object) {
   cJSON_AddBoolToObject(object, "audio_stream_enabled", runAudioStream);
   cJSON_AddBoolToObject(object, "microphone_enabled", micEnabled);
   cJSON_AddBoolToObject(object, "tts_playing", ttsPlaying);
+  cJSON_AddNumberToObject(object, "speaker_volume_percent", speakerVolumePercent);
+  cJSON_AddNumberToObject(object, "playback_pcm_bytes", runtimeDiagnostics.playbackBytes.load());
+  cJSON_AddNumberToObject(object, "playback_read_timeouts", runtimeDiagnostics.playbackReadTimeouts.load());
+  cJSON_AddNumberToObject(object, "playback_body_errors", runtimeDiagnostics.playbackBodyErrors.load());
+  cJSON_AddNumberToObject(object, "playback_write_retries", runtimeDiagnostics.playbackWriteRetries.load());
   cJSON_AddNumberToObject(object, "captured_audio_chunks", runtimeDiagnostics.capturedAudioChunks.load());
   cJSON_AddNumberToObject(object, "sent_audio_chunks", runtimeDiagnostics.sentAudioChunks.load());
   cJSON_AddNumberToObject(object, "audio_send_failures", runtimeDiagnostics.audioSendFailures.load());

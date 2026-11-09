@@ -21,6 +21,7 @@
 #include "DeviceDiagnostics.h"
 #include "DeviceTlsMemory.h"
 #include "HttpAudioBody.h"
+#include "PcmPlaybackBuffer.h"
 #include <esp_heap_caps.h>
 
 // 串口日志总开关。播放 TTS 期间，Serial.print 在 USB-CDC / UART 上是同步写入，
@@ -1711,9 +1712,8 @@ static inline void mono16_to_stereo32_msb(const int16_t* input, size_t sampleCou
 
 void taskHttpPlay(void*) {
   static int32_t outLR[1024 * 2];
-  auto streamReadable = [&]() -> bool {
-    return ttsClient->connected() || ttsClient->available() > 0;
-  };
+  uint8_t* pcmStorage = nullptr;
+  size_t pcmCapacity = 0;
 
   auto readLine = [&](String& out, uint32_t timeoutMs) -> bool {
     out = "";
@@ -1874,22 +1874,54 @@ void taskHttpPlay(void*) {
       continue;
     }
 
+    if (!pcmStorage) {
+      // 不把 64 KiB 缓冲挤进 TLS / DMA 共用的内部堆。
+      pcmCapacity = 64 * 1024;
+      pcmStorage = static_cast<uint8_t*>(heap_caps_malloc(pcmCapacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+      if (!pcmStorage) {
+        pcmCapacity = 8 * 1024;
+        pcmStorage = static_cast<uint8_t*>(heap_caps_malloc(pcmCapacity, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+      }
+      if (!pcmStorage) {
+        ++runtimeDiagnostics.playbackBufferAllocationFailures;
+        ttsClient->stop();
+        ttsAudioAvailable = false;
+        micEnabled = true;
+        continue;
+      }
+      runtimeDiagnostics.playbackBufferCapacity = pcmCapacity;
+    }
+    PcmPlaybackBuffer pcm(pcmStorage, pcmCapacity, sampleRate);
     initI2SOut(static_cast<int>(sampleRate));
     ttsPlaying = true;
     micEnabled = false;
     resetMouthState();
     uint8_t inBuf[2048];
-    size_t pendingBytes = 0;
+    const size_t bytes20 = (sampleRate * 2 * 20) / 1000;
+    uint32_t lastReceiveMs = millis(), lastFeedMs = 0, countedRebuffers = 0;
+    bool sourceFinished = false, fedAudio = false;
 
-    while (ttsAudioAvailable && streamReadable() && deviceLink.allowBusiness()) {
-      uint32_t bytes20 = (sampleRate * 2 * 20) / 1000;
-      if (bytes20 < 2) bytes20 = 2;
-      const size_t received = body.read(inBuf + pendingBytes, bytes20 - pendingBytes, 1500);
-      const size_t filled = pendingBytes + received;
-      if (filled < bytes20 && !body.done()) ++runtimeDiagnostics.playbackReadTimeouts;
-      if (filled < 2) {
-        if (body.done() || !received) break;
-        pendingBytes = filled;
+    while (ttsAudioAvailable && deviceLink.allowBusiness()) {
+      if (!sourceFinished) {
+        const uint32_t readStarted = millis();
+        const size_t received = pcm.receive(body);
+        const uint32_t readMs = millis() - readStarted;
+        if (readMs > runtimeDiagnostics.playbackMaxReadMs.load()) runtimeDiagnostics.playbackMaxReadMs = readMs;
+        if (received) lastReceiveMs = millis();
+        sourceFinished = body.done();
+        if (!sourceFinished && millis() - lastReceiveMs >= 1500) {
+          ++runtimeDiagnostics.playbackReadTimeouts;
+          sourceFinished = true;
+        }
+      }
+      // 网络结束时继续消费缓冲，避免远端关闭连接后丢掉尚未播放的句尾。
+      const size_t filled = pcm.take(inBuf, bytes20, sourceFinished);
+      runtimeDiagnostics.playbackBufferedBytes = pcm.size();
+      runtimeDiagnostics.playbackRebuffers += pcm.rebuffers() - countedRebuffers;
+      countedRebuffers = pcm.rebuffers();
+      if (!filled) {
+        if (sourceFinished) break;
+        vTaskDelay(pdMS_TO_TICKS(1));
         continue;
       }
       const size_t sampleCount = filled / 2;
@@ -1912,11 +1944,15 @@ void taskHttpPlay(void*) {
       }
       runtimeDiagnostics.playbackBytes += offset / (2 * sizeof(int32_t)) * sizeof(int16_t);
       if (offset < totalBytes) break;
-      pendingBytes = filled & 1;
-      if (pendingBytes) inBuf[0] = inBuf[filled - 1];
-      if (body.done()) break;
+      const uint32_t feedMs = millis();
+      if (fedAudio && feedMs - lastFeedMs > runtimeDiagnostics.playbackMaxFeedGapMs.load()) {
+        runtimeDiagnostics.playbackMaxFeedGapMs = feedMs - lastFeedMs;
+      }
+      lastFeedMs = feedMs;
+      fedAudio = true;
     }
     if (body.failed()) ++runtimeDiagnostics.playbackBodyErrors;
+    runtimeDiagnostics.playbackBufferedBytes = 0;
 
     ttsPlaying = false;
     resetMouthState();
@@ -2876,6 +2912,12 @@ void addRuntimeDiagnostics(cJSON* object) {
   cJSON_AddNumberToObject(object, "playback_read_timeouts", runtimeDiagnostics.playbackReadTimeouts.load());
   cJSON_AddNumberToObject(object, "playback_body_errors", runtimeDiagnostics.playbackBodyErrors.load());
   cJSON_AddNumberToObject(object, "playback_write_retries", runtimeDiagnostics.playbackWriteRetries.load());
+  cJSON_AddNumberToObject(object, "playback_buffered_bytes", runtimeDiagnostics.playbackBufferedBytes.load());
+  cJSON_AddNumberToObject(object, "playback_buffer_capacity_bytes", runtimeDiagnostics.playbackBufferCapacity.load());
+  cJSON_AddNumberToObject(object, "playback_buffer_allocation_failures", runtimeDiagnostics.playbackBufferAllocationFailures.load());
+  cJSON_AddNumberToObject(object, "playback_rebuffers", runtimeDiagnostics.playbackRebuffers.load());
+  cJSON_AddNumberToObject(object, "playback_max_network_read_ms", runtimeDiagnostics.playbackMaxReadMs.load());
+  cJSON_AddNumberToObject(object, "playback_max_feed_gap_ms", runtimeDiagnostics.playbackMaxFeedGapMs.load());
   cJSON_AddNumberToObject(object, "captured_audio_chunks", runtimeDiagnostics.capturedAudioChunks.load());
   cJSON_AddNumberToObject(object, "sent_audio_chunks", runtimeDiagnostics.sentAudioChunks.load());
   cJSON_AddNumberToObject(object, "audio_send_failures", runtimeDiagnostics.audioSendFailures.load());

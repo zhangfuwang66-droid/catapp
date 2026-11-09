@@ -104,6 +104,9 @@ class ProvisionDeviceTests(unittest.TestCase):
             "wifi_connected": True, "camera_init_error": 0, "link_state": "bound",
             "socket_phase": "audio_connect", "free_heap_bytes": 32000, "tls_psram_preferred": True,
             "speaker_volume_percent": 78, "playback_pcm_bytes": 48000, "playback_body_errors": 0,
+            "playback_buffered_bytes": 12000, "playback_buffer_capacity_bytes": 65536,
+            "playback_buffer_allocation_failures": 0, "playback_rebuffers": 1,
+            "playback_max_network_read_ms": 3, "playback_max_feed_gap_ms": 24,
             "device_token": "diagnostic-secret", "raw_log": "diagnostic-secret",
             "camera_transport": {"last_http_status": 101, "bytes_sent": 4096,
                                  "authorization": "diagnostic-secret"},
@@ -121,6 +124,12 @@ class ProvisionDeviceTests(unittest.TestCase):
         self.assertIs(diagnostics["tls_psram_preferred"], True)
         self.assertEqual(diagnostics["playback_pcm_bytes"], 48000)
         self.assertEqual(diagnostics["playback_body_errors"], 0)
+        self.assertEqual(diagnostics["playback_buffered_bytes"], 12000)
+        self.assertEqual(diagnostics["playback_buffer_capacity_bytes"], 65536)
+        self.assertEqual(diagnostics["playback_buffer_allocation_failures"], 0)
+        self.assertEqual(diagnostics["playback_rebuffers"], 1)
+        self.assertEqual(diagnostics["playback_max_network_read_ms"], 3)
+        self.assertEqual(diagnostics["playback_max_feed_gap_ms"], 24)
         self.assertEqual(diagnostics["camera_transport"], {"last_http_status": 101, "bytes_sent": 4096})
         self.assertEqual(diagnostics["audio_transport"]["last_tls_error"], -32512)
 

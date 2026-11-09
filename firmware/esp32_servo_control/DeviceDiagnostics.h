@@ -13,6 +13,8 @@ struct DeviceRuntimeDiagnostics {
   std::atomic<uint32_t> capturedFrames{0}, captureFailures{0}, sentFrames{0}, cameraSendFailures{0};
   std::atomic<uint32_t> capturedAudioChunks{0}, sentAudioChunks{0}, audioSendFailures{0};
   std::atomic<uint32_t> playbackBytes{0}, playbackReadTimeouts{0}, playbackBodyErrors{0}, playbackWriteRetries{0};
+  std::atomic<uint32_t> playbackBufferedBytes{0}, playbackBufferCapacity{0}, playbackBufferAllocationFailures{0};
+  std::atomic<uint32_t> playbackRebuffers{0}, playbackMaxReadMs{0}, playbackMaxFeedGapMs{0};
   std::atomic<uint32_t> taskStartFailures{0}, socketHeartbeatMs{0};
   std::atomic<SocketServicePhase> socketPhase{SocketServicePhase::Waiting};
 

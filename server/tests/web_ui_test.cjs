@@ -84,6 +84,11 @@ async function main() {
     assert(sockets.some(url => url.endsWith('/ws/devices/cat-alice/ui')));
     assert(sockets.some(url => url.endsWith('/ws/devices/cat-alice/viewer')));
     assert(sockets.every(url => !url.includes('token=')));
+    await consolePage.evaluate(() => handleUiMessage('KNOWLEDGE:' + JSON.stringify({sources:[{
+      filename:'<img src=x onerror="window.knowledgeFileExecuted=true">.txt',ordinal:2,
+    }]})));
+    assert.match(await consolePage.locator('#chatBox').innerText(), /\[检索资料\].*<img src=x.*片段 2/);
+    assert.equal(await consolePage.evaluate(() => !!window.knowledgeFileExecuted),false);
     await consolePage.screenshot({path:path.join(output,'console.png'),fullPage:true});
     const mediaRejected = await consolePage.evaluate(() => {
       try { consoleMediaUrl('/api/devices/cat-bob/repeat.wav'); return false; } catch { return true; }

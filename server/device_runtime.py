@@ -2591,6 +2591,7 @@ class DeviceRuntime:
                 memory_context = await self.memory_manager.context_for(self.user_id, self.device_id)
                 base_prompt = VISUAL_DIALOG_SYSTEM_PROMPT if self.vision_dialogue_active else SYSTEM_PROMPT
                 init_prompt = _memory_context_prompt(base_prompt, memory_context)
+            new_session = None
             try:
                 new_session = OmniRealtimeSession(
                     loop=asyncio.get_running_loop(),
@@ -2604,6 +2605,7 @@ class DeviceRuntime:
                     on_error=on_realtime_error,
                     on_debug=on_realtime_debug,
                     get_latest_image_bytes=self._current_realtime_image_bytes,
+                    manual_response=self.knowledge is not None,
                 )
                 self.current_realtime_session = new_session
                 await new_session.ensure_connected()
@@ -2616,6 +2618,8 @@ class DeviceRuntime:
                     await self.ui_broadcast_partial("（Qwen Omni 已连接，开始接收音频…）")
                 return True
             except Exception as exc:
+                if new_session is not None:
+                    await new_session.close()
                 session = None
                 self.current_realtime_session = None
                 log_event(f"[WS_AUDIO] realtime startup failed: {type(exc).__name__}", flush=True)
@@ -2652,7 +2656,8 @@ class DeviceRuntime:
         async def on_input_transcript(text: str):
             text = text.strip()
             if not text:
-                return
+                return False
+            turn_session, turn_epoch = session, self.realtime_restart_epoch
             log_event(f"[REALTIME] input_transcript chars={len(text)}", flush=True)
             await self.ui_broadcast_partial("")
             await self.ui_broadcast_final(text)
@@ -2663,12 +2668,12 @@ class DeviceRuntime:
                 pair, keyword = translate_start
                 log_event(f"[VOICE TRANSLATE START] {keyword} -> {pair}", flush=True)
                 await self.activate_translation_mode(pair, voice_trigger=True)
-                return
+                return False
             translate_stop = match_voice_translation_stop(text) if self.translation_active else None
             if translate_stop is not None:
                 log_event(f"[VOICE TRANSLATE STOP] {translate_stop}", flush=True)
                 await self.deactivate_translation_mode(reason="voice_stop")
-                return
+                return False
 
             # 同声传译中：只把识别到的文字当作原文显示，不再触发动作/表情
             if self.translation_active:
@@ -2689,9 +2694,21 @@ class DeviceRuntime:
                 log_event(f"[VOICE EXPR] {keyword} -> {emotion}", flush=True)
                 self.current_emotion = emotion
                 await self._send_ui_expression(emotion)
-            if action_hit or expr_hit:
-                return
-            await record_memory("user", text)
+            if not action_hit and not expr_hit:
+                await record_memory("user", text)
+            if self.knowledge is not None and turn_session is not None:
+                knowledge_prompt = await self.knowledge_context(text) if not action_hit and not expr_hit else ""
+                try:
+                    turn_memory = await self.memory_manager.context_for(self.user_id, self.device_id)
+                except Exception as exc:
+                    log_event(f"[MEMORY] realtime context unavailable: {type(exc).__name__}", flush=True)
+                    turn_memory = memory_context
+                if session is not turn_session or turn_epoch != self.realtime_restart_epoch or self.translation_active:
+                    return False
+                base = VISUAL_DIALOG_SYSTEM_PROMPT if self.vision_dialogue_active else SYSTEM_PROMPT
+                # reader 在独立任务中继续读 ACK；拿到确认之前不发 response.create。
+                await turn_session.update_instructions(_memory_context_prompt(base, turn_memory) + knowledge_prompt,
+                                                       wait_for_ack=True)
 
         async def on_output_text_delta(delta: str):
             nonlocal response_emotion_sent

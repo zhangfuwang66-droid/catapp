@@ -29,7 +29,7 @@ class OmniRealtimeSession:
         *,
         loop: asyncio.AbstractEventLoop,
         system_prompt: str,
-        on_input_transcript: Callable[[str], Awaitable[None]],
+        on_input_transcript: Callable[[str], Awaitable[Optional[bool]]],
         on_output_text_delta: Callable[[str], Awaitable[None]],
         on_output_audio: Callable[[bytes], Awaitable[None]],
         on_response_started: Callable[[], Awaitable[None]],
@@ -38,6 +38,7 @@ class OmniRealtimeSession:
         on_error: Callable[[str], Awaitable[None]],
         on_debug: Optional[Callable[[str], Awaitable[None]]] = None,
         get_latest_image_bytes: Optional[Callable[[], bytes]] = None,
+        manual_response: bool = False,
     ):
         self.loop = loop
         self.system_prompt = system_prompt
@@ -50,6 +51,7 @@ class OmniRealtimeSession:
         self.on_error = on_error
         self.on_debug = on_debug
         self.get_latest_image_bytes = get_latest_image_bytes
+        self.manual_response = manual_response
 
         self._ws = None
         self._message_task: Optional[asyncio.Task] = None
@@ -68,6 +70,13 @@ class OmniRealtimeSession:
         self._audio_append_count_after_speech_started = 0
         self._speech_started_for_turn = False
         self._pending_image_task: Optional[asyncio.Task] = None
+        self._instruction_lock = asyncio.Lock()
+        self._instruction_waiter = None
+        self._turn_generation = 0
+        self._prepare_task = None
+        self._turn_tasks = set()
+        self._speech_item_id = None
+        self._transcribed_items = {}
 
     @property
     def is_fatal(self) -> bool:
@@ -131,22 +140,32 @@ class OmniRealtimeSession:
                 else:
                     raise
             self._message_task = asyncio.create_task(self._handle_messages())
-            await self._update_session()
-            await asyncio.wait_for(self._ready_event.wait(), timeout=REALTIME_READY_TIMEOUT_S)
+            try:
+                await self._update_session()
+                await asyncio.wait_for(self._ready_event.wait(), timeout=REALTIME_READY_TIMEOUT_S)
+            except BaseException:
+                await self.close()
+                raise
             if not self._connected or not self._session_updated:
                 detail = self._last_error_message or self._last_close_message or "服务端未返回 session.updated"
                 await self.close()
                 raise RuntimeError(f"Realtime 会话未就绪：{detail}")
             await self._debug("session ready")
 
-    async def _send_event(self, event: dict):
-        if self._ws is None or self._ws_is_closed(self._ws):
+    async def _send_event(self, event: dict, *, turn_generation=None):
+        ws = self._ws
+        if ws is None or self._ws_is_closed(ws):
             self._connected = False
             raise RuntimeError(self._build_closed_error("WebSocket 未连接"))
         event["event_id"] = "event_" + uuid.uuid4().hex
         try:
             async with self._send_lock:
-                await self._ws.send(json.dumps(event, ensure_ascii=False))
+                if turn_generation is not None and turn_generation != self._turn_generation:
+                    return False
+                if self._ws is not ws or self._ws_is_closed(ws):
+                    raise RuntimeError(self._build_closed_error("WebSocket 已关闭"))
+                await ws.send(json.dumps(event, ensure_ascii=False))
+                return True
         except ConnectionClosed as exc:
             self._connected = False
             self._last_close_message = f"code={exc.code}"
@@ -169,30 +188,80 @@ class OmniRealtimeSession:
                 "silence_duration_ms": REALTIME_TURN_SILENCE_MS,
             },
         }
+        if self.manual_response:
+            # 保留服务端 VAD 和打断，由本地检索完成后显式发 response.create。
+            session_config["turn_detection"]["create_response"] = False
         await self._debug(
             f"session.update turn_detection={REALTIME_TURN_DETECTION} threshold={REALTIME_TURN_THRESHOLD} silence_ms={REALTIME_TURN_SILENCE_MS}"
         )
         await self._send_event({"type": "session.update", "session": session_config})
 
-    async def update_instructions(self, new_instructions: str, new_voice: Optional[str] = None):
+    async def update_instructions(self, new_instructions: str, new_voice: Optional[str] = None, *, wait_for_ack=False):
         """Push a live session.update with a new system prompt (and optionally a new voice).
 
         Safe to call before the websocket is ready: we update the cached prompt
         so the next connection uses it.
         """
-        self.system_prompt = new_instructions
-        ws = self._ws
-        if ws is None or self._ws_is_closed(ws) or not self._connected:
-            await self._debug("update_instructions cached (session not ready)")
-            return
-        session_payload = {"instructions": new_instructions}
-        if new_voice:
-            session_payload["voice"] = new_voice
+        async with self._instruction_lock:
+            self.system_prompt = new_instructions
+            ws = self._ws
+            if ws is None or self._ws_is_closed(ws) or not self._connected:
+                if wait_for_ack:
+                    raise RuntimeError("Realtime 会话未就绪，无法确认本轮资料")
+                await self._debug("update_instructions cached (session not ready)")
+                return
+            session_payload = {"instructions": new_instructions}
+            if new_voice:
+                session_payload["voice"] = new_voice
+            waiter = asyncio.get_running_loop().create_future() if wait_for_ack else None
+            if waiter is not None:
+                self._instruction_waiter = (new_instructions, waiter)
+            try:
+                await self._send_event({"type": "session.update", "session": session_payload})
+                if waiter is not None:
+                    # 必须由读循环收到相同 instructions 的 ACK，不能只依赖本地发送顺序。
+                    await asyncio.wait_for(waiter, timeout=5)
+                await self._debug("session.update pushed (instructions refreshed)")
+            except Exception as exc:
+                await self._debug(f"update_instructions failed: {type(exc).__name__}")
+                if wait_for_ack:
+                    raise
+            finally:
+                if waiter is not None and self._instruction_waiter == (new_instructions, waiter):
+                    self._instruction_waiter = None
+                if waiter is not None and not waiter.done():
+                    waiter.cancel()
+
+    def _fail_instruction_update(self, message):
+        pending = self._instruction_waiter
+        if pending is not None and not pending[1].done():
+            pending[1].set_exception(RuntimeError(message))
+
+    def _invalidate_turn(self):
+        self._turn_generation += 1
+        task, self._prepare_task = self._prepare_task, None
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+
+    async def _prepare_response(self, transcript, generation):
         try:
-            await self._send_event({"type": "session.update", "session": session_payload})
-            await self._debug("session.update pushed (instructions refreshed)")
+            respond = await self.on_input_transcript(transcript)
+            if respond is False or generation != self._turn_generation or not self._connected or self._fatal_error:
+                return
+            # 实测仅 session.update 不足以刷新已提交音频轮次的指令。
+            # 在 response.create 再显式指定本轮提示词，让资料用于本次回答。
+            await self._send_event({"type": "response.create", "response": {
+                "modalities": ["text", "audio"], "instructions": self.system_prompt}},
+                                   turn_generation=generation)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            await self._debug(f"update_instructions failed: {type(exc).__name__}")
+            if generation == self._turn_generation:
+                await self._debug(f"turn preparation failed: {type(exc).__name__}")
+                await self.on_error("turn_preparation_failed:" + type(exc).__name__)
+        finally:
+            if self._prepare_task is asyncio.current_task():
+                self._prepare_task = None
 
     async def append_audio(self, pcm_chunk: bytes):
         if not pcm_chunk:
@@ -232,16 +301,20 @@ class OmniRealtimeSession:
                 "type": "response.create",
                 "response": {
                     "modalities": ["text", "audio"],
+                    "instructions": self.system_prompt,
                 },
             }
         )
 
     async def cancel_response(self):
+        self._invalidate_turn()
         if not self._responding:
             return
         await self._send_event({"type": "response.cancel"})
 
     async def close(self):
+        self._invalidate_turn()
+        self._fail_instruction_update("Realtime 会话已关闭")
         ws = self._ws
         self._ws = None
         self._connected = False
@@ -257,6 +330,11 @@ class OmniRealtimeSession:
         task = self._message_task
         self._message_task = None
         current_task = asyncio.current_task()
+        turn_tasks = [item for item in self._turn_tasks if item is not current_task]
+        for item in turn_tasks:
+            item.cancel()
+        if turn_tasks:
+            await asyncio.gather(*turn_tasks, return_exceptions=True)
         if pending_task is not None and pending_task is not current_task and not pending_task.done():
             pending_task.cancel()
             try:
@@ -284,6 +362,7 @@ class OmniRealtimeSession:
                 event = json.loads(raw)
                 event_type = event.get("type", "")
                 if event_type == "error":
+                    self._fail_instruction_update("Realtime 拒绝了会话更新")
                     err_payload = event.get("error", event)
                     err_msg = json.dumps(err_payload, ensure_ascii=False)
                     error_tag = provider_error_tag(err_payload)
@@ -329,9 +408,21 @@ class OmniRealtimeSession:
                     await self._debug("event session.created")
                     continue
                 if event_type == "session.updated":
+                    config = event.get("session") or {}
+                    if self.manual_response and (config.get("turn_detection") or {}).get("create_response") is not False:
+                        self._last_error_message = "模型未确认关闭自动回答，已停止资料库语音会话"
+                        self._fatal_error = True
+                        self._connected = False
+                        self._ready_event.set()
+                        self._fail_instruction_update(self._last_error_message)
+                        await self.on_error("manual_response_not_supported")
+                        continue
                     self._connected = True
                     self._session_updated = True
                     self._ready_event.set()
+                    pending = self._instruction_waiter
+                    if pending is not None and config.get("instructions") == pending[0] and not pending[1].done():
+                        pending[1].set_result(None)
                     await self._debug("event session.updated")
                     continue
                 if event_type == "response.created":
@@ -351,6 +442,8 @@ class OmniRealtimeSession:
                     await self.on_response_done()
                     continue
                 if event_type == "input_audio_buffer.speech_started":
+                    self._invalidate_turn()
+                    self._speech_item_id = event.get("item_id")
                     self._image_sent_for_turn = False
                     self._speech_started_for_turn = True
                     self._audio_append_count_after_speech_started = 0
@@ -365,7 +458,23 @@ class OmniRealtimeSession:
                     transcript = (event.get("transcript") or "").strip()
                     if transcript:
                         await self._debug(f"input transcript chars={len(transcript)}")
-                        await self.on_input_transcript(transcript)
+                        if self.manual_response:
+                            item_id = event.get("item_id")
+                            if item_id and (item_id in self._transcribed_items or
+                                    (self._speech_item_id and item_id != self._speech_item_id)):
+                                continue
+                            if item_id:
+                                self._transcribed_items[item_id] = True
+                                if len(self._transcribed_items) > 64:
+                                    self._transcribed_items.pop(next(iter(self._transcribed_items)))
+                            self._invalidate_turn()
+                            task = asyncio.create_task(self._prepare_response(transcript, self._turn_generation),
+                                                       name="realtime-prepare-response")
+                            self._prepare_task = task
+                            self._turn_tasks.add(task)
+                            task.add_done_callback(self._turn_tasks.discard)
+                        else:
+                            await self.on_input_transcript(transcript)
                     continue
                 if event_type in ("response.audio_transcript.delta", "response.text.delta"):
                     delta = event.get("delta") or ""
@@ -398,6 +507,11 @@ class OmniRealtimeSession:
             self._ready_event.set()
             await self._debug(f"message loop exception: {type(exc).__name__}")
             await self.on_error(type(exc).__name__)
+        finally:
+            self._connected = False
+            self._invalidate_turn()
+            self._fail_instruction_update("Realtime 连接已断开")
+            self._ready_event.set()
 
     def _cancel_pending_image_task(self):
         task = self._pending_image_task

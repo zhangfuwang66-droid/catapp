@@ -18,6 +18,7 @@ from device_registry import DeviceRegistry
 from memory_store import MemoryManager, MemoryStore, SummaryResult
 from omni_realtime_client import OmniRealtimeSession
 from runtime_storage import RuntimeStorage, StorageSettings
+from knowledge_store import split_text
 
 
 async def summarize(messages):
@@ -206,6 +207,9 @@ class FakeRealtimeSession:
     async def ensure_connected(self):
         pass
 
+    async def update_instructions(self, prompt, **kwargs):
+        self.prompt = prompt
+
     async def append_audio(self, data):
         await self.callbacks["on_input_transcript"](data.decode("utf-8"))
         await self.callbacks["on_response_started"]()
@@ -280,6 +284,26 @@ class DeviceEndpointsTests(unittest.TestCase):
         memory_b = self.client.get("/api/devices/cat-b/memory").json()["recent_messages"]
         self.assertEqual([m["content"] for m in memory_a], ["模拟话题甲", "模拟答复"])
         self.assertEqual([m["content"] for m in memory_b], ["模拟话题乙", "模拟答复"])
+
+    def test_voice_chat_refreshes_documents_for_each_transcript(self):
+        app = self.application
+        owner = app.state.default_user_id
+        knowledge = app.state.knowledge.store
+        text = "蓝星项目的集合口令为 LAN-7731。"
+        knowledge.add_document(owner, "蓝星资料.txt", text.encode())
+        knowledge.finish(knowledge.claim_next(), split_text(text))
+        ws = self.audio("cat-voice")
+        ws.send_text("START")
+        self.assertEqual(ws.receive_text(), "OK:STARTED")
+        runtime = app.state.devices.devices["cat-voice"]
+        self.assertTrue(runtime.current_realtime_session.callbacks["manual_response"])
+        for question, expected in (("蓝星项目集合口令是什么", True), ("今天的天气怎么样", False)):
+            ws.send_bytes(question.encode())
+            self.assertEqual(ws.receive_text(), "STOP")
+            self.assertEqual(ws.receive_text(), "TTS_START")
+            self.assertEqual(ws.receive_text(), "START")
+            prompt = runtime.current_realtime_session.prompt
+            self.assertEqual("LAN-7731" in prompt, expected)
 
 
 if __name__ == "__main__":

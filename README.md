@@ -37,7 +37,7 @@ GitHub 还会自动生成源码 ZIP 和 tar.gz。源码包包含 PCB、3D 外壳
 - 聊天记录持久化、连续空闲总结、连接结束总结和重启后的记忆恢复
 - Wi-Fi 配网后连接到电脑上的服务
 
-`main` 分支另外提供账号与设备管理页面、设备凭证认证，以及按主人和设备隔离的聊天记忆。接入方法见 [服务器说明](server/README.md) 与 [USB 配置说明](firmware/tools/README.md)。
+`main` 分支另外提供账号与设备管理页面、设备凭证认证、按主人和设备隔离的聊天记忆，以及个人资料库。上传 PDF、Word 或笔记后，小喵会按当前账号检索相关片段，用于文字和实时语音回答；同账号设备共享资料，不同账号分别管理。见 [资料库使用说明](docs/资料库使用说明.md)、[服务器说明](server/README.md) 与 [USB 配置说明](firmware/tools/README.md)。这些更新尚未包含在上述 exe 中。
 
 ## 快速开始
 
@@ -93,7 +93,7 @@ Windows 电脑上的 Cyber Miao
 - `settings.ini`：API Key、服务端口和自动打开网页设置。
 - `logs/CyberMiao.log`：运行日志，包含 API Key 的脱敏输出。
 - `records/`：录制和分析产生的图片等数据。
-- `memory.sqlite3`：聊天记录、摘要和长期记忆；账号模式还包含身份与绑定信息，请勿公开分享。
+- `memory.sqlite3`：聊天记录、摘要和长期记忆；`main` 的账号模式还包含身份、绑定及上传的资料原文与索引，请勿公开分享。
 - `models/`：用户侧模型缓存；发行版已经内置手部识别模型。
 
 卸载安装版不会自动删除这个用户数据目录，以保留配置和录制数据。API Key 当前以普通配置文本保存，请不要把 `settings.ini` 分享给其他人。
@@ -165,6 +165,7 @@ catapp/
 
 - [文档导航](docs/README.md)
 - [软件使用手册](docs/使用手册.md)
+- [个人资料库使用说明](docs/资料库使用说明.md)
 - [硬件使用说明](docs/硬件使用说明.md)
 - [固件构建与升级](firmware/README.md)
 - [设备身份与 USB 配置](firmware/tools/README.md)

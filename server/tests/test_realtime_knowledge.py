@@ -69,8 +69,13 @@ class RealtimeKnowledgeTests(unittest.IsolatedAsyncioTestCase):
             on_response_started=noop, on_response_done=noop, on_speech_started=noop, on_error=self.error,
             manual_response=True)
         self.addAsyncCleanup(self.session.close)
+
+        async def connect(url, *, additional_headers=None, **kwargs):
+            # 使用真实函数签名，兼容 Python 3.10 对连接参数的 inspect.signature 检查。
+            return self.socket
+
         with patch.object(realtime, "API_KEY", "simulated-key"), \
-                patch.object(realtime.websockets, "connect", AsyncMock(return_value=self.socket)):
+                patch.object(realtime.websockets, "connect", connect):
             await self.session.ensure_connected()
         return self.session
 

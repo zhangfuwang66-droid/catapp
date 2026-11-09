@@ -36,6 +36,9 @@ from access_control import AccessSettings, LocalAccessMiddleware, authorize_runt
 from connection_authorization import ConnectionAuthorizer, AuthorizedStreamingResponse
 from auth_routes import router as auth_router
 from device_routes import router as devices_router
+from knowledge_store import KnowledgeStore
+from knowledge_service import KnowledgeService
+from knowledge_routes import router as knowledge_router
 
 router = APIRouter()
 
@@ -265,7 +268,7 @@ def get_index_html():
 
 def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memory_messages,
                access: Optional[AccessSettings] = None, backup_settings: Optional[BackupSettings] = None,
-               storage_settings: Optional[StorageSettings] = None) -> FastAPI:
+               storage_settings: Optional[StorageSettings] = None, knowledge_service=None) -> FastAPI:
     manager = MemoryManager(
         store if store is not None else MemoryStore(MEMORY_DB_PATH),
         summarizer, idle_seconds=MEMORY_IDLE_SECONDS, poll_seconds=MEMORY_POLL_SECONDS,
@@ -276,6 +279,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     storage.protected_paths = devices.protected_record_paths
     access = access if access is not None else AccessSettings.from_environment()
     identities = IdentityStore(manager.store.path)
+    knowledge = knowledge_service if knowledge_service is not None else KnowledgeService(KnowledgeStore(manager.store.path))
     connections = ConnectionAuthorizer(identities)
     backups = DatabaseBackups(manager.store.path, backup_settings if backup_settings is not None else BackupSettings.from_environment())
 
@@ -292,11 +296,13 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
 
     @asynccontextmanager
     async def lifespan(application):
-        await manager.start()
-        await backups.start()
-        await storage.start()
-        cleanup_task = asyncio.create_task(cleanup_revoked_devices()) if access.mode == "accounts" else None
+        cleanup_task = None
         try:
+            await manager.start()
+            await backups.start()
+            await storage.start()
+            await knowledge.start()
+            cleanup_task = asyncio.create_task(cleanup_revoked_devices()) if access.mode == "accounts" else None
             yield
         finally:
             try:
@@ -313,7 +319,10 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
                     try:
                         await backups.close()
                     finally:
-                        await storage.close()
+                        try:
+                            await storage.close()
+                        finally:
+                            await knowledge.close()
 
     application = FastAPI(lifespan=lifespan)
 
@@ -328,11 +337,13 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.state.connections = connections
     application.state.database_backups = backups
     application.state.runtime_storage = storage
+    application.state.knowledge = knowledge
     application.state.default_user_id = MEMORY_USER_ID
     application.state.default_device_id = MEMORY_DEVICE_ID
     application.include_router(router)
     application.include_router(auth_router)
     application.include_router(devices_router)
+    application.include_router(knowledge_router)
     application.mount("/web", StaticFiles(directory=str(WEB_ROOT)), name="web")
     application.add_middleware(LocalAccessMiddleware, settings=access)
     return application

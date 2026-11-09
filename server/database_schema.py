@@ -2,6 +2,13 @@
 
 MEMORY_SCHEMA_VERSION = 1
 IDENTITY_SCHEMA_VERSION = 2
+KNOWLEDGE_SCHEMA_VERSION = 1
+
+KNOWLEDGE_COLUMNS = {
+    "knowledge_documents": {"id", "user_id", "filename", "size_bytes", "sha256", "original", "status", "error_code",
+                            "chunk_count", "embedding_model", "job_token", "created_at", "updated_at"},
+    "knowledge_chunks": {"document_id", "user_id", "ordinal", "content", "embedding"},
+}
 
 MEMORY_COLUMNS = {
     "conversations": {"id", "user_id", "device_id", "started_at", "last_activity_at", "summarized_through_message_id"},
@@ -33,7 +40,8 @@ def schema_versions(connection):
 
 def validate_versions(connection):
     versions = schema_versions(connection)
-    for component, supported in (("memory", MEMORY_SCHEMA_VERSION), ("identity", IDENTITY_SCHEMA_VERSION)):
+    for component, supported in (("memory", MEMORY_SCHEMA_VERSION), ("identity", IDENTITY_SCHEMA_VERSION),
+                                 ("knowledge", KNOWLEDGE_SCHEMA_VERSION)):
         version = versions.get(component, 0)
         if not isinstance(version, int) or not 0 <= version <= supported:
             raise ValueError("数据库组件版本高于当前程序或无效，不能降级写入，请使用匹配版本")

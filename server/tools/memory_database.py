@@ -16,7 +16,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from memory_store import MemoryStore
-from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, validate_columns, validate_versions
+from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, KNOWLEDGE_COLUMNS, validate_columns, validate_versions
 
 
 TABLES = ("conversations", "messages", "conversation_summaries", "memories")
@@ -53,8 +53,10 @@ def check_database_ready(database: Path):
     connection = open_readonly(database)
     try:
         connection.execute("BEGIN")
-        validate_versions(connection)
+        versions = validate_versions(connection)
         validate_columns(connection, {**MEMORY_COLUMNS, **IDENTITY_COLUMNS})
+        if versions.get("knowledge"):
+            validate_columns(connection, KNOWLEDGE_COLUMNS)
         for table in (*MEMORY_COLUMNS, *IDENTITY_COLUMNS):
             connection.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone()
     finally:
@@ -82,6 +84,15 @@ def inspect_database(database: Path) -> dict:
             if not identity_version or identity_tables != set(required):
                 raise ValueError("身份数据库表结构与版本记录不一致")
             validate_columns(connection, required)
+        knowledge_tables = set(KNOWLEDGE_COLUMNS).intersection(names)
+        if knowledge_tables or versions.get("knowledge"):
+            if not versions.get("knowledge") or knowledge_tables != set(KNOWLEDGE_COLUMNS):
+                raise ValueError("资料库表结构与版本记录不一致")
+            validate_columns(connection, KNOWLEDGE_COLUMNS)
+            if connection.execute("""SELECT 1 FROM knowledge_documents d WHERE d.size_bytes<>length(d.original)
+                OR d.chunk_count<>(SELECT count(*) FROM knowledge_chunks c WHERE c.document_id=d.id AND c.user_id=d.user_id)
+                LIMIT 1""").fetchone():
+                raise ValueError("资料库原文或片段计数不一致")
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise ValueError("数据库存在外键关联异常")
         for query in (
@@ -103,6 +114,8 @@ def inspect_database(database: Path) -> dict:
         counts = {name: connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0] for name in TABLES}
         identity_counts = {name: connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
                            for name in sorted(identity_tables)}
+        knowledge_counts = {name: connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+                            for name in sorted(knowledge_tables)}
         pending = connection.execute("""SELECT COUNT(*) FROM conversations c WHERE EXISTS
             (SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.id>c.summarized_through_message_id)""").fetchone()[0]
         page_size = connection.execute("PRAGMA page_size").fetchone()[0]
@@ -115,7 +128,8 @@ def inspect_database(database: Path) -> dict:
             wal_bytes = 0
         return {"ok": True, "database": str(database), "integrity": "ok", "foreign_keys": "ok",
                 "relations": "ok", "schema_versions": versions, "row_counts": counts,
-                "identity_row_counts": identity_counts, "pending_conversations": pending,
+                "identity_row_counts": identity_counts, "knowledge_row_counts": knowledge_counts,
+                "pending_conversations": pending,
                 "storage": {"database_bytes": database.stat().st_size, "wal_bytes": wal_bytes,
                             "logical_bytes": page_count * page_size, "reusable_bytes": free_pages * page_size,
                             "disk_free_bytes": shutil.disk_usage(database.parent).free}}
@@ -201,6 +215,7 @@ def restore_database(backup: Path, output: Path, expected_sha256: str, *, apply:
     plan = {"ok": True, "applied": False, "backup": str(backup), "output": str(output),
             "source_sha256": digest, "row_counts": source_report["row_counts"],
             "identity_row_counts": source_report["identity_row_counts"],
+            "knowledge_row_counts": source_report["knowledge_row_counts"],
             "schema_versions": source_report["schema_versions"],
             "sessions_will_be_revoked": True, "pairing_codes_will_be_invalidated": True,
             "device_credentials": "恢复到备份时的状态；之后的撤销记录不会包含在旧备份中，请核对后再上线"}

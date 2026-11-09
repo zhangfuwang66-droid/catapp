@@ -5,6 +5,12 @@ import os
 from pathlib import Path
 import queue
 import sys
+
+# 文档解析子进程只加载解析器，避免创建桌面窗口或启动后端。
+if __name__ == "__main__" and len(sys.argv) == 4 and sys.argv[1] == "--parse-document":
+    from document_parser import worker
+    sys.exit(worker(sys.argv[2], sys.argv[3]))
+
 import tkinter as tk
 from tkinter import messagebox
 import traceback

@@ -17,10 +17,47 @@ DEVICE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 TOKEN = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
 PUBLIC_FIELDS = {"protocol", "device_id", "credential_configured", "pending_reboot", "identity_saved",
                  "has_wifi", "server_url", "mode", "setup_ssid", "ok"}
+DIAGNOSTIC_BOOLEANS = {"wifi_connected", "clock_ready", "bound", "i2s_input_ready", "i2s_output_ready",
+                       "camera_ws_ready", "audio_ws_ready", "audio_stream_enabled", "microphone_enabled",
+                       "tts_playing", "queues_ready"}
+DIAGNOSTIC_INTEGERS = {"uptime_ms", "rssi_dbm", "free_heap_bytes", "largest_internal_block_bytes",
+                       "minimum_free_heap_bytes", "free_psram_bytes", "camera_init_error", "captured_frames",
+                       "capture_failures", "sent_frames", "camera_send_failures", "camera_fps",
+                       "captured_audio_chunks", "sent_audio_chunks", "audio_send_failures",
+                       "task_start_failures", "socket_heartbeat_ms"}
+DIAGNOSTIC_ENUMS = {
+    "link_state": {"local", "wifi_offline", "need_credential", "waiting_clock", "server_offline",
+                   "unbound", "bound", "credential_invalid", "unknown"},
+    "socket_phase": {"waiting", "gate", "camera_connect", "audio_connect", "camera_poll", "audio_poll",
+                     "sleeping", "unknown"},
+}
+TRANSPORT_INTEGERS = {"connect_attempts", "tcp_connect_successes", "last_tls_error", "last_http_status",
+                      "bytes_sent", "bytes_read", "send_failures", "header_failures"}
 
 
 class ProvisioningError(ValueError):
     pass
+
+
+def public_diagnostics(value):
+    """逐字段限制类型与枚举，不能让嵌套诊断透传原始日志、凭据或任意文本。"""
+    if not isinstance(value, dict):
+        raise ProvisioningError("设备未返回运行诊断，请确认已升级支持此功能的固件")
+    result = {}
+    for key, item in value.items():
+        if key in DIAGNOSTIC_BOOLEANS and type(item) is bool:
+            result[key] = item
+        elif key in DIAGNOSTIC_INTEGERS and type(item) is int and -(2**31) <= item < 2**32:
+            result[key] = item
+        elif key in DIAGNOSTIC_ENUMS and isinstance(item, str) and item in DIAGNOSTIC_ENUMS[key]:
+            result[key] = item
+        elif key in {"camera_transport", "audio_transport"} and isinstance(item, dict):
+            result[key] = {
+                name: number for name, number in item.items()
+                if (name in TRANSPORT_INTEGERS and type(number) is int and -(2**31) <= number < 2**32)
+                or (name == "connect_pending" and type(number) is bool)
+            }
+    return result
 
 
 def validate_server_url(value: str) -> str:
@@ -98,7 +135,10 @@ class ProvisioningClient:
                 if response.get("ok") is not True:
                     # 固件仅返回预定义错误，原始请求和设备输出从不转发到终端。
                     raise ProvisioningError("设备拒绝操作，请核对身份、网络配置及是否正在重启")
-                return {key: value for key, value in response.items() if key in PUBLIC_FIELDS}
+                result = {key: value for key, value in response.items() if key in PUBLIC_FIELDS}
+                if operation == "diagnostics":
+                    result["diagnostics"] = public_diagnostics(response.get("diagnostics"))
+                return result
         raise ProvisioningError("设备未响应身份协议；请确认端口与新版固件，旧固件不能使用此工具")
 
     def provision(self, credential):
@@ -116,6 +156,7 @@ def main(arguments=None, *, serial_factory=None):
     parser.add_argument("--port", required=True, help="USB 串口，例如 COM3")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
+    commands.add_parser("diagnostics", help="只读查看硬件初始化、连接阶段、内存和收发计数")
     commands.add_parser("setup", help="在设备上打开本地配置热点")
     provision = commands.add_parser("provision")
     provision.add_argument("--credential-file", required=True, type=Path)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <cJSON.h>
 #include "DeviceConfig.h"
 
 class DeviceProvisioning {
@@ -9,6 +10,8 @@ class DeviceProvisioning {
   void poll();
   bool shouldReboot() const;
   bool takeSetupRequest();
+  // 回调只返回公开运行状态，不读取或写入设备凭证。
+  void setDiagnosticsCallback(void (*callback)(cJSON*)) { diagnostics_ = callback; }
 
  private:
   void command(const String& line);
@@ -20,4 +23,5 @@ class DeviceProvisioning {
   bool rebootPending_ = false;
   uint32_t rebootAt_ = 0;
   uint32_t lastByteAt_ = 0;
+  void (*diagnostics_)(cJSON*) = nullptr;
 };

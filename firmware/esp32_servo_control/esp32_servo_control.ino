@@ -18,6 +18,8 @@
 #include "DeviceSocket.h"
 #include "DeviceLink.h"
 #include "DeviceSetup.h"
+#include "DeviceDiagnostics.h"
+#include <esp_heap_caps.h>
 
 // 串口日志总开关。播放 TTS 期间，Serial.print 在 USB-CDC / UART 上是同步写入，
 // 即便是 115200 波特率下一行几十字节也可能阻塞 task 1-5ms，足以让 I2S 的 DMA
@@ -254,6 +256,7 @@ DeviceLink deviceLink(deviceConfig);
 DeviceSetup setupPortal(deviceConfig, deviceLink);
 DeviceSocket wsCam(deviceConfig);
 DeviceSocket wsAud(deviceConfig);
+DeviceRuntimeDiagnostics runtimeDiagnostics;
 NetworkClient ttsPlainClient;
 NetworkClientSecure ttsSecureClient;
 NetworkClient* ttsClient = &ttsPlainClient;
@@ -1636,6 +1639,7 @@ bool initCamera() {
   config.grab_mode = CAMERA_GRAB_LATEST;
 
   esp_err_t err = esp_camera_init(&config);
+  runtimeDiagnostics.cameraInitError = err;
   if (err != ESP_OK) {
     LOGF("[CAM] init failed: 0x%x\n", err);
     return false;
@@ -1673,7 +1677,8 @@ void initScreen() {
 
 void initI2SIn() {
   i2sIn.setPinsPdmRx(I2S_MIC_CLOCK_PIN, I2S_MIC_DATA_PIN);
-  if (!i2sIn.begin(I2S_MODE_PDM_RX, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO)) {
+  runtimeDiagnostics.microphoneReady = i2sIn.begin(I2S_MODE_PDM_RX, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+  if (!runtimeDiagnostics.microphoneReady) {
     LOGLN("[I2S IN] init failed");
   } else {
     LOGLN("[I2S IN] ready");
@@ -1683,7 +1688,8 @@ void initI2SIn() {
 void initI2SOut(int sampleRate = TTS_RATE) {
   i2sOut.end();
   i2sOut.setPins(I2S_SPK_BCLK, I2S_SPK_LRCK, I2S_SPK_DIN);
-  if (!i2sOut.begin(I2S_MODE_STD, sampleRate, I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO)) {
+  runtimeDiagnostics.speakerReady = i2sOut.begin(I2S_MODE_STD, sampleRate, I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO);
+  if (!runtimeDiagnostics.speakerReady) {
     LOGLN("[I2S OUT] init failed");
   } else {
     LOGF("[I2S OUT] ready @%d\n", sampleRate);
@@ -2139,6 +2145,7 @@ void taskCamCapture(void*) {
     if (millis() - lastCaptureMs >= intervalMs) {
       camera_fb_t* fb = esp_camera_fb_get();
       if (fb && fb->format == PIXFORMAT_JPEG) {
+        ++runtimeDiagnostics.capturedFrames;
         lastCaptureMs = millis();
         updateCameraCoverState(fb);
         drawLocalVisionCameraPreview(fb);
@@ -2153,8 +2160,9 @@ void taskCamCapture(void*) {
         } else {
           esp_camera_fb_return(fb);
         }
-      } else if (fb) {
-        esp_camera_fb_return(fb);
+      } else {
+        ++runtimeDiagnostics.captureFailures;
+        if (fb) esp_camera_fb_return(fb);
       }
     }
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -2167,7 +2175,9 @@ void taskCamSend(void*) {
     if (xQueueReceive(qFrames, &fb, pdMS_TO_TICKS(100)) == pdPASS) {
       if (fb && camWsReady) {
         bool ok = wsCam.sendBinary(reinterpret_cast<const char*>(fb->buf), fb->len);
+        if (ok) ++runtimeDiagnostics.sentFrames;
         if (!ok) {
+          ++runtimeDiagnostics.cameraSendFailures;
           wsCam.close();
           camWsReady = false;
         }
@@ -2200,6 +2210,7 @@ void taskMicCapture(void*) {
         retry = 0;
       }
       if (i == samplesPerChunk) {
+        ++runtimeDiagnostics.capturedAudioChunks;
         if (xQueueSend(qAudio, &chunk, 0) != pdPASS) {
           AudioChunk dump;
           xQueueReceive(qAudio, &dump, 0);
@@ -2218,7 +2229,8 @@ void taskMicUpload(void*) {
     if (runAudioStream && audWsReady && !ttsPlaying) {
       AudioChunk chunk;
       if (xQueueReceive(qAudio, &chunk, pdMS_TO_TICKS(100)) == pdPASS) {
-        wsAud.sendBinary(reinterpret_cast<const char*>(chunk.data), chunk.n);
+        if (wsAud.sendBinary(reinterpret_cast<const char*>(chunk.data), chunk.n)) ++runtimeDiagnostics.sentAudioChunks;
+        else ++runtimeDiagnostics.audioSendFailures;
       }
     } else {
       vTaskDelay(pdMS_TO_TICKS(10));
@@ -2790,6 +2802,8 @@ bool refreshConnectionScreen() {
 }
 
 void maintainSockets() {
+  runtimeDiagnostics.socketHeartbeatMs = millis();
+  runtimeDiagnostics.socketPhase = SocketServicePhase::Gate;
   uint32_t now = millis();
   if (WiFi.status() != WL_CONNECTED || !deviceLink.allowBusiness()) {
     camWsReady = false; audWsReady = false; runAudioStream = false; ttsAudioAvailable = false;
@@ -2799,6 +2813,7 @@ void maintainSockets() {
   }
 
   if (!wsCam.available() && now - lastCamRetryMs >= 5000) {
+    runtimeDiagnostics.socketPhase = SocketServicePhase::CameraConnect;
     lastCamRetryMs = now;
     String path = deviceConfig.network().accounts ? "/ws/devices/" + deviceConfig.deviceId() + "/camera" : CAM_WS_PATH;
     if (wsCam.connect(cfgServerHost.c_str(), deviceConfig.network().port, path)) {
@@ -2807,6 +2822,7 @@ void maintainSockets() {
   }
 
   if (!wsAud.available() && now - lastAudRetryMs >= 5000) {
+    runtimeDiagnostics.socketPhase = SocketServicePhase::AudioConnect;
     lastAudRetryMs = now;
     String path = deviceConfig.network().accounts ? "/ws/devices/" + deviceConfig.deviceId() + "/audio" : AUD_WS_PATH;
     if (wsAud.connect(cfgServerHost.c_str(), deviceConfig.network().port, path)) {
@@ -2814,7 +2830,9 @@ void maintainSockets() {
     }
   }
 
+  runtimeDiagnostics.socketPhase = SocketServicePhase::CameraPoll;
   wsCam.poll();
+  runtimeDiagnostics.socketPhase = SocketServicePhase::AudioPoll;
   wsAud.poll();
 }
 
@@ -2828,6 +2846,7 @@ void maintainSockets() {
 void taskWsService(void*) {
   for (;;) {
     maintainSockets();
+    runtimeDiagnostics.socketPhase = SocketServicePhase::Sleeping;
     vTaskDelay(pdMS_TO_TICKS(4));
   }
 }
@@ -2865,6 +2884,44 @@ void refreshExpressionScreenIfNeeded() {
     lastExpressionRefreshMs = now;
     expressionDirty = false;
   }
+}
+
+void addRuntimeDiagnostics(cJSON* object) {
+  DeviceLinkSnapshot link = deviceLink.snapshot();
+  cJSON_AddNumberToObject(object, "uptime_ms", millis());
+  cJSON_AddBoolToObject(object, "wifi_connected", WiFi.status() == WL_CONNECTED);
+  cJSON_AddNumberToObject(object, "rssi_dbm", WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127);
+  cJSON_AddBoolToObject(object, "clock_ready", DeviceLink::clockReady());
+  cJSON_AddStringToObject(object, "link_state", DeviceLink::statusName(link.status));
+  cJSON_AddBoolToObject(object, "bound", link.bound);
+  cJSON_AddNumberToObject(object, "free_heap_bytes", ESP.getFreeHeap());
+  cJSON_AddNumberToObject(object, "largest_internal_block_bytes", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  cJSON_AddNumberToObject(object, "minimum_free_heap_bytes", ESP.getMinFreeHeap());
+  cJSON_AddNumberToObject(object, "free_psram_bytes", ESP.getFreePsram());
+  cJSON_AddNumberToObject(object, "camera_init_error", runtimeDiagnostics.cameraInitError.load());
+  cJSON_AddBoolToObject(object, "i2s_input_ready", runtimeDiagnostics.microphoneReady.load());
+  cJSON_AddBoolToObject(object, "i2s_output_ready", runtimeDiagnostics.speakerReady.load());
+  cJSON_AddNumberToObject(object, "captured_frames", runtimeDiagnostics.capturedFrames.load());
+  cJSON_AddNumberToObject(object, "capture_failures", runtimeDiagnostics.captureFailures.load());
+  cJSON_AddNumberToObject(object, "sent_frames", runtimeDiagnostics.sentFrames.load());
+  cJSON_AddNumberToObject(object, "camera_send_failures", runtimeDiagnostics.cameraSendFailures.load());
+  cJSON_AddNumberToObject(object, "camera_fps", gTargetFps);
+  cJSON_AddBoolToObject(object, "camera_ws_ready", camWsReady);
+  cJSON_AddBoolToObject(object, "audio_ws_ready", audWsReady);
+  cJSON_AddBoolToObject(object, "audio_stream_enabled", runAudioStream);
+  cJSON_AddBoolToObject(object, "microphone_enabled", micEnabled);
+  cJSON_AddBoolToObject(object, "tts_playing", ttsPlaying);
+  cJSON_AddNumberToObject(object, "captured_audio_chunks", runtimeDiagnostics.capturedAudioChunks.load());
+  cJSON_AddNumberToObject(object, "sent_audio_chunks", runtimeDiagnostics.sentAudioChunks.load());
+  cJSON_AddNumberToObject(object, "audio_send_failures", runtimeDiagnostics.audioSendFailures.load());
+  cJSON_AddNumberToObject(object, "task_start_failures", runtimeDiagnostics.taskStartFailures.load());
+  cJSON_AddNumberToObject(object, "socket_heartbeat_ms", runtimeDiagnostics.socketHeartbeatMs.load());
+  cJSON_AddStringToObject(object, "socket_phase", DeviceRuntimeDiagnostics::phaseName(runtimeDiagnostics.socketPhase.load()));
+  cJSON_AddBoolToObject(object, "queues_ready", qFrames && qAudio && qCatPoses);
+  cJSON* camera = cJSON_AddObjectToObject(object, "camera_transport");
+  if (camera) wsCam.addDiagnostics(camera);
+  cJSON* audio = cJSON_AddObjectToObject(object, "audio_transport");
+  if (audio) wsAud.addDiagnostics(audio);
 }
 
 void setup() {
@@ -2938,20 +2995,21 @@ void setup() {
   noteInteraction();
   bootStartMs = millis();
   connectWiFi();
-  if (!deviceLink.begin()) LOGLN("[LINK] background task unavailable");
+  if (!deviceLink.begin()) { runtimeDiagnostics.taskStartFailures |= 1U << 7; LOGLN("[LINK] background task unavailable"); }
+  provisioning.setDiagnosticsCallback(addRuntimeDiagnostics);
 
   // 任务 / 核心分配：
   //   core 0：mic_cap(4)/ws_srv(4)/mic_upl(3)/cam_cap(3)/cam_send(2) + WiFi/TCP stack
   //   core 1：tts_play（高优先级，独占核心喂 I2S DMA） + cat_pose（低优先级动作）
   // 优先级理由：mic 采集被抢占会产生上行音频缺口（对话断续/爆音），必须高于
   // 相机任务；相机发送有 qFrames 丢帧自愈，优先级最低即可。
-  xTaskCreatePinnedToCore(taskCamCapture, "cam_cap", 8192, nullptr, 3, nullptr, 0);
-  xTaskCreatePinnedToCore(taskCamSend, "cam_send", 6144, nullptr, 2, nullptr, 0);
-  xTaskCreatePinnedToCore(taskMicCapture, "mic_cap", 4096, nullptr, 4, nullptr, 0);
-  xTaskCreatePinnedToCore(taskMicUpload, "mic_upl", 4096, nullptr, 3, nullptr, 0);
-  xTaskCreatePinnedToCore(taskWsService, "ws_srv", 8192, nullptr, 4, nullptr, 0);
-  xTaskCreatePinnedToCore(taskHttpPlay, "tts_play", 8192, nullptr, 6, nullptr, 1);
-  xTaskCreatePinnedToCore(taskCatPoseDriver, "cat_pose", 4096, nullptr, 1, nullptr, 1);
+  if (xTaskCreatePinnedToCore(taskCamCapture, "cam_cap", 8192, nullptr, 3, nullptr, 0) != pdPASS) runtimeDiagnostics.taskStartFailures |= 1U << 0;
+  if (xTaskCreatePinnedToCore(taskCamSend, "cam_send", 6144, nullptr, 2, nullptr, 0) != pdPASS) runtimeDiagnostics.taskStartFailures |= 1U << 1;
+  if (xTaskCreatePinnedToCore(taskMicCapture, "mic_cap", 4096, nullptr, 4, nullptr, 0) != pdPASS) runtimeDiagnostics.taskStartFailures |= 1U << 2;
+  if (xTaskCreatePinnedToCore(taskMicUpload, "mic_upl", 4096, nullptr, 3, nullptr, 0) != pdPASS) runtimeDiagnostics.taskStartFailures |= 1U << 3;
+  if (xTaskCreatePinnedToCore(taskWsService, "ws_srv", 8192, nullptr, 4, nullptr, 0) != pdPASS) runtimeDiagnostics.taskStartFailures |= 1U << 4;
+  if (xTaskCreatePinnedToCore(taskHttpPlay, "tts_play", 8192, nullptr, 6, nullptr, 1) != pdPASS) runtimeDiagnostics.taskStartFailures |= 1U << 5;
+  if (xTaskCreatePinnedToCore(taskCatPoseDriver, "cat_pose", 4096, nullptr, 1, nullptr, 1) != pdPASS) runtimeDiagnostics.taskStartFailures |= 1U << 6;
 
   LOGLN("[BOOT] cat robot ready");
 }

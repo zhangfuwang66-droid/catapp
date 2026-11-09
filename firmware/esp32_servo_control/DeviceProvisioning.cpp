@@ -29,6 +29,7 @@ void DeviceProvisioning::command(const String& line) {
   bool changed = false;
   if (rebootPending_ && operation != "status") error = "设备正在重启，请稍后重试";
   else if (operation == "status") ok = true;
+  else if (operation == "diagnostics" && diagnostics_) ok = true;
   else if (operation == "provision") {
     ok = config_.saveCredential(field(request, "device_id"), field(request, "device_token"), error);
     changed = ok;
@@ -61,6 +62,10 @@ void DeviceProvisioning::command(const String& line) {
   cJSON_AddStringToObject(response, "server_url", config_.serverUrl().c_str());
   cJSON_AddStringToObject(response, "mode", config_.network().accounts ? "accounts" : "local");
   cJSON_AddStringToObject(response, "setup_ssid", config_.setupSsid().c_str());
+  if (ok && operation == "diagnostics") {
+    cJSON* diagnostics = cJSON_AddObjectToObject(response, "diagnostics");
+    if (diagnostics) diagnostics_(diagnostics);
+  }
   if (!ok) cJSON_AddStringToObject(response, "error", error.c_str());
   char* encoded = cJSON_PrintUnformatted(response);
   cJSON_Delete(response);

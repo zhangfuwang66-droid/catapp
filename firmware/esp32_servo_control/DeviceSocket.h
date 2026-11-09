@@ -24,7 +24,7 @@ class DeviceSocketLock {
 class DeviceSocket {
  public:
   explicit DeviceSocket(const DeviceConfig& config)
-      : client_(std::make_shared<DeviceWebsocketTransport>(config)) {}
+      : transport_(std::make_shared<DeviceWebsocketTransport>(config)), client_(transport_) {}
   DeviceSocket(const DeviceSocket&) = delete;
   DeviceSocket& operator=(const DeviceSocket&) = delete;
   bool begin() {
@@ -47,8 +47,10 @@ class DeviceSocket {
     return lock && client_.sendBinary(bytes, size);
   }
   void close() { DeviceSocketLock lock(mutex_); if (lock) client_.close(); }
+  void addDiagnostics(cJSON* object) const { transport_->addDiagnostics(object); }
 
  private:
+  std::shared_ptr<DeviceWebsocketTransport> transport_;
   websockets::WebsocketsClient client_;
   SemaphoreHandle_t mutex_ = nullptr;
 };

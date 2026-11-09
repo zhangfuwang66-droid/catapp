@@ -14,12 +14,13 @@ from provision_device import PREFIX, ProvisioningClient, ProvisioningError, main
 
 
 class FakeSerial:
-    def __init__(self, *, device_id="cat-112233445566", reject=False):
+    def __init__(self, *, device_id="cat-112233445566", reject=False, diagnostics=None):
         self.device_id = device_id
         self.reject = reject
         self.writes = []
         self.pending = b""
         self.closed = False
+        self.diagnostics = diagnostics
 
     def write(self, payload):
         request = json.loads(payload[len(PREFIX):])
@@ -30,6 +31,8 @@ class FakeSerial:
         if request["op"] in {"provision", "configure"}:
             result.update(pending_reboot=True, identity_saved=request["op"] == "provision")
         result["device_token"] = "unexpected-private-field"
+        if request["op"] == "diagnostics" and self.diagnostics is not None:
+            result["diagnostics"] = self.diagnostics
         # 普通日志、错误请求编号和分片都不应被当作本次操作结果。
         noise = PREFIX + b'{"request_id":"old"}\n'
         self.pending += b"[BOOT] simulated\n" + noise + PREFIX + json.dumps(result).encode() + b"\n"
@@ -95,6 +98,38 @@ class ProvisionDeviceTests(unittest.TestCase):
         with self.assertRaises(ProvisioningError):
             ProvisioningClient(stream).exchange("configure",wifi_password="x"*2000)
         self.assertEqual(stream.writes,[])
+
+    def test_diagnostics_cli_is_read_only_and_filters_nested_private_fields(self):
+        stream = FakeSerial(diagnostics={
+            "wifi_connected": True, "camera_init_error": 0, "link_state": "bound",
+            "socket_phase": "audio_connect", "free_heap_bytes": 32000,
+            "device_token": "diagnostic-secret", "raw_log": "diagnostic-secret",
+            "camera_transport": {"last_http_status": 101, "bytes_sent": 4096,
+                                 "authorization": "diagnostic-secret"},
+            "audio_transport": {"connect_pending": False, "last_tls_error": -32512},
+        })
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = main(["--port", "SIMULATED", "diagnostics"], serial_factory=lambda port: stream)
+        self.assertEqual(code, 0)
+        self.assertTrue(stream.closed)
+        self.assertEqual([request["op"] for request in stream.writes], ["diagnostics"])
+        self.assertNotIn("diagnostic-secret", output.getvalue())
+        self.assertNotIn("unexpected-private-field", output.getvalue())
+        diagnostics = json.loads(output.getvalue())["diagnostics"]
+        self.assertEqual(diagnostics["camera_transport"], {"last_http_status": 101, "bytes_sent": 4096})
+        self.assertEqual(diagnostics["audio_transport"]["last_tls_error"], -32512)
+
+    def test_diagnostics_rejects_invalid_types_and_unrestricted_text(self):
+        stream = FakeSerial(diagnostics={
+            "wifi_connected": "private-text", "rssi_dbm": False, "free_heap_bytes": 2**64,
+            "link_state": "private-text", "socket_phase": ["private-text"],
+            "audio_transport": {"last_tls_error": "private-text", "connect_pending": 1},
+        })
+        result = ProvisioningClient(stream).exchange("diagnostics")
+        self.assertEqual(result["diagnostics"], {"audio_transport": {}})
+        with self.assertRaises(ProvisioningError):
+            ProvisioningClient(FakeSerial()).exchange("diagnostics")
 
 
 if __name__ == "__main__":

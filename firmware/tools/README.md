@@ -33,6 +33,8 @@ python firmware/tools/provision_device.py --port COM3 diagnostics
 
 播放读取修复版还会返回 `speaker_volume_percent`、`playback_pcm_bytes`（送入 I2S 的 PCM 字节数）、`playback_read_timeouts`、`playback_body_errors` 和 `playback_write_retries`。它们用于区分网络读超时、HTTP 分块损坏和 I2S 写入停顿；字节数增加不能证明扬声器没有失真，仍需听感验收。旧固件不会返回这些新增字段。
 
+播放缓冲版增加 `playback_buffered_bytes`（当前排队 PCM 字节数）、`playback_buffer_capacity_bytes`、`playback_buffer_allocation_failures`、`playback_rebuffers`（开始播放后，缓冲不足且实际恢复输出的次数）、`playback_max_network_read_ms`（单次非阻塞预取的最长耗时）和 `playback_max_feed_gap_ms`（同一回复中，相邻两块完整写入 I2S 的最大时间间隔）。这些计数自启动累计，供数间隔排除首次预缓冲和回复之间的等待；它不是驱动的 DMA 欠载计数，仍需结合录音或听感判断。单纯句尾等待 HTTP 结束不增加重新缓冲次数。
+
 诊断不返回 SSID、密码、设备凭证、配对码、聊天正文或原始错误文本；电脑端也对嵌套字段进行白名单和类型过滤。旧版固件不支持时会报错，需要升级主程序后再使用。普通串口日志仍默认关闭。
 
 ## 设备热点与账号配对

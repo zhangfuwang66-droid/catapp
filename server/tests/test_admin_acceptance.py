@@ -12,8 +12,9 @@ from fastapi.testclient import TestClient
 from access_control import AccessSettings, SESSION_COOKIE
 from identity_store import csrf_for_session
 from memory_store import MemoryStore, SummaryResult
+from provider_settings import ProviderSettings
 from support import server_app
-from tools.memory_database import inspect_database
+from tools.memory_database import backup_database, file_sha256, inspect_database, restore_database
 
 
 async def summarize(_messages):
@@ -152,6 +153,37 @@ class AdminAcceptanceTests(unittest.TestCase):
         self.assertTrue(self.request("GET", "/api/devices/cat-alice/binding", headers=self.device_headers).json()["bound"] is False)
         self.assertIn(secret, self.request("GET", "/api/account/memories/cat-alice", actor="alice").text)
         self.assertTrue(inspect_database(self.database)["ok"])
+
+    def test_backup_restore_preserves_admin_role_and_encrypted_key(self):
+        self.admin_cli("grant", "owner")
+        simulated_key = "sk-simulated-admin-acceptance"
+        self.app.state.provider_settings.save(self.users["alice"].id, simulated_key)
+        source = self.database
+        backup = Path(self.temp.name) / "pre-restore.sqlite3"
+        restored = Path(self.temp.name) / "restored.sqlite3"
+        before = inspect_database(source)
+        backup_database(source, backup)
+        plan = restore_database(backup, restored, file_sha256(backup))
+        self.assertFalse(plan["applied"])
+        self.assertFalse(restored.exists())
+        applied = restore_database(backup, restored, file_sha256(backup), apply=True, offline=True)
+        self.assertTrue(applied["applied"])
+        after = inspect_database(restored)
+        self.assertEqual(before["schema_versions"], after["schema_versions"])
+        self.assertEqual(before["identity_row_counts"]["auth_users"], after["identity_row_counts"]["auth_users"])
+        self.assertEqual(before["identity_row_counts"]["devices"], after["identity_row_counts"]["devices"])
+        self.assertEqual(ProviderSettings(restored).get(self.users["alice"].id), simulated_key)
+        self.assertEqual(self.request("GET", "/api/admin/overview", actor="owner").status_code, 200)
+        restored_app = server_app.create_app(
+            store=MemoryStore(restored), summarizer=summarize,
+            access=AccessSettings("accounts", "https://cat.example"),
+        )
+        new_session = restored_app.state.identities.login("owner", "owner-test-password", client_key="restore")
+        self.assertIsNotNone(new_session)
+        headers = {"Cookie": f"{SESSION_COOKIE}={new_session.token}"}
+        with TestClient(restored_app, base_url="https://cat.example") as client:
+            response = client.get("/api/admin/overview", headers=headers)
+            self.assertEqual(response.status_code, 200, response.text)
 
 
 if __name__ == "__main__":

@@ -102,6 +102,13 @@ void DeviceLink::requestPairing() {
   xSemaphoreGive(mutex_);
 }
 
+void DeviceLink::refreshBinding() {
+  if (!mutex_) return;
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  refreshBinding_ = true;
+  xSemaphoreGive(mutex_);
+}
+
 void DeviceLink::tick() {
   if (WiFi.status() != WL_CONNECTED) { setStatus(DeviceLinkStatus::WifiOffline); return; }
   if (!timeRequested_) {
@@ -112,7 +119,14 @@ void DeviceLink::tick() {
   if (!config_.network().accounts) { setStatus(DeviceLinkStatus::Local); return; }
   if (!config_.hasCredential()) { setStatus(DeviceLinkStatus::NeedCredential, 0); return; }
   uint32_t now = millis();
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  if (refreshBinding_ && now - lastBindingPollAt_ >= 5000) {
+    nextPollAt_ = 0;
+    refreshBinding_ = false;
+  }
+  xSemaphoreGive(mutex_);
   if (nextPollAt_ && static_cast<int32_t>(now - nextPollAt_) < 0) return;
+  lastBindingPollAt_ = now;
   nextPollAt_ = now + 5000;
   String prefix = "/api/devices/" + config_.deviceId();
   JsonResponse response = request(config_, prefix + "/binding", false);

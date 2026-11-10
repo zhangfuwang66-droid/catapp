@@ -19,15 +19,18 @@ class DeviceAuthorization:
     user_id: str
     device_id: str
     token: str = field(repr=False)
+    access_epoch: Optional[int] = None
 
     async def is_valid(self, store: IdentityStore) -> bool:
         if self.kind == "device":
             device = await run_blocking(store.credential_device, self.device_id, self.token)
-            return bool(device and device["owner_user_id"] == self.user_id)
+            return bool(device and device["active_user_id"] == self.user_id
+                        and (self.access_epoch is None or device["access_epoch"] == self.access_epoch))
         user = await run_blocking(store.session_user, self.token)
         if user is None or user.id != self.user_id:
             return False
-        return await run_blocking(store.owned_device, self.device_id, self.user_id) is not None
+        device = await run_blocking(store.accessible_device, self.device_id, self.user_id)
+        return bool(device and (self.access_epoch is None or device["access_epoch"] == self.access_epoch))
 
 
 @dataclass(eq=False)

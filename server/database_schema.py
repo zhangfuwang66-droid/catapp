@@ -1,7 +1,7 @@
 """数据库组件版本和必需列；只读运维工具不加载模型或密码哈希依赖。"""
 
 MEMORY_SCHEMA_VERSION = 1
-IDENTITY_SCHEMA_VERSION = 2
+IDENTITY_SCHEMA_VERSION = 3
 KNOWLEDGE_SCHEMA_VERSION = 2
 PROVIDER_SCHEMA_VERSION = 1
 
@@ -31,6 +31,12 @@ IDENTITY_COLUMNS = {
     "devices": {"id", "display_name", "owner_user_id", "created_at", "bound_at", "revoked_at"},
     "device_credentials": {"token_hash", "device_id", "created_at", "revoked_at"},
     "device_pairings": {"code_hash", "device_id", "created_at", "expires_at", "claimed_by", "claimed_at", "invalidated_at"},
+}
+IDENTITY_SHARING_COLUMNS = {
+    "devices": {"access_epoch"},
+    "device_memberships": {"id", "device_id", "user_id", "kind", "started_at", "ended_at"},
+    "device_loans": {"id", "device_id", "owner_user_id", "guest_user_id", "invitation_hash", "created_at", "claim_until", "expires_at", "ended_at"},
+    "device_preferences": {"user_id", "device_id", "voice_paused"},
 }
 
 

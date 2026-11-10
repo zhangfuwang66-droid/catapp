@@ -2,6 +2,7 @@
 
 const $ = id => document.getElementById(id);
 const state = {user:null, csrf:'', epoch:0, devices:[], memoryId:null, revokeId:null};
+let shareDevice = null;
 let noticeTimer = null;
 let refreshRequest = null;
 const accountChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('cybermiao-account') : null;
@@ -44,7 +45,8 @@ function resetPrivateView() {
   state.user = null; state.csrf = ''; state.devices = []; state.memoryId = null; state.revokeId = null;
   refreshRequest = null;
   document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
-  $('deviceGrid').replaceChildren(); $('memoryContent').replaceChildren();
+  $('deviceGrid').replaceChildren(); $('memoryContent').replaceChildren(); $('historyDevices').replaceChildren();
+  $('loanCode').textContent = ''; $('shareConfirm').value = ''; shareDevice = null;
   ['username','avatar','memoryTitle','pageError','pairError','memoryError','revokeError'].forEach(id => { $(id).textContent = ''; });
   ['loginUsername','loginPassword','pairCode','clearDeviceId','revokeDeviceId'].forEach(id => { $(id).value = ''; });
   $('deviceCount').textContent = '0'; $('sideCount').textContent = '0'; $('onlineCount').textContent = '0';
@@ -93,6 +95,7 @@ async function refreshDevices() {
     const data = await api('/api/devices');
     state.devices = data.devices || [];
     renderDevices(); $('pageError').textContent = '';
+    await refreshHistory();
   } catch(error) { report('pageError', error); }
   finally {
     if(refreshRequest === request) { refreshRequest = null; $('refreshBtn').disabled = false; }
@@ -113,6 +116,7 @@ function renderDevices() {
   $('deviceGrid').replaceChildren();
   state.devices.forEach(device => {
     const disabled = device.revoked_at != null;
+    const accessible = !disabled && device.control_allowed !== false;
     const online = !disabled && (device.audio_online || device.camera_online);
     const card = element('article', 'device-card');
     const top = element('div', 'device-top');
@@ -124,17 +128,19 @@ function renderDevices() {
                     element('span', 'channel' + (device.camera_online ? ' active' : ''), device.camera_online ? '画面已连接' : '画面未连接'));
     const actions = element('div', 'card-actions');
     const consoleLink = element('a', 'primary', '进入控制台 ↗');
-    if(!disabled) consoleLink.href = '/console/' + encodeURIComponent(device.id);
-    else consoleLink.setAttribute('aria-disabled', 'true');
+    if(accessible) consoleLink.href = '/console/' + encodeURIComponent(device.id);
+    else { consoleLink.setAttribute('aria-disabled', 'true'); if(!disabled) consoleLink.textContent = '借用中，控制暂交对方'; }
     const memory = element('button', 'secondary', '查看记忆');
-    memory.type = 'button'; memory.disabled = disabled; memory.addEventListener('click', () => openMemory(device));
+    memory.type = 'button'; memory.disabled = false; memory.addEventListener('click', () => openMemory(device));
     actions.append(consoleLink, memory);
     const bottom = element('div', 'card-bottom');
     const boundDate = device.bound_at ? new Date(device.bound_at * 1000).toLocaleDateString('zh-CN') + ' 已相识' : '已绑定到你的账号';
     bottom.append(element('span', '', boundDate));
     const revoke = element('button', 'quiet', disabled ? '已停用' : '停用设备');
     revoke.type = 'button'; revoke.disabled = disabled;
-    revoke.addEventListener('click', () => openRevoke(device)); bottom.append(revoke);
+    revoke.addEventListener('click', () => openRevoke(device)); if(device.role !== 'guest') bottom.append(revoke);
+    const share = element('button','quiet',device.role === 'guest' ? '归还小喵' : '转交与借用');
+    share.disabled = disabled; share.addEventListener('click',() => openShare(device)); bottom.append(share);
     card.append(top, element('h2', '', device.display_name), element('div', 'device-id', device.id), channels, actions, bottom);
     $('deviceGrid').append(card);
   });
@@ -142,7 +148,7 @@ function renderDevices() {
 
 function openPair() {
   if(!state.user) return;
-  $('pairError').textContent = ''; $('pairCode').value = ''; $('pairBtn').disabled = false;
+  $('pairError').textContent = ''; $('pairCode').value = ''; $('pairKind').value = 'pair'; $('pairBtn').disabled = false;
   $('pairDialog').showModal(); $('pairCode').focus();
 }
 
@@ -174,7 +180,7 @@ async function openMemory(device) {
   $('clearLabel').textContent = '输入 ' + device.id + ' 以确认清除';
   $('memoryDialog').showModal();
   try {
-    const data = await api('/api/devices/' + encodeURIComponent(device.id) + '/memory');
+    const data = await api('/api/account/memories/' + encodeURIComponent(device.id));
     if(state.memoryId === device.id) renderMemory(data);
   } catch(error) { if(state.memoryId === device.id) report('memoryError', error); }
 }
@@ -209,7 +215,7 @@ $('logoutBtn').addEventListener('click', async () => {
 $('pairForm').addEventListener('submit', async event => {
   event.preventDefault(); $('pairError').textContent = ''; $('pairBtn').disabled = true;
   try {
-    await api('/api/devices/pair', {method:'POST', body:JSON.stringify({code:$('pairCode').value.trim().toUpperCase()})});
+    await api('/api/devices/' + $('pairKind').value, {method:'POST', body:JSON.stringify({code:$('pairCode').value.trim().toUpperCase()})});
     $('pairDialog').close(); notice('配对成功，欢迎你的小喵。'); await refreshDevices();
   } catch(error) { report('pairError', error); }
   finally { $('pairBtn').disabled = false; }
@@ -222,7 +228,7 @@ $('clearForm').addEventListener('submit', async event => {
   if(!id || $('clearDeviceId').value !== id) return;
   $('clearBtn').disabled = true; $('clearDeviceId').disabled = true; $('memoryError').textContent = '';
   try {
-    await api('/api/devices/' + encodeURIComponent(id) + '/memory', {method:'DELETE', body:JSON.stringify({confirm_device_id:id})});
+    await api('/api/account/memories/' + encodeURIComponent(id), {method:'DELETE', body:JSON.stringify({confirm_device_id:id})});
     if(state.memoryId !== id) return;
     renderMemory({}); $('clearDetails').open = false; $('clearDeviceId').value = '';
     notice('这只小喵的聊天记忆已清除，可以重新开始对话。');
@@ -259,4 +265,4 @@ setInterval(async () => {
     state.csrf = grant.csrf_token; await refreshDevices();
   } catch(error) { report('pageError', error); }
 }, 10000);
-restoreSession();
+document.addEventListener('DOMContentLoaded', restoreSession, {once:true});

@@ -2352,6 +2352,7 @@ void setupWebSocketCallbacks() {
       LOGLN("[WS-CAM] connected");
     } else if (event == WebsocketsEvent::ConnectionClosed) {
       camWsReady = false;
+      deviceLink.refreshBinding();
       LOGLN("[WS-CAM] disconnected");
     }
   });
@@ -2384,6 +2385,8 @@ void setupWebSocketCallbacks() {
     } else if (event == WebsocketsEvent::ConnectionClosed) {
       audWsReady = false;
       runAudioStream = false;
+      ttsAudioAvailable = false;
+      deviceLink.refreshBinding();
       LOGLN("[WS-AUD] disconnected");
     }
   });
@@ -2761,9 +2764,8 @@ void maintainWiFi() {
     expressionDirty = true;
   }
   if (status == WL_CONNECTED) {
-    DeviceLinkSnapshot link = deviceLink.snapshot();
-    if (deviceConfig.network().accounts && !link.bound) startApConfigMode(false);
-    else if (deviceLink.allowBusiness()) setupPortal.closeAutomatic();
+    // 网络配置与账号绑定互不依赖；未绑定时直接在屏幕显示云端配对码。
+    setupPortal.closeAutomatic();
     return;
   }
   if (millis() - bootStartMs >= AP_CONFIG_TIMEOUT_MS) startApConfigMode(false);
@@ -2777,7 +2779,8 @@ void maintainWiFi() {
 
 bool refreshConnectionScreen() {
   DeviceLinkSnapshot link = deviceLink.snapshot();
-  bool needed = setupPortal.active() || (deviceConfig.network().accounts && !link.bound)
+  bool online = WiFi.status() == WL_CONNECTED;
+  bool needed = setupPortal.active() || !online || (deviceConfig.network().accounts && !link.bound)
       || (deviceConfig.network().tls && !DeviceLink::clockReady());
   static bool wasVisible = false;
   static uint32_t lastDrawAt = 0;
@@ -2787,7 +2790,8 @@ bool refreshConnectionScreen() {
     wasVisible = false; return false;
   }
   String title;
-  if (link.pairingCode.length()) title = link.pairingCode;
+  if (!online) title = setupPortal.active() ? "WI-FI SETUP" : "CONNECTING WI-FI";
+  else if (link.pairingCode.length()) title = link.pairingCode;
   else switch (link.status) {
     case DeviceLinkStatus::NeedCredential: title = "USB ID REQUIRED"; break;
     case DeviceLinkStatus::CredentialInvalid: title = "CREDENTIAL INVALID"; break;

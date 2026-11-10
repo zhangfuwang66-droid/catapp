@@ -126,7 +126,7 @@ async function verifyConsoleSession() {
     if(!deviceResponse.ok) throw new Error('无法读取设备状态');
     const result = await deviceResponse.json();
     if(epoch !== consoleEpoch) return;
-    const device = result.devices.find(item => item.id === CONSOLE_CONTEXT.device_id && item.revoked_at == null);
+    const device = result.devices.find(item => item.id === CONSOLE_CONTEXT.device_id && item.revoked_at == null && item.control_allowed !== false);
     if(!device) { leaveConsole(); return; }
     consoleCsrf = grant.csrf_token; consoleUserId = grant.user.id;
     document.getElementById('consoleAccountName').textContent = grant.user.username + ' · ' + device.display_name;

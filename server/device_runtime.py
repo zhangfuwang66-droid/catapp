@@ -107,6 +107,7 @@ from asr_core import RecognitionState
 from device_connections import DeviceConnectionSlot
 from cat_motion import send_cat_emotion_actions
 from emotion_parser import analyze_emotion
+from async_helpers import run_blocking
 from omni_client import (
     SYSTEM_PROMPT,
     analyze_activity_entries_async,
@@ -713,8 +714,9 @@ async def _viewer_sender_loop(state: CameraViewerState) -> None:
 class DeviceRuntime:
     """一只设备的连接、模型、音视频与活动状态；只读资源在模块内共享。"""
 
-    def __init__(self, device_id: str, user_id: str, memory_manager: MemoryManager, *, storage=None, knowledge=None, providers=None):
+    def __init__(self, device_id: str, user_id: str, memory_manager: MemoryManager, *, storage=None, knowledge=None, providers=None, preferences=None):
         self.providers = providers
+        self.preferences = preferences
         self.device_id = device_id
         self.user_id = user_id
         self.memory_manager = memory_manager
@@ -754,7 +756,7 @@ class DeviceRuntime:
         self.cover_interaction_task: Optional[asyncio.Task] = None
         self.esp32_audio_priority_active: bool = False
         self.performance_mode_active: bool = False
-        self.voice_paused = False
+        self.voice_paused = preferences.voice_preference(user_id, device_id) if preferences else False
         self._voice_revision = 0
         self._voice_control_lock = asyncio.Lock()
         self._voice_controller = None
@@ -1623,6 +1625,8 @@ class DeviceRuntime:
 
     async def set_voice_paused(self, paused: bool):
         async with self._voice_control_lock:
+            if self.preferences:
+                await run_blocking(self.preferences.save_voice_preference, self.user_id, self.device_id, bool(paused))
             self.voice_paused = bool(paused)
             async with self.interrupt_lock:
                 await self._sync_voice_control()

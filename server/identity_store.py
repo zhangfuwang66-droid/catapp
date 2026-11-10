@@ -21,6 +21,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 from argon2.low_level import Type
 from device_identity import validate_device_id
 from database_schema import validate_versions
+from device_sharing import DeviceSharing
 
 
 MIGRATIONS = (
@@ -74,6 +75,25 @@ MIGRATIONS = (
         )""",
         "CREATE INDEX idx_device_pairings_device ON device_pairings(device_id)",
     ),
+    (
+        "ALTER TABLE devices ADD COLUMN access_epoch INTEGER NOT NULL DEFAULT 0",
+        """CREATE TABLE device_memberships (
+            id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
+            user_id TEXT NOT NULL REFERENCES auth_users(id), kind TEXT NOT NULL CHECK(kind IN ('owner','guest')),
+            started_at REAL NOT NULL, ended_at REAL)""",
+        "CREATE INDEX idx_device_memberships_owner ON device_memberships(user_id,device_id)",
+        """INSERT INTO device_memberships SELECT lower(hex(randomblob(16))),id,owner_user_id,'owner',
+            COALESCE(bound_at,created_at),NULL FROM devices WHERE owner_user_id IS NOT NULL""",
+        """CREATE TABLE device_loans (
+            id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
+            owner_user_id TEXT NOT NULL REFERENCES auth_users(id), guest_user_id TEXT REFERENCES auth_users(id),
+            invitation_hash TEXT NOT NULL UNIQUE, created_at REAL NOT NULL, claim_until REAL NOT NULL,
+            expires_at REAL NOT NULL, ended_at REAL)""",
+        "CREATE INDEX idx_device_loans_active ON device_loans(device_id,ended_at,expires_at)",
+        """CREATE TABLE device_preferences (
+            user_id TEXT NOT NULL REFERENCES auth_users(id), device_id TEXT NOT NULL REFERENCES devices(id),
+            voice_paused INTEGER NOT NULL DEFAULT 0 CHECK(voice_paused IN (0,1)), PRIMARY KEY(user_id,device_id))""",
+    ),
 )
 
 
@@ -117,7 +137,7 @@ def csrf_for_session(token: str) -> str:
     return token_digest("cybermiao-csrf:" + token)
 
 
-class IdentityStore:
+class IdentityStore(DeviceSharing):
     def __init__(self, path: str | Path, *, clock: Callable[[], float] = time.time):
         self.path = Path(path).expanduser().resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -327,7 +347,7 @@ class IdentityStore:
                 WHERE d.id=? AND c.token_hash=? AND c.revoked_at IS NULL AND d.revoked_at IS NULL""",
                 (device_id, token_digest(token)),
             ).fetchone()
-        return dict(row) if row else None
+            return self.decorate_device(connection, row) if row else None
 
     def list_devices(self, user_id: Optional[str] = None) -> list[dict]:
         query = "SELECT id, display_name, owner_user_id, created_at, bound_at, revoked_at FROM devices"
@@ -352,6 +372,8 @@ class IdentityStore:
             if row is None or (owner_user_id is not None and row["owner_user_id"] != owner_user_id):
                 raise ValueError("设备不存在或无权操作")
             connection.execute("UPDATE devices SET revoked_at=? WHERE id=?", (now, device_id))
+            self._end_loans(connection, device_id)
+            connection.execute("UPDATE devices SET access_epoch=access_epoch+1 WHERE id=?", (device_id,))
             connection.execute("UPDATE device_credentials SET revoked_at=? WHERE device_id=? AND revoked_at IS NULL", (now, device_id))
             connection.execute("UPDATE device_pairings SET invalidated_at=? WHERE device_id=? AND claimed_at IS NULL", (now, device_id))
 
@@ -404,8 +426,10 @@ class IdentityStore:
                     AND d.owner_user_id IS NULL AND d.revoked_at IS NULL""", (token_digest(normalized), now)).fetchone()
             if pairing is None:
                 raise ValueError("配对码无效或已过期")
-            connection.execute("UPDATE devices SET owner_user_id=?, bound_at=? WHERE id=? AND owner_user_id IS NULL",
+            connection.execute("UPDATE devices SET owner_user_id=?, bound_at=?,access_epoch=access_epoch+1 WHERE id=? AND owner_user_id IS NULL",
                                (user_id, now, pairing["device_id"]))
+            connection.execute("INSERT INTO device_memberships VALUES(?,?,?,?,?,NULL)",
+                               (uuid.uuid4().hex,pairing["device_id"],user_id,'owner',now))
             connection.execute("UPDATE device_pairings SET claimed_by=?, claimed_at=? WHERE code_hash=?",
                                (user_id, now, pairing["code_hash"]))
             connection.execute("UPDATE device_pairings SET invalidated_at=? WHERE device_id=? AND claimed_at IS NULL AND invalidated_at IS NULL",

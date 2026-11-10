@@ -16,7 +16,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from memory_store import MemoryStore
-from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, KNOWLEDGE_COLUMNS, KNOWLEDGE_PROFILE_COLUMNS, PROVIDER_COLUMNS, validate_columns, validate_versions
+from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, IDENTITY_SHARING_COLUMNS, KNOWLEDGE_COLUMNS, KNOWLEDGE_PROFILE_COLUMNS, PROVIDER_COLUMNS, validate_columns, validate_versions
 
 
 TABLES = ("conversations", "messages", "conversation_summaries", "memories")
@@ -55,6 +55,8 @@ def check_database_ready(database: Path):
         connection.execute("BEGIN")
         versions = validate_versions(connection)
         validate_columns(connection, {**MEMORY_COLUMNS, **IDENTITY_COLUMNS})
+        if versions.get("identity", 0) >= 3:
+            validate_columns(connection, IDENTITY_SHARING_COLUMNS)
         if versions.get("knowledge"):
             validate_columns(connection, KNOWLEDGE_COLUMNS)
         if versions.get("knowledge", 0) >= 2:
@@ -90,6 +92,9 @@ def inspect_database(database: Path) -> dict:
             if not identity_version or identity_tables != set(required):
                 raise ValueError("身份数据库表结构与版本记录不一致")
             validate_columns(connection, required)
+        if identity_version >= 3:
+            validate_columns(connection, IDENTITY_SHARING_COLUMNS)
+            identity_tables.update(IDENTITY_SHARING_COLUMNS)
         knowledge_tables = set(KNOWLEDGE_COLUMNS).intersection(names)
         if versions.get("knowledge", 0) >= 2:
             validate_columns(connection, KNOWLEDGE_PROFILE_COLUMNS)
@@ -115,9 +120,13 @@ def inspect_database(database: Path) -> dict:
                 raise ValueError("数据库存在记忆归属或总结进度关联异常")
         if identity_version >= 2:
             for table in ("conversations", "memories"):
-                if connection.execute(f"""SELECT 1 FROM {table} c JOIN auth_users u ON u.id=c.user_id
+                query = f"""SELECT 1 FROM {table} c JOIN auth_users u ON u.id=c.user_id
                     LEFT JOIN devices d ON d.id=c.device_id
-                    WHERE d.id IS NULL OR d.owner_user_id IS NULL OR d.owner_user_id<>c.user_id LIMIT 1""").fetchone():
+                    WHERE d.id IS NULL OR d.owner_user_id IS NULL OR d.owner_user_id<>c.user_id"""
+                if identity_version >= 3:
+                    query = f"""SELECT 1 FROM {table} c JOIN auth_users u ON u.id=c.user_id
+                        WHERE NOT EXISTS(SELECT 1 FROM device_memberships m WHERE m.device_id=c.device_id AND m.user_id=c.user_id)"""
+                if connection.execute(query + " LIMIT 1").fetchone():
                     raise ValueError("数据库存在账号与设备归属不一致的记忆")
         counts = {name: connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0] for name in TABLES}
         identity_counts = {name: connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
@@ -245,6 +254,10 @@ def restore_database(backup: Path, output: Path, expected_sha256: str, *, apply:
             if "device_pairings" in tables:
                 pairing_count = connection.execute("""UPDATE device_pairings SET invalidated_at=?
                     WHERE claimed_at IS NULL AND invalidated_at IS NULL""", (now,)).rowcount
+            if "device_loans" in tables:
+                connection.execute("UPDATE device_loans SET ended_at=? WHERE ended_at IS NULL", (now,))
+                connection.execute("UPDATE device_memberships SET ended_at=? WHERE kind='guest' AND ended_at IS NULL", (now,))
+                connection.execute("UPDATE devices SET access_epoch=access_epoch+1")
             connection.commit()
         finally:
             connection.close()

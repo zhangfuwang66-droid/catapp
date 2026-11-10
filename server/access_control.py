@@ -148,19 +148,19 @@ async def authorize_runtime(connection: HTTPConnection, *, hardware: bool = Fals
         reject(connection, status=404, detail="设备不存在")
     if hardware or (playback and connection.headers.get("authorization")):
         device = await require_device_credential(connection)
-        user_id = device["owner_user_id"]
+        user_id = device["active_user_id"]
         if user_id is None:
             reject(connection, status=409, detail="设备尚未绑定账号，请先配对")
-        authorization = DeviceAuthorization("device", user_id, device_id, bearer_token(connection))
+        authorization = DeviceAuthorization("device", user_id, device_id, bearer_token(connection), device["access_epoch"])
     else:
         if connection.scope["type"] == "http" and connection.scope["method"] not in {"GET", "HEAD", "OPTIONS"}:
             user = await require_session_write(connection)
         else:
             user = await require_session(connection)
-        device = await run_blocking(connection.app.state.identities.owned_device, device_id, user.id)
+        device = await run_blocking(connection.app.state.identities.accessible_device, device_id, user.id)
         if device is None:
             reject(connection, status=404, detail="设备不存在或无权访问")
         user_id = user.id
-        authorization = DeviceAuthorization("session", user_id, device_id, connection.cookies[SESSION_COOKIE])
+        authorization = DeviceAuthorization("session", user_id, device_id, connection.cookies[SESSION_COOKIE], device["access_epoch"])
     connection.state.device_authorization = authorization
     return device_id, user_id

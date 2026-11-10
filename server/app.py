@@ -41,6 +41,7 @@ from knowledge_service import KnowledgeService
 from knowledge_routes import router as knowledge_router
 from provider_settings import ProviderSettings, ModelCredentials
 from provider_routes import router as provider_router
+from account_memory_routes import router as account_memory_router
 
 router = APIRouter()
 
@@ -48,7 +49,10 @@ router = APIRouter()
 async def resolve_runtime(connection: HTTPConnection, *, hardware=False, playback=False) -> DeviceRuntime:
     device_id, user_id = await authorize_runtime(connection, hardware=hardware, playback=playback)
     try:
-        return await connection.app.state.devices.resolve(device_id, user_id)
+        async with connection.app.state.devices.locked(device_id):
+            # 等锁期间可能已经解绑或转交，重新核验后才创建运行时。
+            device_id, user_id = await authorize_runtime(connection, hardware=hardware, playback=playback)
+            return connection.app.state.devices.get(device_id, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -85,7 +89,7 @@ async def device_console(device_id: str, request: Request):
         if exc.status_code == 401:
             return RedirectResponse("/?notice=login", status_code=303)
         raise
-    device = await run_blocking(request.app.state.identities.owned_device, device_id, user.id)
+    device = await run_blocking(request.app.state.identities.accessible_device, device_id, user.id)
     if device is None:
         raise HTTPException(status_code=404, detail="设备不存在或无权访问")
     return console_html(device_id, account_mode=True)
@@ -307,7 +311,8 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
                 raise ValueError("对话归属不存在")
             return await summarize_memory_messages(messages, api_key=await run_blocking(providers.key, owner["user_id"]))
         manager.summarize = account_summarizer
-    devices = DeviceRegistry(manager, storage=storage, knowledge=knowledge, providers=providers)
+    devices = DeviceRegistry(manager, storage=storage, knowledge=knowledge, providers=providers,
+                             preferences=identities if access.mode == "accounts" else None)
     storage.protected_paths = devices.protected_record_paths
     connections = ConnectionAuthorizer(identities)
     backups = DatabaseBackups(manager.store.path, backup_settings if backup_settings is not None else BackupSettings.from_environment())
@@ -315,9 +320,13 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     async def cleanup_revoked_devices():
         while True:
             await asyncio.sleep(1)
+            for device_id in await run_blocking(identities.expire_loans):
+                async with devices.locked(device_id):
+                    await connections.revoke_device(device_id, code=4403, reason="借用已结束，请重新选择设备")
+                    await devices.retire_locked(device_id)
             for device in list(devices.devices.values()):
                 try:
-                    if await run_blocking(identities.owned_device, device.device_id, device.user_id) is None:
+                    if await run_blocking(identities.accessible_device, device.device_id, device.user_id) is None:
                         await connections.revoke_device(device.device_id)
                         await devices.retire(device.device_id)
                 except Exception as exc:
@@ -377,6 +386,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.include_router(devices_router)
     application.include_router(knowledge_router)
     application.include_router(provider_router)
+    application.include_router(account_memory_router)
     application.mount("/web", StaticFiles(directory=str(WEB_ROOT)), name="web")
     application.add_middleware(LocalAccessMiddleware, settings=access)
     return application

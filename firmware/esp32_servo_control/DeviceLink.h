@@ -21,6 +21,7 @@ class DeviceLink {
   DeviceLinkSnapshot snapshot();
   bool allowBusiness();
   void requestPairing();
+  void refreshBinding();
   static const char* statusName(DeviceLinkStatus status);
   static bool clockReady();
 
@@ -37,4 +38,6 @@ class DeviceLink {
   bool hasRequestedPair_ = false;
   bool refreshPairing_ = false;
   bool timeRequested_ = false;
+  bool refreshBinding_ = false;
+  uint32_t lastBindingPollAt_ = 0;
 };

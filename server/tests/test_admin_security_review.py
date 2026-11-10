@@ -136,7 +136,8 @@ class AdminAuthorizationBoundaryTests(unittest.TestCase):
         disabled = self.app.state.admin_store.user(self.member.id)["disabled"]
         audit = self.client.get("/api/admin/audit", headers=headers).json()["items"][0]
         self.assertTrue((not disabled and audit["result"] == "failed")
-                        or (disabled and audit["result"] == "success"))
+                        or (disabled and audit["result"] == "started"))
+        self.assertIn("已生效", response.json()["detail"])
 
     def test_backup_restore_preserves_admin_role_and_rejects_old_session(self):
         root = Path(self.temp.name)

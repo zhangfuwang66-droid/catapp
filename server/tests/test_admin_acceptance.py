@@ -63,6 +63,7 @@ class AdminAcceptanceTests(unittest.TestCase):
 
     def request(self, method, path, *, actor=None, headers=None, json=None):
         return self.client.request(method, path, json=json,
+                                   follow_redirects=False,
                                    headers=headers if headers is not None else self.headers.get(actor, {}))
 
     def test_explicit_grant_revoke_and_all_read_boundaries(self):
@@ -72,7 +73,12 @@ class AdminAcceptanceTests(unittest.TestCase):
             for actor, headers in (("anonymous", {}), ("ordinary", self.headers["owner"]),
                                    ("device", self.device_headers)):
                 with self.subTest(path=path, actor=actor):
-                    self.assertIn(self.request("GET", path, headers=headers).status_code, (401, 403))
+                    response = self.request("GET", path, headers=headers)
+                    if path == '/admin' and actor in ('anonymous','device'):
+                        self.assertEqual(response.status_code,303)
+                        self.assertEqual(response.headers['location'],'/?notice=login')
+                    else:
+                        self.assertIn(response.status_code, (401, 403))
         self.admin_cli("grant", "owner")
         for path in paths:
             with self.subTest(path=path, actor="admin"):

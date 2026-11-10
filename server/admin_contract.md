@@ -14,6 +14,8 @@
 - `GET /backups` → `{enabled,running,last_success_at,last_failure_at,last_error_type,backup_count,skipped_unverified,pruned}`，复用现有备份任务状态，无路径和异常原文；暂无成功时间不代表完成过备份，不提供在线恢复。
 - `GET /audit?q=&page=1&page_size=20` → `{items:[{id,actor_id,actor_username,target_type,target_id,action,result,created_at}],total,page,page_size}`。result 为 started/success/failed，日志不接收任意详情文本。
 
+账号状态或会话撤销已提交、后续连接或任务清理失败时返回 503 并明确提示已生效及需要重试，审计保持 started（未完成），不谎报整体失败或成功。
+
 分页 page>=1，page_size 为 1～100，q 最长 80。管理员授权/撤销仅通过服务端 `python server/admin_cli.py --database /绝对路径/memory.sqlite3 grant|revoke|list --username 账号`；不提供网页提权接口。禁止撤销最后启用管理员；回退程序可保留新增 admin 表，不改变原身份表版本。
 
 用户停用或撤销网页登录会终止相关设备运行时和旧任务，当前使用者的语音偏好设为暂停，防止硬件自动重连恢复声音；启用账号不会恢复旧网页登录。后台取消的在处理资料任务保留原文并标记 failed，可由原用户在资料接口重试。停用账号的模型访问及后续后台任务受账号状态限制。容量为聚合逻辑正文/原始资料/压缩归档字节数，数据库磁盘占用单独展示。

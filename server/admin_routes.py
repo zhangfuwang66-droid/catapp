@@ -133,7 +133,7 @@ class Voice(ConfirmDevice):
     paused: StrictBool
 
 
-async def audited(request,user,target_type,target_id,action,perform):
+async def audited(request,user,target_type,target_id,action,perform,progress=None):
     """取消 HTTP 请求也完成清理；started 在进程中断时保留为未完成，绝不谎报成功。"""
     async def run():
         store = request.app.state.admin_store
@@ -145,6 +145,9 @@ async def audited(request,user,target_type,target_id,action,perform):
             try:
                 result = await perform()
             except BaseException as exc:
+                if progress and progress.get('committed'):
+                    # 保留 started 表示尚未完整收尾，不能将已生效的权限变更记为全失败。
+                    raise HTTPException(503,'账号状态或会话撤销已生效，连接与任务清理未完成；请刷新后重试，审计保留未完成状态') from None
                 await run_blocking(store.finish_action,audit_id,False)
                 if isinstance(exc,HTTPException):
                     raise
@@ -162,6 +165,7 @@ async def audited(request,user,target_type,target_id,action,perform):
 
 async def user_action(request,user,user_id,payload,disabled=None):
     store = request.app.state.admin_store
+    progress = {'committed':False}
     target = await run_blocking(store.user,user_id)
     if not target:
         raise HTTPException(404,'账号不存在')
@@ -170,6 +174,7 @@ async def user_action(request,user,user_id,payload,disabled=None):
             raise HTTPException(409,'请准确输入目标账号确认')
         async with lock_for(request.app,user_id):
             await run_blocking(store.change_user,user.id,user_id,disabled)
+            progress['committed'] = True
             if disabled is not False:
                 # 数据库会话先失效，阻止等待设备锁的旧请求；硬件认证另校验 disabled。
                 await request.app.state.account_operations.cancel_user(user_id)
@@ -192,7 +197,7 @@ async def user_action(request,user,user_id,payload,disabled=None):
                 await request.app.state.knowledge.cancel_user_tasks(user_id)
             return {'ok':True}
     action = 'enable-user' if disabled is False else 'disable-user' if disabled else 'revoke-sessions'
-    return await audited(request,user,'user',target['id'],action,perform)
+    return await audited(request,user,'user',target['id'],action,perform,progress)
 
 
 @router.post('/users/{user_id}/status')

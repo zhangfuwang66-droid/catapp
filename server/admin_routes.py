@@ -177,14 +177,14 @@ async def user_action(request,user,user_id,payload,disabled=None):
                 registry = request.app.state.devices
                 all_devices = await run_blocking(store.devices)
                 affected = {d['id'] for d in all_devices if d['active_user_id'] == user_id or d['owner_user_id'] == user_id}
+                active_targets = {d['id'] for d in all_devices if d['active_user_id'] == user_id}
                 affected.update(r.device_id for r in list(registry.devices.values()) if r.user_id == user_id)
                 async with AsyncExitStack() as stack:
                     for device_id in sorted(affected):
                         await stack.enter_async_context(registry.locked(device_id))
                     for device_id in sorted(affected):
                         # 重新连接不会悄悄恢复声音；解绑和 Key 都不变。
-                        runtime = registry.devices.get(device_id)
-                        if runtime and runtime.user_id == user_id:
+                        if device_id in active_targets:
                             await run_blocking(request.app.state.identities.save_voice_preference,user_id,device_id,True)
                         await request.app.state.connections.revoke_device(device_id)
                         await registry.retire_locked(device_id)

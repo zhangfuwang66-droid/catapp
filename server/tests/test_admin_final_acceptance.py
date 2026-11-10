@@ -85,7 +85,7 @@ class AdminFinalAcceptanceTests(unittest.TestCase):
         store.append_message(conversation, "user", marker)
         token = self.headers["alice"]["Cookie"].split("=", 1)[1]
         registry = self.app.state.devices
-        lock = registry._locks.setdefault("cat-alice", asyncio.Lock())
+        lock = registry.lock_for("cat-alice")
         await lock.acquire()
         admin_task = member_task = None
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app),
@@ -95,7 +95,7 @@ class AdminFinalAcceptanceTests(unittest.TestCase):
                     "DELETE", "/api/account/memories/cat-alice", headers=self.headers["alice"],
                     json={"confirm_device_id": "cat-alice"},
                 ))
-                await self.wait_until(lambda: bool(lock._waiters), "memory deletion did not queue")
+                await self.wait_until(lambda: lock.waiting_count > 0, "memory deletion did not queue")
                 path, body = self.admin_change(action)
                 admin_task = asyncio.create_task(client.post(path, headers=self.headers["owner"], json=body))
                 await self.wait_until(lambda: self.identities.session_user(token) is None,

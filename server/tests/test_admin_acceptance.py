@@ -55,9 +55,9 @@ class AdminAcceptanceTests(unittest.TestCase):
 
     def admin_cli(self, action, username):
         result = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve().parents[1] / "admin_cli.py"),
+            [sys.executable, "-X", "utf8", str(Path(__file__).resolve().parents[1] / "admin_cli.py"),
              "--database", str(self.database), action, "--username", username],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, text=True, encoding="utf-8", timeout=20,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 

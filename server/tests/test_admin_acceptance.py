@@ -153,6 +153,23 @@ class AdminAcceptanceTests(unittest.TestCase):
             "camera_online", "online", "voice_paused",
         })
 
+    def test_admin_page_assets_and_content_policy(self):
+        self.admin_cli("grant", "owner")
+        page = self.request("GET", "/admin", actor="owner")
+        self.assertEqual(page.status_code, 200, page.text)
+        self.assertEqual(page.headers.get("cache-control"), "no-store")
+        self.assertIn('src="/web/admin/admin.js"', page.text)
+        self.assertIn('href="/web/admin/admin.css"', page.text)
+        policy = page.headers.get("content-security-policy", "")
+        self.assertIn("script-src 'self'", policy)
+        self.assertIn("object-src 'none'", policy)
+        for path, content_type in (("/web/admin/admin.js", "text/javascript"),
+                                   ("/web/admin/admin.css", "text/css")):
+            asset = self.request("GET", path, actor="owner")
+            self.assertEqual(asset.status_code, 200)
+            self.assertEqual(asset.headers.get("cache-control"), "no-store")
+            self.assertIn(content_type, asset.headers.get("content-type", ""))
+
     def test_inspect_rejects_missing_admin_role_table(self):
         self.admin_cli("grant", "owner")
         damaged = Path(self.temp.name) / "damaged.sqlite3"

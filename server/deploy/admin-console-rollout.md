@@ -1,6 +1,6 @@
 # 管理后台现网部署与成对回退操作稿
 
-状态：待本地验收、隔离副本迁移和用户逐项批准；本文命令尚未在服务器执行。
+状态：本地集成验收已完成（见 `admin-console-local.md`）；隔离副本迁移及服务器操作仍待逐项批准，本文命令尚未在服务器执行。
 
 目标是 `123.57.23.227` 的 `cybermiao-test.service`。现有代码入口 `/opt/cybermiao-test/app` 指向 `/opt/cybermiao-test/upgrades/accounts-v2-6ad995182c54/source`，数据库为 `/var/lib/cybermiao-test/memory.sqlite3`。以下命令仅供批准后由操作者在服务器执行。部署包须来自经过验收的固定 Git commit，不能从未提交的工作树打包。小猫 `cat-649020AD4F7C` 的语音保持暂停。
 
@@ -57,7 +57,7 @@ sudo -u cybermiao-test /opt/cybermiao-test/venv/bin/python -c 'import sys; sys.p
 sudo -u cybermiao-test /opt/cybermiao-test/venv/bin/python /opt/cybermiao-test/upgrades/$RELEASE_ID/source/server/tools/memory_database.py inspect --database "$SNAP_DIR/migration-trial.sqlite3"
 ```
 
-上述命令只加载身份及管理员数据模块，不加载运行时或模型配置。比对迁移前后账号、设备、绑定、借用、资料、记忆、Key 密文的行数与可用性；在隔离副本测试显式管理员授予/撤销。旧代码可能忽略附加 admin 表，所以不能把旧 inspect 通过当成回退兼容证明。
+上述命令只加载身份及管理员数据模块，不加载运行时或模型配置。比对迁移前后账号、设备、绑定、借用、资料、记忆、Key 密文的行数与可用性；在隔离副本测试显式管理员授予/撤销及缺失 admin 表的 inspect 拒绝。旧代码可能忽略附加 admin 表，所以不能把旧 inspect 通过当成回退兼容证明。试迁移不得接入真实模型或设备。
 
 ## 切换与只读验收
 

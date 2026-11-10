@@ -111,6 +111,7 @@ async def borrow(payload: PairRequest, request: Request, user: User = Depends(re
     try:
         device = await run_blocking(request.app.state.identities.claim_loan, payload.code, user.id,
                                    client_key=request.client.host if request.client else 'unknown')
+        await run_blocking(request.app.state.memory_retention.ensure_policy,user.id,device['id'],'temporary')
         async with request.app.state.devices.locked(device['id']):
             await request.app.state.connections.revoke_device(device['id'], code=4403, reason="设备已进入临时借用")
             await request.app.state.devices.retire_locked(device['id'])

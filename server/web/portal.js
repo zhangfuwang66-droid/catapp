@@ -47,7 +47,7 @@ function resetPrivateView() {
   document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
   $('deviceGrid').replaceChildren(); $('memoryContent').replaceChildren(); $('historyDevices').replaceChildren();
   $('loanCode').textContent = ''; $('shareConfirm').value = ''; shareDevice = null;
-  ['username','avatar','memoryTitle','pageError','pairError','memoryError','revokeError'].forEach(id => { $(id).textContent = ''; });
+  ['username','avatar','memoryTitle','pageError','pairError','memoryError','revokeError','retentionStatus','retentionFeedback'].forEach(id => { $(id).textContent = ''; });
   ['loginUsername','loginPassword','pairCode','clearDeviceId','revokeDeviceId'].forEach(id => { $(id).value = ''; });
   $('deviceCount').textContent = '0'; $('sideCount').textContent = '0'; $('onlineCount').textContent = '0';
   $('clearDetails').open = false; $('clearBtn').disabled = true; $('revokeBtn').disabled = true;
@@ -165,6 +165,7 @@ function memorySection(title, items, formatter) {
 }
 
 function renderMemory(data) {
+  renderRetention(data.retention || {});
   $('memoryContent').replaceChildren(
     memorySection('长期记忆', data.memories || [], item => item.content),
     memorySection('近期对话摘要', data.summaries || [], item => item.summary),

@@ -24,8 +24,9 @@ async def history_device(request, user_id, device_id):
 async def memory(device_id: str, request: Request, user: User = Depends(require_session)):
     await history_device(request, user.id, device_id)
     context = await request.app.state.memory_manager.context_for(user.id,device_id)
+    policy = await run_blocking(request.app.state.memory_retention.preview,user.id,device_id)
     return {'ok':True, 'user_id':user.id, 'device_id':device_id, 'summaries':context['summaries'],
-            'memories':context['memories'], 'recent_messages':context['messages']}
+            'memories':context['memories'], 'recent_messages':context['messages'], 'retention':policy}
 
 
 class ClearRequest(BaseModel):
@@ -45,5 +46,26 @@ async def clear(device_id: str, payload: ClearRequest, request: Request, user: U
                 await request.app.state.connections.revoke_device(device_id,code=1012,reason='当前账号已清除记忆')
                 await registry.retire_locked(device_id)
             await request.app.state.memory_manager.clear_owner(user.id,device_id)
+            await run_blocking(request.app.state.memory_retention.reset,user.id,device_id)
     await asyncio.shield(perform())
     return {'ok':True}
+
+
+class RetentionRequest(BaseModel):
+    mode: str = Field(pattern='^(long_term|temporary)$')
+
+
+@router.put('/{device_id}/retention')
+async def policy(device_id: str, payload: RetentionRequest, request: Request, user: User = Depends(require_session_write)):
+    await history_device(request,user.id,device_id)
+    return await run_blocking(request.app.state.memory_retention.set_mode,user.id,device_id,payload.mode)
+
+
+@router.post('/{device_id}/restore')
+async def restore(device_id: str, request: Request, user: User = Depends(require_session_write)):
+    await history_device(request,user.id,device_id)
+    try:
+        count = await run_blocking(request.app.state.memory_retention.restore,user.id,device_id)
+    except ValueError as exc:
+        raise HTTPException(409,str(exc)) from None
+    return {'ok':True,'restored_messages':count}

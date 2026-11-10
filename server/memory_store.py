@@ -184,6 +184,9 @@ class MemoryStore:
                     "UPDATE conversations SET last_activity_at = ? WHERE id = ?",
                     (now, conversation_id),
                 )
+                if getattr(self, "retention_enabled", False):
+                    connection.execute("""UPDATE memory_policies SET archived_at=NULL WHERE archived_at IS NOT NULL
+                        AND (user_id,device_id) IN (SELECT user_id,device_id FROM conversations WHERE id=?)""", (conversation_id,))
                 connection.commit()
                 return int(cursor.lastrowid)
             finally:

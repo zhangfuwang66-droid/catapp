@@ -42,6 +42,7 @@ from knowledge_routes import router as knowledge_router
 from provider_settings import ProviderSettings, ModelCredentials
 from provider_routes import router as provider_router
 from account_memory_routes import router as account_memory_router
+from memory_retention import MemoryRetention
 
 router = APIRouter()
 
@@ -299,6 +300,8 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     storage = RuntimeStorage(Path(RECORDS_DIR), storage_settings)
     access = access if access is not None else AccessSettings.from_environment()
     identities = IdentityStore(manager.store.path)
+    retention = MemoryRetention(manager.store.path)
+    manager.store.retention_enabled = True
     knowledge = knowledge_service if knowledge_service is not None else KnowledgeService(KnowledgeStore(manager.store.path))
     provider_settings = ProviderSettings(manager.store.path)
     import device_runtime
@@ -340,6 +343,8 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
             await backups.start()
             await storage.start()
             await knowledge.start()
+            if access.mode == "accounts":
+                await retention.start()
             cleanup_task = asyncio.create_task(cleanup_revoked_devices()) if access.mode == "accounts" else None
             yield
         finally:
@@ -348,6 +353,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
                     cleanup_task.cancel()
                     await asyncio.gather(cleanup_task, return_exceptions=True)
                 await connections.close()
+                await retention.close()
                 await devices.close()
                 await manager.flush_pending(timeout=MEMORY_SHUTDOWN_TIMEOUT_SECONDS)
             finally:
@@ -379,6 +385,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.state.provider_settings = provider_settings
     application.state.providers = providers
     application.state.model_locks = {}
+    application.state.memory_retention = retention
     application.state.default_user_id = MEMORY_USER_ID
     application.state.default_device_id = MEMORY_DEVICE_ID
     application.include_router(router)

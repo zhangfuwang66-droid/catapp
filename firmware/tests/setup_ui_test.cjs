@@ -1,89 +1,268 @@
-/* 设置 NODE_PATH（playwright）与 BROWSER_EXECUTABLE 后运行；只模拟页面 API，不访问设备。 */
+/* 仅模拟设备 API，不访问真实 ESP32、云端或 Wi-Fi。 */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {chromium} = require('playwright');
 
+const origin = 'http://192.168.4.1';
+const output = path.resolve(__dirname, '../../artifacts/web-tests');
+const source = fs.readFileSync(path.resolve(__dirname, '../esp32_servo_control/SetupPage.h'), 'utf8');
+const html = source.match(/R"CMIAOHTML\(([\s\S]*?)\)CMIAOHTML"/)[1];
+const csp = "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
+const maliciousSsid = '<img onerror="ssidAttack=1">';
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+let browser, completed = 0;
+
+async function fixture(options = {}) {
+  const context = await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+  const state = {csrf_token:'test-only-csrf',device_id:'cat-test',wifi_ssid:'Home Wi-Fi',
+    server_url:'https://cat.example:443',mode:'accounts',password_saved:true,credential_configured:true,
+    status:'wifi_offline',wifi_connected:false,bound:true,pairing_code:'',expires_in:0,
+    reboot_pending:false,save_request_id:'',...options.state};
+  const behavior = {scan:'ok',save:'success',status:'ok',...options.behavior};
+  const writes = [], failures = [], pending = [];
+  let scanPolls = 0, statusCalls = 0;
+  await context.addInitScript(() => {
+    const original = window.fetch;
+    let active = 0;
+    window.testMaxStatus = 0;
+    window.fetch = async (...args) => {
+      if (args[0] !== '/status') return original(...args);
+      ++active; window.testMaxStatus = Math.max(window.testMaxStatus, active);
+      try { return await original(...args); } finally { --active; }
+    };
+  });
+  if (options.fastDeadline) await context.addInitScript(() => {
+    let ticks = 0;
+    Object.defineProperty(performance,'now',{value:() => ++ticks * 10000});
+  });
+  await context.route('**/*', async route => {
+    const request = route.request(), url = new URL(request.url());
+    assert.equal(url.origin, origin, '离线页面不得请求外部资源');
+    if (url.pathname === '/') {
+      return route.fulfill({contentType:'text/html',body:html,headers:{'Content-Security-Policy':csp}});
+    }
+    if (url.pathname === '/favicon.ico') return route.fulfill({status:204});
+    if (request.method() === 'POST') {
+      assert.equal(request.headers()['x-cybermiao-csrf'], state.csrf_token);
+      assert.equal(request.headers().origin, origin);
+      assert.equal(request.headers()['content-type'], 'application/x-www-form-urlencoded');
+      assert.equal(url.search, '', '密码不得进入 URL');
+      writes.push({path:url.pathname,form:new URLSearchParams(request.postData())});
+    }
+    let status = 200, data;
+    if (url.pathname === '/status') {
+      ++statusCalls;
+      if (behavior.status === 'hang') { pending.push(route); return; }
+      if (behavior.status === 'slow') await delay(2800);
+      data = {...state};
+    } else if (url.pathname === '/scan') {
+      const action = writes.at(-1).form.get('action');
+      if (action === 'start') scanPolls = 0;
+      else assert.equal(action, 'poll');
+      if (behavior.scan === 'hang') { pending.push(route); return; }
+      if (behavior.scan === 'error') { status = 503; data = {error:'暂时无法扫描，请稍后重试'}; }
+      else if (behavior.scan === 'empty') data = {scanning:false,networks:[]};
+      else if (behavior.scan === 'forever' || ++scanPolls === 1) data = {scanning:true,networks:[]};
+      else data = {scanning:false,networks:[
+        {ssid:'Miao Home',rssi:-52,secure:true},{ssid:maliciousSsid,rssi:-61,secure:true},
+        {ssid:'Miao Home',rssi:-79,secure:true},{ssid:'Guest',rssi:-77,secure:false}]};
+    } else if (url.pathname === '/configure') {
+      if (behavior.save === 'reject') { status = 400; data = {error:'请先通过 USB 配置设备身份'}; }
+      else if (behavior.save === 'ambiguous') { pending.push(route); return; }
+      else {
+        state.reboot_pending = true;
+        state.save_request_id = writes.at(-1).form.get('request_id');
+        if (behavior.save === 'lost') return route.abort('failed');
+        data = {saved:true,save_request_id:state.save_request_id,restart_in_ms:8000};
+      }
+    } else if (url.pathname === '/pairing') {
+      state.pairing_code = 'JKLM-NPQR'; data = {ok:true};
+    } else throw Error('未知页面请求 ' + url.pathname);
+    try { await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)}); }
+    catch (error) { if (!/closed|handled|cancel/i.test(error.message)) throw error; }
+  });
+  const page = await context.newPage();
+  page.on('pageerror',error => failures.push(error.message));
+  await page.goto(origin);
+  return {page,state,behavior,writes,failures,pending,get statusCalls(){return statusCalls;},
+    async ready(){await page.waitForFunction(() => !document.querySelector('#fields').disabled);},
+    async close(){
+      assert.deepEqual(failures, []);
+      for (const route of pending) await route.abort().catch(() => {});
+      await context.close();
+      ++completed;
+    }};
+}
+async function text(page, selector, value) {
+  await page.waitForFunction(({selector,value}) => document.querySelector(selector).textContent.includes(value), {selector,value});
+}
+async function manual(page, ssid, password) {
+  await page.click('#choose'); await page.click('#manual');
+  await page.fill('#ssid',ssid); if (password !== undefined) await page.fill('#password',password);
+}
+
 async function main() {
-  const source = fs.readFileSync(path.resolve(__dirname, '../esp32_servo_control/SetupPage.h'), 'utf8');
-  const html = source.match(/R"CMIAOHTML\(([\s\S]*?)\)CMIAOHTML"/)[1];
-  const output = path.resolve(__dirname, '../../artifacts/web-tests');
-  fs.mkdirSync(output, {recursive:true});
-  const browser = await chromium.launch({headless:true, executablePath:process.env.BROWSER_EXECUTABLE});
+  fs.mkdirSync(output,{recursive:true});
+  browser = await chromium.launch({headless:true,executablePath:process.env.BROWSER_EXECUTABLE});
   try {
-    const context = await browser.newContext({viewport:{width:390,height:844}});
-    const failures = [], writes = [];
-    const maliciousSsid = '<img onerror="window.ssidAttack=1">';
-    let scans = 0, rejectSave = true, code = 'ABCD-EFGH', variant = 'unbound';
-    await context.route('http://setup.test/**', async route => {
-      const request = route.request(), url = new URL(request.url());
-      let status = 200, data;
-      if (url.pathname === '/') {
-        await route.fulfill({contentType:'text/html',body:html,
-          headers:{'Content-Security-Policy':"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"}});
-        return;
+    // 主路径：默认隐藏高级设置、可见选网弹层、SSID 转义与去重、失败可重试。
+    {
+      const f = await fixture(); const {page} = f; await f.ready();
+      assert.equal(await page.locator('#advanced').getAttribute('open'), null);
+      assert.equal(await page.isHidden('#pairCard'), true);
+      assert.equal(await page.inputValue('#password'), '');
+      await page.screenshot({path:path.join(output,'device-setup-mobile.png'),fullPage:true});
+      await page.click('#choose');
+      await text(page,'#scanStatus','正在查找');
+      await page.waitForFunction(() => document.querySelectorAll('#nets button').length === 3);
+      assert.equal(await page.locator('#nets img').count(),0);
+      assert.equal(await page.evaluate(() => window.ssidAttack),undefined);
+      assert.equal(await page.locator('#nets .net-name').first().textContent(),'Miao Home');
+      await page.screenshot({path:path.join(output,'device-setup-networks-mobile.png'),fullPage:true});
+      await page.locator('#nets button').filter({hasText:'Miao Home'}).click();
+      assert.equal(await page.inputValue('#ssid'),'Miao Home');
+      assert.equal(await page.isHidden('#wifiSheet'),true);
+      await page.fill('#password','test-only-password');
+      await page.click('#showPassword'); assert.equal(await page.getAttribute('#password','type'),'text');
+      await page.click('#showPassword'); assert.equal(await page.getAttribute('#password','type'),'password');
+      f.behavior.save = 'reject'; await page.click('#save'); await text(page,'#hint','USB');
+      assert.equal(await page.isEnabled('#save'),true);
+      let configure = f.writes.find(item => item.path === '/configure').form;
+      assert.equal(configure.get('ssid'),'Miao Home'); assert.equal(configure.get('password'),'test-only-password');
+      assert.equal(configure.get('keep_password'),'0'); assert.equal(configure.get('mode'),'accounts');
+      assert.equal(configure.get('server_url'),'https://cat.example:443');
+      assert.match(configure.get('request_id'),/^[0-9a-f]{32}$/);
+      f.behavior.save = 'success'; await page.click('#save'); await text(page,'#resultTitle','设置已保存');
+      assert.equal(await page.inputValue('#password'),'');
+      assert.equal(await page.isHidden('#form'),true);
+      assert.match(await page.innerText('#resultCopy'),/尝试连接/);
+      assert(!/联网成功/.test(await page.innerText('#result')));
+      assert.equal(await page.getAttribute('#consoleLink','href'),'https://cat.example/');
+      await page.screenshot({path:path.join(output,'device-setup-saved-mobile.png'),fullPage:true});
+      const count = f.writes.filter(item => item.path === '/configure').length;
+      await page.waitForTimeout(300);
+      assert.equal(f.writes.filter(item => item.path === '/configure').length,count);
+      await f.close();
+    }
+    // 保留旧网络密码，避免只调整高级设置时误清空。
+    {
+      const f = await fixture(); await f.ready(); await f.page.click('#save');
+      await text(f.page,'#resultTitle','已保存');
+      const form = f.writes.find(item => item.path === '/configure').form;
+      assert.equal(form.get('password'),''); assert.equal(form.get('keep_password'),'1');
+      await f.close();
+    }
+    // 开放网络须通过扫描识别或手动明确勾选。
+    {
+      const f = await fixture(); await f.ready(); const {page} = f;
+      await page.click('#choose'); await page.locator('#nets button').filter({hasText:'Guest'}).click();
+      assert.equal(await page.isDisabled('#password'),true);
+      await page.click('#save'); await text(page,'#resultTitle','已保存');
+      const form = f.writes.find(item => item.path === '/configure').form;
+      assert.equal(form.get('ssid'),'Guest'); assert.equal(form.get('password'),''); assert.equal(form.get('keep_password'),'0');
+      await f.close();
+    }
+    // 扫描错误、空结果和重试；弹层关闭后仍能手动输入并保存。
+    {
+      const f = await fixture({behavior:{scan:'error'}}); await f.ready(); const {page} = f;
+      await page.click('#choose'); await text(page,'#scanStatus','暂时无法');
+      assert.equal(await page.isEnabled('#scan'),true);
+      f.behavior.scan = 'empty'; await page.click('#scan'); await text(page,'#scanStatus','没有发现');
+      f.behavior.scan = 'ok'; await page.click('#scan'); await page.locator('#nets button').first().waitFor();
+      await page.keyboard.press('Escape'); assert.equal(await page.isHidden('#wifiSheet'),true);
+      f.behavior.scan = 'hang'; await manual(page,'Hidden Wi-Fi','new-test-password');
+      assert.equal(await page.isEnabled('#save'),true);
+      await page.click('#save'); await text(page,'#resultTitle','已保存');
+      assert.equal(f.writes.find(item => item.path === '/configure').form.get('ssid'),'Hidden Wi-Fi');
+      await f.close();
+    }
+    // 真正挂起的扫描请求也会超时并恢复按钮。
+    {
+      const f = await fixture({behavior:{scan:'hang'}}); await f.ready();
+      await f.page.click('#choose'); await text(f.page,'#scanStatus','超时');
+      assert.equal(await f.page.isEnabled('#scan'),true);
+      f.behavior.scan = 'ok'; await f.page.click('#scan'); await f.page.locator('#nets button').first().waitFor();
+      await f.close();
+    }
+    // 后端反复返回 scanning:true 时，前端也有总截止时间。
+    {
+      const f = await fixture({behavior:{scan:'forever'},fastDeadline:true}); await f.ready();
+      await f.page.click('#choose'); await text(f.page,'#scanStatus','扫描超时');
+      assert.equal(await f.page.isEnabled('#scan'),true);
+      await f.close();
+    }
+    // 保存响应丢失，但状态中的同一请求回执可确认已写入。
+    {
+      const f = await fixture({behavior:{save:'lost'}}); await f.ready();
+      await f.page.click('#save'); await text(f.page,'#resultTitle','已保存');
+      assert.equal(f.writes.filter(item => item.path === '/configure').length,1);
+      await f.close();
+    }
+    // 无法确认结果时不谎报成功，也不自动再次提交密码；可重新检查并恢复表单。
+    {
+      const f = await fixture({behavior:{save:'ambiguous'}}); await f.ready(); const {page} = f;
+      await page.fill('#password','test-only-new-password');
+      await page.click('#showPassword');
+      await page.click('#save'); await text(page,'#resultTitle','还未确认');
+      assert.equal(await page.isHidden('#verify'),false);
+      assert.equal(await page.inputValue('#password'),'');
+      assert.equal(await page.getAttribute('#password','type'),'password');
+      assert.equal(await page.getAttribute('#showPassword','aria-pressed'),'false');
+      assert.equal(f.writes.filter(item => item.path === '/configure').length,1);
+      await page.screenshot({path:path.join(output,'device-setup-uncertain-mobile.png'),fullPage:true});
+      await page.click('#verify'); await text(page,'#hint','请核对');
+      assert.equal(await page.isEnabled('#save'),true);
+      f.behavior.save = 'success'; await page.fill('#password','another-test-password');
+      await page.click('#save'); await text(page,'#resultTitle','已保存');
+      await f.close();
+    }
+    // 配对信息只在真正联网且未绑定时显示；没有丢失原配对刷新功能。
+    {
+      const f = await fixture({state:{status:'unbound',wifi_connected:true,bound:false,pairing_code:'ABCD-EFGH',expires_in:150}});
+      await f.ready(); await text(f.page,'#pair','ABCD-EFGH'); assert.equal(await f.page.isVisible('#pairCard'),true);
+      await text(f.page,'#ttl','150'); await f.page.click('#refresh'); await text(f.page,'#pair','JKLM-NPQR');
+      await f.close();
+    }
+    // 字节数校验、本地模式保留、高级字段可修改；320px/桌面无横向溢出。
+    {
+      const f = await fixture({state:{status:'local',mode:'local',password_saved:false,wifi_ssid:''}});
+      await f.ready(); const {page} = f;
+      await manual(page,'中文名称中文名称中文名称','test-only-password');
+      await page.click('#save'); await text(page,'#hint','32 字节');
+      assert.equal(f.writes.filter(item => item.path === '/configure').length,0);
+      await page.fill('#ssid','Lab Wi-Fi'); await page.fill('#password','short'); await page.click('#save');
+      await text(page,'#hint','至少 8 位');
+      await page.fill('#password','test-only-password'); await page.locator('#advanced summary').click();
+      await page.fill('#server','http://192.168.2.105:8081');
+      for (const width of [320,390,960]) {
+        await page.setViewportSize({width,height:844});
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       }
-      if (request.method() === 'POST') {
-        assert.equal(request.headers()['x-cybermiao-csrf'], 'test-only-csrf');
-        assert(!url.search, '密码与设置不得进入网址');
-        writes.push({path:url.pathname,body:request.postData()});
-      }
-      if (url.pathname === '/status') data = {csrf_token:'test-only-csrf',device_id:'cat-test',
-        wifi_ssid:'Test WiFi',server_url:'https://cat.example:443',mode:variant === 'local' ? 'local' : 'accounts',
-        credential_configured:true,status:variant,pairing_code:variant === 'unbound' ? code : '',
-        expires_in:variant === 'unbound' ? 150 : 0,bound:variant === 'bound'};
-      else if (url.pathname === '/scan') data = ++scans === 1 ? {scanning:true,networks:[]} :
-        {scanning:false,networks:[{ssid:maliciousSsid,rssi:-55}]};
-      else if (url.pathname === '/pairing') { code = 'JKLM-NPQR'; data = {ok:true}; }
-      else if (url.pathname === '/configure') {
-        if (rejectSave) { status = 400; data = {error:'请先通过 USB 配置设备身份'}; }
-        else data = {message:'设置已保存，即将重启。'};
-      } else throw Error('未知页面请求 ' + url.pathname);
-      await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
-    });
-    const page = await context.newPage();
-    page.on('pageerror', error => failures.push(error.message));
-    await page.goto('http://setup.test/');
-    await page.waitForFunction(() => document.querySelector('#pair').textContent === 'ABCD-EFGH');
-    assert.equal(await page.inputValue('#ssid'), 'Test WiFi');
-    assert.equal(await page.inputValue('#password'), '');
-    assert.match(await page.locator('#ttl').innerText(), /150/);
-    await page.click('#scan');
-    await page.locator('#nets button').waitFor();
-    assert.equal(await page.locator('#nets img').count(), 0);
-    await page.click('#nets button');
-    assert.equal(await page.inputValue('#ssid'), maliciousSsid);
-    assert.equal(await page.evaluate(() => window.ssidAttack), undefined);
-    await page.click('#refresh');
-    await page.waitForFunction(() => document.querySelector('#pair').textContent === 'JKLM-NPQR');
-    await page.fill('#ssid', 'My Test WiFi');
-    await page.fill('#password', 'test-only-wifi-password');
-    await page.fill('#server', 'https://cat.example:8443');
-    await page.click('#save');
-    await page.waitForFunction(() => document.querySelector('#hint').textContent.includes('USB'));
-    assert.equal(await page.isEnabled('#save'), true);
-    const form = new URLSearchParams(writes.find(item => item.path === '/configure').body);
-    assert.equal(form.get('password'), 'test-only-wifi-password');
-    assert.equal(form.get('mode'), 'accounts');
-    assert.equal(form.get('server_url'), 'https://cat.example:8443');
-    rejectSave = false;
-    await page.click('#save');
-    await page.waitForFunction(() => document.querySelector('#hint').textContent.includes('已保存'));
-    assert.equal(await page.inputValue('#password'), '');
-    assert.equal(await page.isDisabled('#save'), true);
-    variant = 'bound';
-    await page.reload();
-    await page.waitForFunction(() => document.querySelector('#state').textContent === '已绑定账号');
-    assert.equal(await page.isHidden('#refresh'), true);
-    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-    await page.screenshot({path:path.join(output,'device-setup-mobile.png'),fullPage:true});
-    variant = 'local';
-    await page.reload();
-    await page.waitForFunction(() => document.querySelector('#state').textContent === '本地调试模式');
-    assert.equal(await page.inputValue('#mode'), 'local');
-    assert.equal(await page.isHidden('#refresh'), true);
-    assert.deepEqual(failures, []);
-    console.log('设备设置页通过：状态/倒计时、异步扫描与 SSID 转义、CSRF/POST、保存失败与重试、绑定/本地模式、手机布局。使用模拟 API，未连接硬件。');
+      await page.click('#save'); await text(page,'#resultTitle','已保存');
+      const form = f.writes.find(item => item.path === '/configure').form;
+      assert.equal(form.get('mode'),'local'); assert.equal(form.get('server_url'),'http://192.168.2.105:8081');
+      await f.close();
+    }
+    // 初次读取中断可恢复，未初始化前不允许提交空设置。
+    {
+      const f = await fixture({behavior:{status:'hang'}});
+      await f.page.locator('#offline').waitFor(); assert.equal(await f.page.isDisabled('#save'),true);
+      f.behavior.status = 'ok'; await f.page.click('#reconnect'); await f.ready();
+      assert.equal(await f.page.isHidden('#offline'),true);
+      await f.close();
+    }
+    // 慢状态请求不会与下一个轮询重叠，且不会覆盖用户正在编辑的字段。
+    {
+      const f = await fixture({behavior:{status:'slow'}}); await f.ready();
+      await f.page.locator('#advanced summary').click();
+      await f.page.fill('#server','https://edited.example:8443');
+      await f.page.waitForTimeout(6000);
+      assert(f.statusCalls >= 2); assert.equal(await f.page.evaluate(() => window.testMaxStatus),1);
+      assert.equal(await f.page.inputValue('#server'),'https://edited.example:8443');
+      await f.close();
+    }
+    console.log(completed + ' 组配网页场景通过：移动布局、选网与去重/XSS、CSRF/POST、扫描失败/挂起/截止时间、密码保留、保存回执/丢失/未确认、配对与本地模式、轮询互斥。仅使用模拟 API，未验收手机与实物。');
   } finally { await browser.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

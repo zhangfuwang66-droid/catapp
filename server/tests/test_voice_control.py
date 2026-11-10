@@ -2,6 +2,7 @@
 import asyncio
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -184,6 +185,82 @@ class VoiceControlTests(unittest.IsolatedAsyncioTestCase):
             await pausing
         self.assertTrue(Model.instances[0].closed)
         self.assertIsNone(self.runtime.current_realtime_session)
+
+    async def test_slow_emotion_analysis_does_not_block_text_or_pcm(self):
+        await self.connect()
+        model = Model.instances[-1]
+        entered, release = asyncio.Event(), threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def slow_emotion(text):
+            loop.call_soon_threadsafe(entered.set)
+            release.wait(2)
+            return 'happy'
+
+        try:
+            with patch.object(runtime_module, 'analyze_emotion', slow_emotion):
+                await model.callbacks['on_response_started']()
+                await asyncio.wait_for(model.callbacks['on_output_text_delta']('这是足够触发情绪分析的模拟回复'), .3)
+                await asyncio.wait_for(entered.wait(), 1)
+                await asyncio.wait_for(model.callbacks['on_output_audio'](b'\x01\x00' * 240), .3)
+                self.assertTrue(self.runtime.audio.recent_pcm_chunks)
+                self.assertFalse(release.is_set())
+                release.set()
+                await until(lambda: self.runtime.current_emotion == 'happy')
+        finally:
+            release.set()
+
+    async def test_pause_closes_even_an_upload_that_was_reconnecting(self):
+        socket = await self.connect()
+        model = Model.instances[-1]
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def reconnecting_upload(current, data):
+            entered.set()
+            await release.wait()
+            current.closed = False  # 模拟 ensure_connected 完成较慢的上游重连。
+
+        with patch.object(Model, 'append_audio', reconnecting_upload):
+            socket.incoming.put_nowait({'bytes': b'old audio'})
+            await asyncio.wait_for(entered.wait(), 1)
+            pausing = asyncio.create_task(self.runtime.set_voice_paused(True))
+            await until(lambda: 'TTS_STOP' in socket.commands)
+            release.set()
+            await asyncio.wait_for(pausing, 1)
+        self.assertTrue(model.closed)
+        self.assertIsNone(self.runtime.current_realtime_session)
+
+    async def test_old_emotion_cannot_override_next_response_or_resumed_session(self):
+        await self.connect()
+        loop = asyncio.get_running_loop()
+        for replace_session in (False, True):
+            with self.subTest(replace_session=replace_session):
+                entered, returned, release = asyncio.Event(), asyncio.Event(), threading.Event()
+
+                def slow_emotion(text):
+                    loop.call_soon_threadsafe(entered.set)
+                    release.wait(2)
+                    loop.call_soon_threadsafe(returned.set)
+                    return 'angry'
+
+                self.runtime.current_emotion = 'neutral'
+                model = Model.instances[-1]
+                try:
+                    with patch.object(runtime_module, 'analyze_emotion', slow_emotion):
+                        await model.callbacks['on_response_started']()
+                        await model.callbacks['on_output_text_delta']('旧一轮回复正在分析情绪')
+                        await asyncio.wait_for(entered.wait(), 1)
+                        if replace_session:
+                            await self.runtime.set_voice_paused(True)
+                            await self.runtime.set_voice_paused(False)
+                        else:
+                            await model.callbacks['on_response_started']()
+                        release.set()
+                        await asyncio.wait_for(returned.wait(), 1)
+                        await asyncio.sleep(.02)
+                        self.assertEqual(self.runtime.current_emotion, 'neutral')
+                finally:
+                    release.set()
 
 
 if __name__ == '__main__':

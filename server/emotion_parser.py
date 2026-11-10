@@ -38,6 +38,8 @@ def _make_client() -> OpenAI:
     return OpenAI(
         api_key=API_KEY,
         base_url=os.getenv("DASHSCOPE_COMPAT_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        timeout=4.0,
+        max_retries=0,
     )
 
 
@@ -47,16 +49,16 @@ def analyze_emotion(text: str) -> str:
     if not text or len(text.strip()) < 2:
         return DEFAULT_EMOTION
     try:
-        client = _make_client()
-        response = client.chat.completions.create(
-            model=os.getenv("QWEN_MODEL", "qwen-turbo"),
-            messages=[
-                {"role": "system", "content": EMOTION_EXTRACT_PROMPT},
-                {"role": "user", "content": text.strip()[:500]},
-            ],
-            stream=False,
-            max_tokens=20,
-        )
+        with _make_client() as client:
+            response = client.chat.completions.create(
+                model=os.getenv("QWEN_MODEL", "qwen-turbo"),
+                messages=[
+                    {"role": "system", "content": EMOTION_EXTRACT_PROMPT},
+                    {"role": "user", "content": text.strip()[:500]},
+                ],
+                stream=False,
+                max_tokens=20,
+            )
         emotion = (response.choices[0].message.content or "").strip().lower()
         if emotion in EMOTIONS:
             return emotion

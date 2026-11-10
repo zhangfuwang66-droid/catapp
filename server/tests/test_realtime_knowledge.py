@@ -150,6 +150,19 @@ class RealtimeKnowledgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.session._instruction_waiter)
         self.assertEqual(len(self.socket.responses), 0)
 
+    async def test_turn_prompt_is_sent_directly_without_session_update_ack(self):
+        await self.connected(AsyncMock(side_effect=["base + current passage", "base without passage"]))
+        initial_updates = len([event for event in self.socket.sent if event['type'] == 'session.update'])
+        self.socket.auto_ack = False
+        self.utterance('one', '资料问题')
+        await until(lambda: len(self.socket.responses) == 1)
+        self.assertEqual(self.socket.responses[0]['response']['instructions'], 'base + current passage')
+        self.utterance('two', '无关问题')
+        await until(lambda: len(self.socket.responses) == 2)
+        self.assertEqual(self.socket.responses[1]['response']['instructions'], 'base without passage')
+        self.assertEqual(self.session.system_prompt, 'base')
+        self.assertEqual(len([event for event in self.socket.sent if event['type'] == 'session.update']), initial_updates)
+
     async def test_unsupported_auto_response_control_fails_closed(self):
         with self.assertRaisesRegex(RuntimeError, "未确认关闭自动回答"):
             await self.connected(AsyncMock(), manual_supported=False)

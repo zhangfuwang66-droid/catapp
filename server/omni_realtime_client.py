@@ -15,7 +15,7 @@ REALTIME_MODEL = os.getenv("QWEN_REALTIME_MODEL", "qwen3.8-omni-flash")
 REALTIME_VOICE = os.getenv("QWEN_REALTIME_VOICE", "Sunnybobi")
 REALTIME_TURN_DETECTION = os.getenv("QWEN_REALTIME_TURN_DETECTION", "server_vad")
 REALTIME_TURN_THRESHOLD = float(os.getenv("QWEN_REALTIME_TURN_THRESHOLD", "0.5"))
-REALTIME_TURN_SILENCE_MS = int(os.getenv("QWEN_REALTIME_TURN_SILENCE_MS", "900"))
+REALTIME_TURN_SILENCE_MS = int(os.getenv("QWEN_REALTIME_TURN_SILENCE_MS", "600"))
 REALTIME_PREFIX_PADDING_MS = int(os.getenv("QWEN_REALTIME_PREFIX_PADDING_MS", "500"))
 REALTIME_INPUT_TRANSCRIPTION_MODEL = os.getenv("QWEN_REALTIME_TRANSCRIPTION_MODEL", "gummy-realtime-v1")
 REALTIME_WS_URL = os.getenv("QWEN_REALTIME_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
@@ -29,7 +29,7 @@ class OmniRealtimeSession:
         *,
         loop: asyncio.AbstractEventLoop,
         system_prompt: str,
-        on_input_transcript: Callable[[str], Awaitable[Optional[bool]]],
+        on_input_transcript: Callable[[str], Awaitable[Optional[str | bool]]],
         on_output_text_delta: Callable[[str], Awaitable[None]],
         on_output_audio: Callable[[bytes], Awaitable[None]],
         on_response_started: Callable[[], Awaitable[None]],
@@ -245,13 +245,16 @@ class OmniRealtimeSession:
 
     async def _prepare_response(self, transcript, generation):
         try:
+            started_at = self.loop.time()
             respond = await self.on_input_transcript(transcript)
             if respond is False or generation != self._turn_generation or not self._connected or self._fatal_error:
                 return
-            # 实测仅 session.update 不足以刷新已提交音频轮次的指令。
-            # 在 response.create 再显式指定本轮提示词，让资料用于本次回答。
+            # 本轮资料直接随 response.create 发送，省去 session.update/ACK 往返。
+            # 不写回会话默认提示词，避免下一轮继承上一轮检索资料。
+            instructions = respond if isinstance(respond, str) else self.system_prompt
+            await self._debug(f"turn preparation_ms={round((self.loop.time() - started_at) * 1000)}")
             await self._send_event({"type": "response.create", "response": {
-                "modalities": ["text", "audio"], "instructions": self.system_prompt}},
+                "modalities": ["text", "audio"], "instructions": instructions}},
                                    turn_generation=generation)
         except asyncio.CancelledError:
             raise

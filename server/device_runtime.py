@@ -2575,6 +2575,14 @@ class DeviceRuntime:
         session_generation = 0
         session_lock = asyncio.Lock()
         session_background_tasks: Set[asyncio.Task] = set()
+        emotion_tasks: Set[asyncio.Task] = set()
+        response_generation = 0
+
+        def invalidate_response_emotions():
+            nonlocal response_generation
+            response_generation += 1
+            for pending in tuple(emotion_tasks):
+                pending.cancel()
 
         def session_is_current(generation):
             return (generation == session_generation and self.voice_allowed()
@@ -2598,22 +2606,26 @@ class DeviceRuntime:
         async def upload_worker():
             while not upload_stop.is_set():
                 try:
-                    data = await asyncio.wait_for(upload_queue.get(), timeout=0.5)
+                    chunk = await asyncio.wait_for(upload_queue.get(), timeout=0.5)
                 except asyncio.TimeoutError:
                     # 空闲心跳点：检测是否有人（翻译开/关）请求了换脑重建
                     await restart_session_if_requested()
                     continue
-                if data is None:
+                if chunk is None:
                     break
-                current_session = session
-                if current_session is None or not self.voice_allowed():
-                    continue
-                try:
-                    await current_session.append_audio(data)
-                except Exception as exc:
-                    log_event(f"[WS_AUDIO] upload failed: {type(exc).__name__}", flush=True)
-                    # 上游写不进去，让状态机自愈（可能是 WS 已关）
-                    break
+                generation, data = chunk
+                # append_audio 可能正在重连上游；暂停必须等它结束再关闭，
+                # 避免旧上传任务在 close 之后又打开已经失去引用的模型连接。
+                async with session_lock:
+                    current_session = session
+                    if current_session is None or not session_is_current(generation):
+                        continue
+                    try:
+                        await current_session.append_audio(data)
+                    except Exception as exc:
+                        log_event(f"[WS_AUDIO] upload failed: {type(exc).__name__}", flush=True)
+                        # 上游写不进去，让状态机自愈（可能是 WS 已关）
+                        break
 
         worker_task = asyncio.create_task(upload_worker())
 
@@ -2628,6 +2640,7 @@ class DeviceRuntime:
         async def stop_session(send_notice: Optional[str] = None):
             nonlocal session, streaming, playback_release_event, response_text_parts, response_emotion_sent, session_generation
             session_generation += 1
+            invalidate_response_emotions()
             streaming = False
             old_session, session = session, None
             self.current_realtime_session = None
@@ -2776,15 +2789,26 @@ class DeviceRuntime:
                 except Exception as exc:
                     log_event(f"[MEMORY] realtime context unavailable: {type(exc).__name__}", flush=True)
                     turn_memory = memory_context
-                if session is not turn_session or turn_epoch != self.realtime_restart_epoch or self.translation_active:
+                if (not self.voice_allowed() or session is not turn_session
+                        or turn_epoch != self.realtime_restart_epoch or self.translation_active):
                     return False
                 base = VISUAL_DIALOG_SYSTEM_PROMPT if self.vision_dialogue_active else SYSTEM_PROMPT
-                # reader 在独立任务中继续读 ACK；拿到确认之前不发 response.create。
-                await turn_session.update_instructions(_memory_context_prompt(base, turn_memory) + knowledge_prompt,
-                                                       wait_for_ack=True)
+                return _memory_context_prompt(base, turn_memory) + knowledge_prompt
+
+        async def update_response_emotion(text, session_gen, response_gen):
+            try:
+                emotion = await asyncio.wait_for(asyncio.to_thread(analyze_emotion, text), timeout=5)
+                if session_is_current(session_gen) and response_gen == response_generation:
+                    self.current_emotion = emotion
+                # TTS 期间不发送表情/舵机动作，情绪服务也不占用音频读循环。
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log_event(f"[EMOTION] realtime update skipped: {type(exc).__name__}", flush=True)
 
         async def on_output_text_delta(delta: str):
             nonlocal response_emotion_sent
+            session_gen, response_gen = session_generation, response_generation
             response_text_parts.append(delta)
             full_text = "".join(response_text_parts)
             if len(response_text_parts) == 1:
@@ -2798,10 +2822,15 @@ class DeviceRuntime:
             await self.ui_broadcast_partial("[AI] " + full_text)
             if self.vision_dialogue_active:
                 await self.update_visual_dialogue_response(full_text, "answering")
+            if not session_is_current(session_gen) or response_gen != response_generation:
+                return
             if not response_emotion_sent and len(full_text) >= 8:
                 response_emotion_sent = True
-                self.current_emotion = await asyncio.get_running_loop().run_in_executor(None, analyze_emotion, full_text)
-                await self._send_ui_expression(self.current_emotion)
+                task = self.spawn_background(update_response_emotion(full_text, session_gen, response_gen))
+                emotion_tasks.add(task)
+                task.add_done_callback(emotion_tasks.discard)
+                session_background_tasks.add(task)
+                task.add_done_callback(session_background_tasks.discard)
 
         async def on_output_audio(audio_bytes: bytes):
             if response_text_parts == []:
@@ -2814,6 +2843,7 @@ class DeviceRuntime:
 
         async def on_response_started():
             nonlocal playback_release_event, response_text_parts, response_emotion_sent, response_was_translation
+            invalidate_response_emotions()
             response_text_parts = []
             response_emotion_sent = False
             response_was_translation = self.translation_active
@@ -2877,6 +2907,7 @@ class DeviceRuntime:
             await self.set_esp32_audio_priority(False, reason="realtime_response_done")
 
         async def on_speech_started():
+            invalidate_response_emotions()
             log_event("[REALTIME] speech started", flush=True)
             if self.audio.is_playing_now():
                 await self.audio.hard_reset_audio("realtime interruption")
@@ -2988,7 +3019,7 @@ class DeviceRuntime:
                             except Exception:
                                 pass
                         try:
-                            upload_queue.put_nowait(data)
+                            upload_queue.put_nowait((session_generation, data))
                         except Exception as exc:
                             log_event(f"[WS_AUDIO] upload queue error: {type(exc).__name__}", flush=True)
         except WebSocketDisconnect:

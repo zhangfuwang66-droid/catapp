@@ -137,7 +137,7 @@ async function main() {
     });
     assert.equal(secureUrl,'wss://cat.example/ws/devices/cat-alice/ui');
     assert.deepEqual(errors,[]);
-    console.log(JSON.stringify({ok:true,checks:['登录与错误提示','设备配对与账号隔离','记忆查看与确认清除','设备停用','认证控制与摄像头','退出与跨页清理','移动布局','本地模式兼容','HTTPS使用WSS路径'],screenshots:output}));
+    console.log(JSON.stringify({ok:true,checks:['登录与错误提示','设备配对与账号隔离','记忆查看与确认清除','设备停用','认证控制与摄像头','语音暂停/恢复与刷新同步','退出与跨页清理','移动布局','本地模式兼容','HTTPS使用WSS路径'],screenshots:output}));
     await mobile.close(); await context.close();
   } finally {
     if(browser) await browser.close();

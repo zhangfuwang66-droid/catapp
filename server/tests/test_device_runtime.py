@@ -211,7 +211,11 @@ class FakeRealtimeSession:
         self.prompt = prompt
 
     async def append_audio(self, data):
-        await self.callbacks["on_input_transcript"](data.decode("utf-8"))
+        prompt = await self.callbacks["on_input_transcript"](data.decode("utf-8"))
+        if prompt is False:
+            return
+        if isinstance(prompt, str):
+            self.prompt = prompt
         await self.callbacks["on_response_started"]()
         await self.callbacks["on_output_text_delta"]("模拟答复")
         await self.callbacks["on_output_audio"](b"\x01\x00" * 10)

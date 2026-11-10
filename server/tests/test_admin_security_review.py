@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from contextlib import closing
+from concurrent.futures import ThreadPoolExecutor
 import sqlite3
 import tempfile
 import unittest
@@ -53,6 +54,28 @@ class DisabledAccountBoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 AdminStore(identities)
 
+    def test_concurrent_cross_disable_keeps_one_enabled_admin(self):
+        with tempfile.TemporaryDirectory(prefix="admin-race-") as directory:
+            path = Path(directory) / "memory.sqlite3"
+            identities = IdentityStore(path)
+            first = identities.create_user("fictional_one", "fictional-password-123")
+            second = identities.create_user("fictional_two", "fictional-password-123")
+            left = AdminStore(identities)
+            right = AdminStore(IdentityStore(path))
+            left.set_role(first.username, True)
+            right.set_role(second.username, True)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(left.change_user, first.id, second.id, True),
+                           pool.submit(right.change_user, second.id, first.id, True)]
+                errors = []
+                for future in futures:
+                    try:
+                        future.result()
+                    except (PermissionError, ValueError) as exc:
+                        errors.append(exc)
+            self.assertEqual(len(errors), 1)
+            self.assertEqual(sum(left.is_admin(user.id) for user in (first, second)), 1)
+
 
 class AdminAuthorizationBoundaryTests(unittest.TestCase):
     def setUp(self):
@@ -75,6 +98,14 @@ class AdminAuthorizationBoundaryTests(unittest.TestCase):
     def tearDown(self):
         self.client.__exit__(None, None, None)
         self.temp.cleanup()
+
+    def test_admin_html_cannot_be_loaded_through_static_mount(self):
+        self.assertEqual(self.client.get("/admin").status_code, 401)
+        self.assertIn(self.client.get("/web/admin/index.html").status_code, (401, 403))
+        session = self.ids.login(self.member.username, "fictional-password-123", client_key="fictional-local")
+        self.client.cookies.set(SESSION_COOKIE, session.token)
+        self.assertEqual(self.client.get("/admin").status_code, 403)
+        self.assertEqual(self.client.get("/web/admin/index.html").status_code, 403)
 
     def test_member_cannot_impersonate_admin_or_use_device_credential(self):
         session = self.ids.login(self.member.username, "fictional-password-123", client_key="fictional-local")

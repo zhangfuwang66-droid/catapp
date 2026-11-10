@@ -12,6 +12,7 @@ from access_control import require_origin, require_session, require_session_writ
 from async_helpers import run_blocking
 from document_parser import MAX_UPLOAD_BYTES, SUPPORTED_EXTENSIONS
 from knowledge_store import KnowledgeLimit
+from provider_routes import lock_for
 from web_pages import knowledge_html
 
 router = APIRouter()
@@ -96,7 +97,9 @@ async def upload(request: Request, user_id=Depends(writer)):
         except ClientDisconnect:
             raise HTTPException(400, "上传连接中断") from None
         try:
-            doc, created = await run_blocking(service.store.add_document, user_id, filename, bytes(data))
+            async with lock_for(request.app, user_id):
+                await writer(request)
+                doc, created = await run_blocking(service.store.add_document, user_id, filename, bytes(data))
         except KnowledgeLimit as exc:
             raise HTTPException(413 if str(exc) == "invalid_size" else 409, ERRORS[str(exc)]) from None
         service.notify()
@@ -119,16 +122,20 @@ async def download(doc_id: str, request: Request, user_id=Depends(owner)):
 
 @router.delete("/api/knowledge/documents/{doc_id}")
 async def delete(doc_id: str, request: Request, user_id=Depends(writer)):
-    if not await run_blocking(request.app.state.knowledge.store.delete, user_id, doc_id):
-        raise HTTPException(404, "资料不存在或无权访问")
+    async with lock_for(request.app, user_id):
+        await writer(request)
+        if not await run_blocking(request.app.state.knowledge.store.delete, user_id, doc_id):
+            raise HTTPException(404, "资料不存在或无权访问")
     return {"ok": True}
 
 
 @router.post("/api/knowledge/documents/{doc_id}/reindex")
 async def reindex(doc_id: str, request: Request, user_id=Depends(writer)):
     service = request.app.state.knowledge
-    if not await run_blocking(service.store.retry, user_id, doc_id):
-        raise HTTPException(404, "资料不存在或无权访问")
+    async with lock_for(request.app, user_id):
+        await writer(request)
+        if not await run_blocking(service.store.retry, user_id, doc_id):
+            raise HTTPException(404, "资料不存在或无权访问")
     service.notify()
     return {"ok": True}
 
@@ -149,8 +156,10 @@ class ProfileBody(BaseModel):
 async def profile(doc_id: str, body: ProfileBody, request: Request, user_id=Depends(writer)):
     if any(not 2 <= len(word.strip()) <= 40 for word in body.keywords + body.aliases):
         raise HTTPException(400, "关键词和同义词需为 2–40 个字符")
-    if not await run_blocking(request.app.state.knowledge.store.save_profile, user_id, doc_id, body.model_dump()):
-        raise HTTPException(404, "资料不存在或无权访问")
+    async with lock_for(request.app, user_id):
+        await writer(request)
+        if not await run_blocking(request.app.state.knowledge.store.save_profile, user_id, doc_id, body.model_dump()):
+            raise HTTPException(404, "资料不存在或无权访问")
     return {"ok":True}
 
 

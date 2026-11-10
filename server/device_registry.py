@@ -9,6 +9,51 @@ from device_identity import validate_device_id
 from memory_store import MemoryManager
 
 
+class DeviceLock(asyncio.Lock):
+    """可等待释放通知而不预占锁，避免账号写请求阻塞管理员撤销。"""
+
+    def __init__(self):
+        super().__init__()
+        self._acquiring = 0
+        self._availability_waiters = 0
+        self._changed = asyncio.Event()
+
+    @property
+    def available(self):
+        # release 已唤醒的普通 acquire 等待者也有优先权。
+        return not self.locked() and self._acquiring == 0
+
+    @property
+    def waiting_count(self):
+        return self._acquiring + self._availability_waiters
+
+    def _notify(self):
+        changed, self._changed = self._changed, asyncio.Event()
+        changed.set()
+
+    async def acquire(self):
+        self._acquiring += 1
+        try:
+            return await super().acquire()
+        finally:
+            self._acquiring -= 1
+            if self.available:
+                self._notify()
+
+    def release(self):
+        super().release()
+        self._notify()
+
+    async def wait_available(self):
+        changed = self._changed
+        if not self.available:
+            self._availability_waiters += 1
+            try:
+                await changed.wait()
+            finally:
+                self._availability_waiters -= 1
+
+
 class DeviceRegistry:
     def __init__(self, memory_manager: MemoryManager, *, storage=None, knowledge=None, providers=None, preferences=None, speech=None):
         self.memory_manager = memory_manager
@@ -18,14 +63,29 @@ class DeviceRegistry:
         self.storage = storage
         self.knowledge = knowledge
         self.devices: Dict[str, DeviceRuntime] = {}
-        self._locks: Dict[str, asyncio.Lock] = {}
+        self._locks: Dict[str, DeviceLock] = {}
 
     @asynccontextmanager
     async def locked(self, device_id: str):
-        validate_device_id(device_id)
-        lock = self._locks.setdefault(device_id, asyncio.Lock())
-        async with lock:
+        async with self.lock_for(device_id):
             yield
+
+    def lock_for(self, device_id: str):
+        validate_device_id(device_id)
+        return self._locks.setdefault(device_id, DeviceLock())
+
+    @asynccontextmanager
+    async def locked_for_account(self, device_id: str, account_lock: asyncio.Lock):
+        """写入时按账号→设备持锁；等设备期间让管理员仍可取得账号锁撤销请求。"""
+        device_lock = self.lock_for(device_id)
+        while True:
+            async with account_lock:
+                # 检查到取设备锁之间没有调度点；不持账号锁等待设备。
+                if device_lock.available:
+                    async with device_lock:
+                        yield
+                    return
+            await device_lock.wait_available()
 
     async def resolve(self, device_id: str, user_id: str) -> DeviceRuntime:
         async with self.locked(device_id):

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from access_control import require_session, require_session_write
-from async_helpers import run_blocking
+from async_helpers import run_blocking, finish_before_cancel
 from identity_store import RateLimited, User
 from provider_settings import MissingProviderKey, VaultUnavailable, validate_api_key
 
@@ -38,13 +38,14 @@ async def settings(request: Request, response: Response, user: User = Depends(re
 
 
 async def change(request, user_id, key=None):
-    async with lock_for(request.app, user_id):
-        # 排队期间可能被管理员撤销会话；shield 不能让旧请求在停用后写回。
-        await require_session_write(request)
+    async def perform():
         store = request.app.state.provider_settings
         status = await run_blocking(store.delete, user_id) if key is None else await run_blocking(store.save, user_id, key)
         await retire_user_models(request.app, user_id)
         return status
+    async with lock_for(request.app, user_id):
+        await require_session_write(request)
+        return await finish_before_cancel(perform())
 
 
 @router.put("")
@@ -52,7 +53,7 @@ async def save(payload: KeyRequest, request: Request, response: Response, user: 
     response.headers["Cache-Control"] = "no-store"
     try:
         key = validate_api_key(payload.api_key)
-        return await asyncio.shield(change(request, user.id, key))
+        return await change(request, user.id, key)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -60,7 +61,7 @@ async def save(payload: KeyRequest, request: Request, response: Response, user: 
 @router.delete("")
 async def delete(request: Request, response: Response, user: User = Depends(require_session_write)):
     response.headers["Cache-Control"] = "no-store"
-    return await asyncio.shield(change(request, user.id))
+    return await change(request, user.id)
 
 
 @router.post("/test")
@@ -71,6 +72,7 @@ async def test(request: Request, response: Response, user: User = Depends(requir
     except RateLimited as exc:
         raise HTTPException(status_code=429, detail="测试较频繁，请稍后再试", headers={"Retry-After": str(exc.retry_after)}) from None
     async with lock_for(request.app, user.id):
+        await require_session_write(request)
         try:
             key = await run_blocking(request.app.state.providers.key, user.id)
         except (MissingProviderKey, VaultUnavailable) as exc:

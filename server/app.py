@@ -5,7 +5,7 @@ import asyncio
 import sqlite3
 import time
 from pathlib import Path
-from async_helpers import run_blocking
+from async_helpers import run_blocking, finish_before_cancel
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
@@ -58,13 +58,12 @@ router = APIRouter()
 async def resolve_runtime(connection: HTTPConnection, *, hardware=False, playback=False) -> DeviceRuntime:
     device_id, user_id = await authorize_runtime(connection, hardware=hardware, playback=playback)
     try:
-        async with lock_for(connection.app,user_id):
-            async with connection.app.state.devices.locked(device_id):
-                # 等锁期间可能已经解绑或转交，重新核验后才创建运行时。
-                device_id, current_user = await authorize_runtime(connection, hardware=hardware, playback=playback)
-                if current_user != user_id:
-                    raise HTTPException(409, "设备使用者已改变，请重新连接")
-                return connection.app.state.devices.get(device_id, user_id)
+        async with connection.app.state.devices.locked_for_account(device_id,lock_for(connection.app,user_id)):
+            # 等锁期间可能已经解绑或转交，重新核验后才创建运行时。
+            device_id, current_user = await authorize_runtime(connection, hardware=hardware, playback=playback)
+            if current_user != user_id:
+                raise HTTPException(409, "设备使用者已改变，请重新连接")
+            return connection.app.state.devices.get(device_id, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -79,6 +78,16 @@ async def get_hardware_runtime(connection: HTTPConnection) -> DeviceRuntime:
 
 async def get_playback_runtime(connection: HTTPConnection) -> DeviceRuntime:
     return await resolve_runtime(connection, playback=True)
+
+
+@asynccontextmanager
+async def runtime_write(request: Request, runtime: DeviceRuntime):
+    async with request.app.state.devices.locked_for_account(runtime.device_id,lock_for(request.app,runtime.user_id)):
+        device_id, user_id = await authorize_runtime(request)
+        if (device_id != runtime.device_id or user_id != runtime.user_id
+                or request.app.state.devices.devices.get(device_id) is not runtime):
+            raise HTTPException(409, "设备运行状态已改变，请刷新后重试")
+        yield
 
 
 async def run_authorized_websocket(ws: WebSocket, handler):
@@ -173,10 +182,12 @@ async def clear_memory(request: Request, payload: Optional[ClearMemoryRequest] =
     if request.path_params.get("device_id") and (payload is None or payload.confirm_device_id != runtime.device_id):
         raise HTTPException(status_code=400, detail="请确认要清除记忆的设备编号")
     registry = request.app.state.devices
-    async with registry.locked(runtime.device_id):
+    async def perform():
         await request.app.state.connections.revoke_device(runtime.device_id, code=1012, reason="记忆已清除，请重新连接")
         await registry.retire_locked(runtime.device_id)
         await request.app.state.memory_manager.clear_owner(runtime.user_id, runtime.device_id)
+    async with runtime_write(request, runtime):
+        await finish_before_cancel(perform())
     return {"ok": True, "device_id": runtime.device_id}
 
 
@@ -267,8 +278,9 @@ async def voice_state(runtime: DeviceRuntime = Depends(get_device_runtime)):
 
 @router.post("/voice")
 @router.post("/api/devices/{device_id}/voice")
-async def voice_control(payload: VoiceControlRequest, runtime: DeviceRuntime = Depends(get_device_runtime)):
-    return await asyncio.shield(runtime.spawn_background(runtime.set_voice_paused(payload.paused)))
+async def voice_control(payload: VoiceControlRequest, request: Request, runtime: DeviceRuntime = Depends(get_device_runtime)):
+    async with runtime_write(request, runtime):
+        return await finish_before_cancel(runtime.set_voice_paused(payload.paused))
 
 
 @router.get("/camera_setting")

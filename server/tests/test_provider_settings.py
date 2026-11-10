@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 from starlette.responses import Response
+from starlette.requests import Request
 from support import server_app
 from access_control import AccessSettings, SESSION_COOKIE
 from identity_store import IdentityStore, csrf_for_session
@@ -176,7 +177,9 @@ class ProviderRouteTests(unittest.TestCase):
             with patch.object(provider_routes, 'asyncio', surface), \
                  patch('openai.AsyncOpenAI', return_value=text), \
                  patch('omni_realtime_client.OmniRealtimeSession', return_value=realtime):
-                request = SimpleNamespace(app=self.app)
+                request = Request({'type':'http', 'method':'POST', 'scheme':'http', 'server':('testserver',80),
+                                   'path':'/api/account/model/test', 'app':self.app,
+                                   'headers':[(key.lower().encode(), value.encode()) for key,value in self.headers['alice'].items()]})
                 task = asyncio.create_task(provider_routes.test(request, Response(), self.users['alice']))
                 await asyncio.wait_for(entered.wait(), timeout=2)
                 if cancel:

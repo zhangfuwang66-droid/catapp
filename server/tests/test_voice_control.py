@@ -192,7 +192,7 @@ class VoiceControlTests(unittest.IsolatedAsyncioTestCase):
         entered, release = asyncio.Event(), threading.Event()
         loop = asyncio.get_running_loop()
 
-        def slow_emotion(text):
+        def slow_emotion(text, api_key=None):
             loop.call_soon_threadsafe(entered.set)
             release.wait(2)
             return 'happy'
@@ -237,7 +237,7 @@ class VoiceControlTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(replace_session=replace_session):
                 entered, returned, release = asyncio.Event(), asyncio.Event(), threading.Event()
 
-                def slow_emotion(text):
+                def slow_emotion(text, api_key=None):
                     loop.call_soon_threadsafe(entered.set)
                     release.wait(2)
                     loop.call_soon_threadsafe(returned.set)

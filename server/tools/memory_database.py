@@ -16,7 +16,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from memory_store import MemoryStore
-from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, IDENTITY_SHARING_COLUMNS, KNOWLEDGE_COLUMNS, KNOWLEDGE_PROFILE_COLUMNS, PROVIDER_COLUMNS, RETENTION_COLUMNS, validate_columns, validate_versions
+from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, IDENTITY_SHARING_COLUMNS, KNOWLEDGE_COLUMNS, KNOWLEDGE_PROFILE_COLUMNS, PROVIDER_COLUMNS, RETENTION_COLUMNS, SPEECH_COLUMNS, validate_columns, validate_versions
 
 
 TABLES = ("conversations", "messages", "conversation_summaries", "memories")
@@ -65,6 +65,8 @@ def check_database_ready(database: Path):
             validate_columns(connection, PROVIDER_COLUMNS)
         if versions.get("retention"):
             validate_columns(connection, RETENTION_COLUMNS)
+        if versions.get("speech"):
+            validate_columns(connection, SPEECH_COLUMNS)
         for table in (*MEMORY_COLUMNS, *IDENTITY_COLUMNS):
             connection.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone()
     finally:
@@ -95,6 +97,8 @@ def inspect_database(database: Path) -> dict:
                                              (item['id'],archive['conversation_id'])).fetchone()
                     if row is None or row[0] != '':
                         raise ValueError('记忆归档与原消息不一致')
+        if versions.get("speech"):
+            validate_columns(connection, SPEECH_COLUMNS)
         validate_columns(connection, MEMORY_COLUMNS)
         identity_version = versions.get("identity", 0)
         identity_tables = set(IDENTITY_COLUMNS).intersection(names)

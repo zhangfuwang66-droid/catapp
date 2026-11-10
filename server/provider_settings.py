@@ -38,7 +38,9 @@ class ProviderSettings:
         self.path = Path(path)
         self.key_file = Path(key_file or os.getenv("CYBERMIAO_SECRET_KEY_FILE") or self.path.with_name("provider.key"))
         self.clock = clock
-        with self.connect() as db:
+        if self.key_file.absolute() == self.path.absolute():
+            raise ValueError("主密钥文件不能与数据库路径相同")
+        with self.connect(write=True) as db:
             version = validate_versions(db).get("provider", 0)
             if version == 0:
                 db.execute("""CREATE TABLE account_provider_keys (
@@ -46,15 +48,18 @@ class ProviderSettings:
                     ciphertext BLOB NOT NULL, masked TEXT NOT NULL, revision TEXT NOT NULL,
                     updated_at REAL NOT NULL)""")
                 db.execute("INSERT INTO schema_migrations(component, version) VALUES ('provider', 1)")
+        from database_schema import validate_columns, PROVIDER_COLUMNS
+        with self.connect() as db:
+            validate_columns(db, PROVIDER_COLUMNS)
 
     @contextmanager
-    def connect(self):
+    def connect(self, *, write=False):
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
         try:
             with db:
-                db.execute("BEGIN IMMEDIATE")
+                db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
                 yield db
         finally:
             db.close()
@@ -101,7 +106,7 @@ class ProviderSettings:
 
     def save(self, user_id, api_key):
         api_key = validate_api_key(api_key)
-        with self.connect() as db:
+        with self.connect(write=True) as db:
             nonce = secrets.token_bytes(12)
             data = nonce + self._master(db).encrypt(nonce, api_key.encode(), user_id.encode())
             db.execute("""INSERT INTO account_provider_keys VALUES (?, ?, ?, ?, ?)
@@ -111,7 +116,7 @@ class ProviderSettings:
         return self.status(user_id)
 
     def delete(self, user_id):
-        with self.connect() as db:
+        with self.connect(write=True) as db:
             db.execute("DELETE FROM account_provider_keys WHERE user_id=?", (user_id,))
         return self.status(user_id)
 

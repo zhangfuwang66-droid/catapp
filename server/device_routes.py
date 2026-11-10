@@ -108,13 +108,21 @@ async def loan(device_id: str, payload: LoanRequest, request: Request, response:
 
 @router.post("/borrow")
 async def borrow(payload: PairRequest, request: Request, user: User = Depends(require_session_write)):
-    try:
-        device = await run_blocking(request.app.state.identities.claim_loan, payload.code, user.id,
-                                   client_key=request.client.host if request.client else 'unknown')
-        await run_blocking(request.app.state.memory_retention.ensure_policy,user.id,device['id'],'temporary')
-        async with request.app.state.devices.locked(device['id']):
+    async def perform():
+        identities = request.app.state.identities
+        device_id = await run_blocking(identities.loan_target,payload.code)
+        if not device_id:
+            # 同样消耗限流，避免无效码绕过次数限制。
+            return await run_blocking(identities.claim_loan,payload.code,user.id,client_key=request.client.host if request.client else 'unknown')
+        async with request.app.state.devices.locked(device_id):
+            device = await run_blocking(identities.claim_loan, payload.code, user.id,
+                                       client_key=request.client.host if request.client else 'unknown')
+            await run_blocking(request.app.state.memory_retention.ensure_policy,user.id,device['id'],'temporary')
             await request.app.state.connections.revoke_device(device['id'], code=4403, reason="设备已进入临时借用")
             await request.app.state.devices.retire_locked(device['id'])
+            return device
+    try:
+        device = await asyncio.shield(perform())
     except RateLimited as exc:
         raise rate_error(exc) from None
     except ValueError as exc:

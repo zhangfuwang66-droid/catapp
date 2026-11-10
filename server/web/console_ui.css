@@ -156,9 +156,11 @@ button, a, input, textarea, summary { -webkit-tap-highlight-color:transparent; }
 @media (prefers-reduced-motion:reduce) {
   *,*::before,*::after { animation:none!important; transition:none!important; }
 }
-.model-dialog {width:min(520px,calc(100vw - 32px));border:1px solid var(--line,#344052);border-radius:22px;padding:26px;background:var(--panel,#151c29);color:var(--text,#edf2fa);box-shadow:0 24px 100px #0008}
+.model-dialog {width:min(520px,calc(100vw - 32px));max-height:calc(100dvh - 32px);margin:auto;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line,#344052);border-radius:22px;padding:26px;background:var(--panel,#151c29);color:var(--text,#edf2fa);box-shadow:0 24px 100px #0008}
 .model-dialog::backdrop {background:#060b16bb;backdrop-filter:blur(5px)}
 .model-heading {display:flex;align-items:center;justify-content:space-between;gap:18px}
 .model-heading h2 {margin:6px 0 12px}.model-heading small {color:#9baac3}
 .model-dialog label {display:block;margin:18px 0 8px}.model-dialog input {width:100%;padding:13px;border:1px solid #43516b;border-radius:10px;background:#0c1320;color:inherit;box-sizing:border-box}
 .model-dialog .btn-row {flex-wrap:wrap}.model-dialog p {line-height:1.7;overflow-wrap:anywhere}
+.model-dialog select,.model-dialog textarea {display:block;width:100%;box-sizing:border-box;background:#0c1320;color:inherit;border:1px solid #43516b;border-radius:10px;padding:12px;font:inherit}
+.model-dialog textarea {resize:vertical;min-height:85px}

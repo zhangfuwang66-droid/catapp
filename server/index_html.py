@@ -724,9 +724,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
                   <button id="refreshVoiceBtn" class="text-button" onclick="refreshVoiceState(true)">刷新状态</button>
                 </div>
                 <div class="companion-note"><svg><use href="#i-info"/></svg><p>想让小猫安静下来，请点“暂停语音”。关闭网页不会停止实体对话。</p></div>
+                <p id="transcriptStatus" class="hint" role="status" aria-live="polite"></p><button class="btn sm" data-accounts-only onclick="openSpeechSettings()">语音识别设置</button>
                 <a class="resource-link" href="/knowledge"><svg><use href="#i-search"/></svg><span>我的资料库<small>上传资料，让小猫带着知识回答</small></span><span>↗</span></a>
                 <a class="resource-link" data-accounts-only href="/"><svg><use href="#i-timeline"/></svg><span>设备与记忆<small>查看绑定设备及聊天记忆</small></span><span>↗</span></a>
-                <details class="tool-details control-tools"><summary>连接与使用说明</summary><p id="controlHint" class="hint">正在连接网页控制通道…</p><button id="reconnectBtn" class="btn sm" onclick="connectUI()">重连网页控制</button><p class="hint">“重连网页控制”只连接这个网页。暂停可跨网页刷新、设备重连保持；云端服务重启后会恢复默认语音状态。</p></details>
+                <details class="tool-details control-tools"><summary>连接与使用说明</summary><p id="controlHint" class="hint">正在连接网页控制通道…</p><button id="reconnectBtn" class="btn sm" onclick="connectUI()">重连网页控制</button><p class="hint">“重连网页控制”只连接这个网页。暂停可跨网页刷新、设备重连保持；云端账号模式会保存暂停状态，服务重启后仍保持暂停。</p></details>
               </aside>
             </div>
           </div>
@@ -939,9 +940,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <p class="hint">连接测试会产生少量模型用量。</p><p id="modelFeedback" class="action-feedback" role="status" aria-live="polite"></p>
 </form></dialog>
 
+<dialog id="speechDialog" class="model-dialog"><form id="speechForm"><div class="model-heading"><div><small>更懂你的说法</small><h2>语音识别设置</h2></div><button type="button" id="closeSpeech" class="btn sm">关闭</button></div><label for="speechMode">识别方式</label><select id="speechMode"><option value="fast">快速 · 不额外调用识别模型</option><option value="accurate">精准 · 每轮二次识别，增加用量和等待</option></select><p class="hint">精准模式把本轮音频发给百炼 Qwen-ASR，最多等待约 3 秒，失败时使用原识别。音频只在内存暂存，不保存录音文件。热词和资料话题用于二次识别。</p><label for="speechLanguage">主要语言（混合语言选自动）</label><select id="speechLanguage"><option value="auto">自动识别</option><option value="zh">中文</option><option value="yue">粤语</option><option value="en">英语</option></select><label for="speechHotwords">个人热词（用逗号分隔，最多 64 个）</label><textarea id="speechHotwords" rows="3" placeholder="OA，请假，项目名称"></textarea><label for="speechCorrections">明确词语校正（每行：原词 → 正确词）</label><textarea id="speechCorrections" rows="3" placeholder="欧诶 → OA"></textarea><p class="hint">两种模式都应用你明确设置的词语替换，不做模糊猜测。数字或日期冲突会先请你确认。同声传译保留原识别，不走此二次识别。</p><button type="submit" id="saveSpeech" class="btn primary">保存语音设置</button><p id="speechFeedback" class="action-feedback" role="status" aria-live="polite"></p></form></dialog>
+
 <script src="/web/console_access.js"></script>
 <script src="/web/console_controls.js"></script>
 <script src="/web/model_settings.js"></script>
+<script src="/web/speech_settings.js"></script>
 <script>
 let wsViewer = null;
 let wsUi = null;
@@ -1159,6 +1163,8 @@ function handleUiMessage(data){
     }
   } else if(data.startsWith('RECORD:')){
     try { handleRecordEvent(JSON.parse(data.substring(7))); } catch(e){}
+  } else if(data.startsWith('TRANSCRIPT:')){
+    try { renderTranscript(JSON.parse(data.substring(11))); } catch(e){}
   } else if(data.startsWith('KNOWLEDGE:')){
     try {
       const info = JSON.parse(data.substring(10));

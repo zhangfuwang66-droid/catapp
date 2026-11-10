@@ -5,6 +5,8 @@ IDENTITY_SCHEMA_VERSION = 3
 KNOWLEDGE_SCHEMA_VERSION = 2
 PROVIDER_SCHEMA_VERSION = 1
 RETENTION_SCHEMA_VERSION = 1
+SPEECH_SCHEMA_VERSION = 1
+SPEECH_COLUMNS = {"account_speech_settings": {"user_id", "settings_json", "updated_at"}}
 RETENTION_COLUMNS = {
     "memory_policies": {"user_id", "device_id", "mode", "updated_at", "archived_at"},
     "memory_message_archives": {"id", "conversation_id", "payload", "raw_bytes", "message_count", "sha256", "created_at"},
@@ -61,7 +63,7 @@ def validate_versions(connection):
     versions = schema_versions(connection)
     for component, supported in (("memory", MEMORY_SCHEMA_VERSION), ("identity", IDENTITY_SCHEMA_VERSION),
                                  ("knowledge", KNOWLEDGE_SCHEMA_VERSION), ("provider", PROVIDER_SCHEMA_VERSION),
-                                 ("retention", RETENTION_SCHEMA_VERSION)):
+                                 ("retention", RETENTION_SCHEMA_VERSION), ("speech", SPEECH_SCHEMA_VERSION)):
         version = versions.get(component, 0)
         if not isinstance(version, int) or not 0 <= version <= supported:
             raise ValueError("数据库组件版本高于当前程序或无效，不能降级写入，请使用匹配版本")

@@ -68,7 +68,15 @@ function deviceFetch(path, options={}) { return deviceRequest(path, options); }
 function deviceJson(path, options={}) { return deviceRequest(path, options, true); }
 
 function clearConsoleData() {
-  if(typeof modelInput !== 'undefined') { modelInput.value = ''; modelDialog.close(); }
+  if(typeof modelInput !== 'undefined') {
+    modelInput.value = ''; modelDialog.close(); modelFeedback.textContent = '';
+    document.getElementById('modelStatus').textContent = '';
+  }
+  if(typeof speechDialog !== 'undefined') {
+    speechDialog.close(); document.getElementById('speechForm').reset();
+    document.getElementById('speechFeedback').textContent = '';
+    document.getElementById('transcriptStatus').textContent = '';
+  }
   consoleReady = false; consoleEpoch++; consoleAbort.abort();
   consoleCsrf = ''; consoleUserId = null;
   const viewer = wsViewer, ui = wsUi;

@@ -5,7 +5,7 @@ from contextlib import ExitStack
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -15,6 +15,7 @@ from access_control import AccessSettings, SESSION_COOKIE
 from identity_store import csrf_for_session
 from memory_store import MemoryStore, SummaryResult
 from test_device_runtime import FakeRealtimeSession
+from test_realtime_knowledge import until
 import device_runtime
 
 
@@ -145,6 +146,40 @@ class AccountMemoryTests(unittest.TestCase):
         self.assertIn("重启前聊到的模拟话题", MemorySession.instances[-1].callbacks["system_prompt"])
         self.assertNotIn("重启前聊到的模拟话题", self.client.get(
             "/api/devices/cat-bob/memory", headers=self.sessions["bob"]).text)
+
+    def test_corrected_transcript_precedes_retrieval_and_memory_and_ambiguous_dates_are_not_saved(self):
+        self.app.state.speech.refine = AsyncMock(return_value={'original':'欧诶怎么请假','text':'OA怎么请假','candidate':'OA怎么请假',
+            'changed':True,'needs_confirmation':False,'source':'fast'})
+        audio=self.audio('alice'); audio.send_text('START')
+        self.assertEqual(audio.receive_text(),'OK:STARTED')
+        model=MemorySession.instances[-1]
+        runtime=self.app.state.devices.devices['cat-alice']
+        with patch.object(runtime,'knowledge_context',AsyncMock(return_value='')) as lookup:
+            prompt=self.client.portal.call(model.callbacks['on_input_transcript'],'欧诶怎么请假')
+            lookup.assert_awaited_once_with('OA怎么请假')
+            self.assertIn('OA怎么请假',prompt)
+        context=self.store.context_for(self.users['alice'].id,'cat-alice')
+        self.assertEqual(context['messages'][-1]['content'],'OA怎么请假')
+        self.app.state.speech.refine.return_value={'original':'周四请假','text':'周四请假','candidate':'周三请假',
+            'changed':True,'needs_confirmation':True,'source':'accurate'}
+        with patch.object(runtime,'knowledge_context',AsyncMock()) as lookup:
+            prompt=self.client.portal.call(model.callbacks['on_input_transcript'],'周四请假')
+            lookup.assert_not_awaited()
+            self.assertIn('只用一句话请用户确认',prompt)
+        self.client.portal.call(model.callbacks['on_output_text_delta'],'请确认日期')
+        self.client.portal.call(model.callbacks['on_response_done'])
+        context=self.store.context_for(self.users['alice'].id,'cat-alice')
+        self.assertNotIn('周四请假',str(context)); self.assertNotIn('周三请假',str(context))
+
+    def test_realtime_emotion_uses_current_account_key(self):
+        audio = self.audio('alice')
+        audio.send_text('START')
+        self.assertEqual(audio.receive_text(),'OK:STARTED')
+        model = MemorySession.instances[-1]
+        with patch.object(device_runtime,'analyze_emotion',return_value='happy') as emotion:
+            self.client.portal.call(model.callbacks['on_output_text_delta'],'这是一段足够长的模拟回答')
+            self.client.portal.call(until,lambda: emotion.called)
+            emotion.assert_called_once_with('这是一段足够长的模拟回答','simulated-alice-key')
 
 
 if __name__ == "__main__":

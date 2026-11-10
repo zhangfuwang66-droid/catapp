@@ -40,6 +40,7 @@ class OmniRealtimeSession:
         get_latest_image_bytes: Optional[Callable[[], bytes]] = None,
         manual_response: bool = False,
         api_key: Optional[str] = None,
+        capture_transcription_audio: bool = False,
     ):
         self.loop = loop
         self.system_prompt = system_prompt
@@ -53,7 +54,13 @@ class OmniRealtimeSession:
         self.on_debug = on_debug
         self.get_latest_image_bytes = get_latest_image_bytes
         self.manual_response = manual_response
-        self.api_key = API_KEY if api_key is None else api_key
+        self.api_key = api_key
+        self.capture_transcription_audio = capture_transcription_audio
+        self._capture_buffer = bytearray()
+        self._capture_total = 0
+        self._capture_base = 0
+        self._capture_start = None
+        self._capture_end = None
 
         self._ws = None
         self._message_task: Optional[asyncio.Task] = None
@@ -97,7 +104,8 @@ class OmniRealtimeSession:
         return state_name in {"CLOSED", "CLOSING"}
 
     async def ensure_connected(self):
-        if not self.api_key:
+        key = API_KEY if self.api_key is None else self.api_key
+        if not key:
             raise RuntimeError("未设置 DASHSCOPE_API_KEY")
 
         async with self._connect_lock:
@@ -113,7 +121,7 @@ class OmniRealtimeSession:
             self._session_updated = False
 
             url = f"{REALTIME_WS_URL}?model={REALTIME_MODEL}"
-            headers = {"Authorization": f"Bearer {self.api_key}"}
+            headers = {"Authorization": f"Bearer {key}"}
             await self._debug(f"connecting url={REALTIME_WS_URL} model={REALTIME_MODEL}")
             connect_kwargs = {
                 "open_timeout": 10,
@@ -274,12 +282,25 @@ class OmniRealtimeSession:
         await self.ensure_connected()
         payload = base64.b64encode(pcm_chunk).decode("ascii")
         await self._send_event({"type": "input_audio_buffer.append", "audio": payload})
+        if self.capture_transcription_audio:
+            self._capture_total += len(pcm_chunk)
+            self._capture_buffer.extend(pcm_chunk)
+            overflow = max(0,len(self._capture_buffer)-25*16000*2)
+            if overflow:
+                del self._capture_buffer[:overflow]
+                self._capture_base += overflow
         self._audio_appended_for_turn = True
         self._audio_append_count_for_turn += 1
         if self._speech_started_for_turn:
             self._audio_append_count_after_speech_started += 1
         if self._speech_started_for_turn and not self._image_sent_for_turn:
             self._schedule_image_append()
+
+    def transcription_audio(self):
+        start,end = self._capture_start,self._capture_end or self._capture_total
+        if start is None or start<self._capture_base or end<=start or end>self._capture_total:
+            return b''
+        return bytes(self._capture_buffer[start-self._capture_base:end-self._capture_base])
 
     async def send_text_turn(self, text: str):
         text = (text or "").strip()
@@ -358,6 +379,9 @@ class OmniRealtimeSession:
             except (asyncio.CancelledError, Exception):
                 pass
         await self._debug("session closed")
+        self._capture_buffer.clear()
+        self._capture_total = self._capture_base = 0
+        self._capture_start = self._capture_end = None
 
     async def _handle_messages(self):
         if self._ws is None:
@@ -447,6 +471,9 @@ class OmniRealtimeSession:
                     await self.on_response_done()
                     continue
                 if event_type == "input_audio_buffer.speech_started":
+                    start_ms = event.get('audio_start_ms')
+                    self._capture_start = int(start_ms*32) if isinstance(start_ms,(int,float)) and 0<=start_ms*32<=self._capture_total else max(0,self._capture_total-2*16000*2)
+                    self._capture_end = None
                     self._invalidate_turn()
                     self._speech_item_id = event.get("item_id")
                     self._image_sent_for_turn = False
@@ -457,6 +484,8 @@ class OmniRealtimeSession:
                     self._schedule_image_append()
                     continue
                 if event_type == "input_audio_buffer.speech_stopped":
+                    end_ms = event.get('audio_end_ms')
+                    self._capture_end = int(end_ms*32) if isinstance(end_ms,(int,float)) and 0<=end_ms*32<=self._capture_total else self._capture_total
                     await self._debug("event speech_stopped")
                     continue
                 if event_type == "conversation.item.input_audio_transcription.completed":

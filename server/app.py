@@ -40,9 +40,11 @@ from knowledge_store import KnowledgeStore
 from knowledge_service import KnowledgeService
 from knowledge_routes import router as knowledge_router
 from provider_settings import ProviderSettings, ModelCredentials
-from provider_routes import router as provider_router
+from provider_routes import router as provider_router, lock_for
 from account_memory_routes import router as account_memory_router
 from memory_retention import MemoryRetention
+from speech_settings import SpeechSettings, SpeechService
+from speech_routes import router as speech_router
 
 router = APIRouter()
 
@@ -50,10 +52,13 @@ router = APIRouter()
 async def resolve_runtime(connection: HTTPConnection, *, hardware=False, playback=False) -> DeviceRuntime:
     device_id, user_id = await authorize_runtime(connection, hardware=hardware, playback=playback)
     try:
-        async with connection.app.state.devices.locked(device_id):
-            # 等锁期间可能已经解绑或转交，重新核验后才创建运行时。
-            device_id, user_id = await authorize_runtime(connection, hardware=hardware, playback=playback)
-            return connection.app.state.devices.get(device_id, user_id)
+        async with lock_for(connection.app,user_id):
+            async with connection.app.state.devices.locked(device_id):
+                # 等锁期间可能已经解绑或转交，重新核验后才创建运行时。
+                device_id, current_user = await authorize_runtime(connection, hardware=hardware, playback=playback)
+                if current_user != user_id:
+                    raise HTTPException(409, "设备使用者已改变，请重新连接")
+                return connection.app.state.devices.get(device_id, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -307,15 +312,20 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     import device_runtime
     providers = ModelCredentials(provider_settings, account_mode=access.mode == "accounts", local_key=lambda: device_runtime.API_KEY)
     knowledge.providers = providers
+    speech = SpeechService(SpeechSettings(manager.store.path),providers,knowledge=knowledge)
     if summarizer is summarize_memory_messages:
         async def account_summarizer(messages):
             owner = await run_blocking(manager.store.conversation_owner, messages[0]["conversation_id"])
             if owner is None:
                 raise ValueError("对话归属不存在")
-            return await summarize_memory_messages(messages, api_key=await run_blocking(providers.key, owner["user_id"]))
+            key = await run_blocking(providers.key, owner["user_id"])
+            result = await summarize_memory_messages(messages, api_key=key)
+            if key != await run_blocking(providers.key, owner["user_id"]):
+                raise ValueError("模型凭证已更新，保留待总结消息重试")
+            return result
         manager.summarize = account_summarizer
     devices = DeviceRegistry(manager, storage=storage, knowledge=knowledge, providers=providers,
-                             preferences=identities if access.mode == "accounts" else None)
+                             preferences=identities if access.mode == "accounts" else None, speech=speech)
     storage.protected_paths = devices.protected_record_paths
     connections = ConnectionAuthorizer(identities)
     backups = DatabaseBackups(manager.store.path, backup_settings if backup_settings is not None else BackupSettings.from_environment())
@@ -386,6 +396,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.state.providers = providers
     application.state.model_locks = {}
     application.state.memory_retention = retention
+    application.state.speech = speech
     application.state.default_user_id = MEMORY_USER_ID
     application.state.default_device_id = MEMORY_DEVICE_ID
     application.include_router(router)
@@ -394,6 +405,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.include_router(knowledge_router)
     application.include_router(provider_router)
     application.include_router(account_memory_router)
+    application.include_router(speech_router)
     application.mount("/web", StaticFiles(directory=str(WEB_ROOT)), name="web")
     application.add_middleware(LocalAccessMiddleware, settings=access)
     return application

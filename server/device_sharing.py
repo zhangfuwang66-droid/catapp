@@ -100,6 +100,11 @@ class DeviceSharing:
             row = db.execute("SELECT * FROM devices WHERE id=?", (loan['device_id'],)).fetchone()
             return self.decorate_device(db,row,user_id)
 
+    def loan_target(self,code):
+        with self._transaction() as db:
+            row = db.execute('SELECT device_id FROM device_loans WHERE invitation_hash=?',(code_hash(code),)).fetchone()
+            return row[0] if row else None
+
     def end_loan(self, device_id, user_id):
         with self._transaction(write=True) as db:
             loan = db.execute("""SELECT l.* FROM device_loans l JOIN devices d ON d.id=l.device_id

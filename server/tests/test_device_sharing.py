@@ -85,6 +85,18 @@ class SharingTests(unittest.TestCase):
         self.assertTrue(self.client.get('/api/devices/cat-alice/voice',headers=self.headers['alice']).json()['paused'])
         self.assertTrue(IdentityStore(self.store.path).voice_preference(self.users['alice'].id,'cat-alice'))
 
+    def test_key_rotation_closes_only_current_account_runtime_and_preserves_pause(self):
+        self.client.post('/api/devices/cat-alice/voice',headers=self.headers['alice'],json={'paused':True})
+        with self.client.websocket_connect('/ws/devices/cat-alice/audio',headers=self.credentials['alice']) as audio:
+            self.client.get('/api/devices/cat-bob/voice',headers=self.headers['bob'])
+            other=self.app.state.devices.devices['cat-bob']
+            response=self.client.put('/api/account/model',headers=self.headers['alice'],json={'api_key':'sk-simulated-rotated-key'})
+            self.assertEqual(response.status_code,200,response.text)
+            with self.assertRaises(WebSocketDisconnect):
+                while True: audio.receive_text()
+            self.assertIs(self.app.state.devices.devices['cat-bob'],other)
+        self.assertTrue(self.client.get('/api/devices/cat-alice/voice',headers=self.headers['alice']).json()['paused'])
+
     def test_v2_migration_records_existing_ownership_without_moving_memory(self):
         self.seed('alice','升级前记忆')
         # 独立数据库副本，不与正在运行的应用并发降级。

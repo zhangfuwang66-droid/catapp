@@ -116,6 +116,23 @@ class AdminBackendTests(unittest.TestCase):
         self.assertTrue(any(a['action']=='unbind-device' and a['result']=='success' for a in audit))
         self.assertTrue(any(a['result']=='failed' for a in audit))
 
+    def test_device_pagination_only_decorates_requested_rows(self):
+        self.login()
+        for index in range(7):
+            self.ids.register_device('cat-page-'+str(index),'分页设备')
+        with patch.object(self.ids,'decorate_device',wraps=self.ids.decorate_device) as decorate:
+            response = self.client.get('/api/admin/devices?q=cat-page&status=unbound&page=2&page_size=2')
+            self.assertEqual(response.status_code,200,response.text)
+            result = response.json()
+            self.assertEqual(result['total'],7)
+            self.assertEqual(len(result['items']),2)
+            self.assertEqual(decorate.call_count,2)
+        bound = self.client.get('/api/admin/devices?status=bound').json()
+        self.assertEqual(bound['total'],1)
+        self.assertEqual(bound['items'][0]['id'],'cat-admin-test')
+        self.assertEqual(self.client.get('/api/admin/devices?status=online').json()['total'],0)
+        self.assertEqual(self.client.get('/api/admin/devices?status=offline').json()['total'],8)
+
     def test_self_lockout_last_admin_and_cli(self):
         headers = self.login()
         result = self.client.post('/api/admin/users/'+self.admin.id+'/status',headers=headers,

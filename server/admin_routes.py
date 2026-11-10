@@ -94,12 +94,14 @@ async def users(request: Request, q: str = Query('',max_length=80),
 async def devices(request: Request,q: str = Query('',max_length=80),
                   status: Literal['all','bound','unbound','online','offline'] = 'all',
                   page: int = Query(1,ge=1),page_size: int = Query(20,ge=1,le=100)):
-    items = decorate_runtime(request.app,await run_blocking(request.app.state.admin_store.devices,q))
-    if status in ('bound','unbound'):
-        items = [d for d in items if bool(d['owner_user_id']) == (status == 'bound')]
-    elif status in ('online','offline'):
-        items = [d for d in items if d['online'] == (status == 'online')]
-    return {'items':items[(page-1)*page_size:page*page_size],'total':len(items),'page':page,'page_size':page_size}
+    store = request.app.state.admin_store
+    online_ids = ()
+    if status in ('online','offline'):
+        candidates = await run_blocking(store.devices,device_ids=tuple(request.app.state.devices.devices))
+        online_ids = tuple(d['id'] for d in decorate_runtime(request.app,candidates) if d['online'])
+    result = await run_blocking(store.devices,q,status=status,page=page,page_size=page_size,online_ids=online_ids)
+    decorate_runtime(request.app,result['items'])
+    return result
 
 
 @router.get('/storage')

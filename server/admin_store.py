@@ -110,12 +110,27 @@ class AdminStore:
                 row[field] = bool(row[field])
         return result
 
-    def devices(self, q=''):
+    def devices(self, q='', *, device_ids=None, status='all', page=None, page_size=20, online_ids=()):
         with self.identities._transaction() as db:
-            rows = db.execute("""SELECT d.id,d.display_name,d.owner_user_id,d.created_at,d.revoked_at,
+            query = """SELECT d.id,d.display_name,d.owner_user_id,d.created_at,d.revoked_at,
                 u.username AS owner_username FROM devices d LEFT JOIN auth_users u ON u.id=d.owner_user_id
-                WHERE instr(lower(d.id),?)>0 OR instr(lower(d.display_name),?)>0 OR instr(u.username,?)>0
-                ORDER BY d.created_at DESC,d.id""", (q.casefold(),)*3).fetchall()
+                WHERE (instr(lower(d.id),?)>0 OR instr(lower(d.display_name),?)>0 OR instr(u.username,?)>0)"""
+            args = [q.casefold()]*3
+            def selected_ids(table, values):
+                # 仅存在于本次连接，避免大量运行时 ID 触发 SQLite 参数数量限制。
+                db.execute('CREATE TEMP TABLE '+table+' (id TEXT PRIMARY KEY)')
+                db.executemany('INSERT OR IGNORE INTO '+table+' VALUES(?)', ((value,) for value in values))
+            if device_ids is not None:
+                selected_ids('admin_candidate_ids',device_ids)
+                query += ' AND d.id IN (SELECT id FROM admin_candidate_ids)'
+            if status in ('bound','unbound'):
+                query += ' AND d.owner_user_id IS ' + ('NOT NULL' if status == 'bound' else 'NULL')
+            elif status in ('online','offline'):
+                selected_ids('admin_online_ids',online_ids)
+                query += ' AND d.id ' + ('IN' if status == 'online' else 'NOT IN') + ' (SELECT id FROM admin_online_ids)'
+            query += ' ORDER BY d.created_at DESC,d.id'
+            pagination = self._page(db,query,tuple(args),page,page_size) if page is not None else None
+            rows = pagination['items'] if pagination else db.execute(query,args).fetchall()
             result = []
             for row in rows:
                 device = self.identities.decorate_device(db,row)
@@ -128,6 +143,9 @@ class AdminStore:
                 device['revoked'] = device.pop('revoked_at') is not None
                 device['device_type'] = 'cat' if device['id'].startswith('cat-') else 'unknown'
                 result.append(device)
+            if pagination is not None:
+                pagination['items'] = result
+                return pagination
             return result
 
     def storage(self):

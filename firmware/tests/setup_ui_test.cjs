@@ -7,7 +7,16 @@ const {chromium} = require('playwright');
 const origin = 'http://192.168.4.1';
 const output = path.resolve(__dirname, '../../artifacts/web-tests');
 const source = fs.readFileSync(path.resolve(__dirname, '../esp32_servo_control/SetupPage.h'), 'utf8');
-const html = source.match(/R"CMIAOHTML\(([\s\S]*?)\)CMIAOHTML"/)[1];
+// 解析整个 C++ 相邻字面量表达式；不能只提取第一段 raw string 而漏测页面。
+function renderSetupHtml(profile = 'cat') {
+  const macros = profile === 'deer'
+    ? {CYBERMIAO_SHORT_NAME:'小鹿',CYBERMIAO_BRAND:'CYBER DEER',CYBERMIAO_SETUP_AVATAR:'cat deer'}
+    : {CYBERMIAO_SHORT_NAME:'小喵',CYBERMIAO_BRAND:'CYBER MIAO',CYBERMIAO_SETUP_AVATAR:'cat'};
+  const expression = source.split('static const char DEVICE_SETUP_HTML[] PROGMEM = ')[1].trim();
+  const token = /R"CMIAOHTML\(([\s\S]*?)\)CMIAOHTML"|CYBERMIAO_SHORT_NAME|CYBERMIAO_BRAND|CYBERMIAO_SETUP_AVATAR/g;
+  assert.equal(expression.replace(token, '').trim(), ';', '设置页包含未解析的 C++ 字面量');
+  return Array.from(expression.matchAll(token), match => match[1] ?? macros[match[0]]).join('');
+}
 const csp = "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
 const maliciousSsid = '<img onerror="ssidAttack=1">';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -40,7 +49,7 @@ async function fixture(options = {}) {
     const request = route.request(), url = new URL(request.url());
     assert.equal(url.origin, origin, '离线页面不得请求外部资源');
     if (url.pathname === '/') {
-      return route.fulfill({contentType:'text/html',body:html,headers:{'Content-Security-Policy':csp}});
+      return route.fulfill({contentType:'text/html',body:renderSetupHtml(options.profile),headers:{'Content-Security-Policy':csp}});
     }
     if (url.pathname === '/favicon.ico') return route.fulfill({status:204});
     if (request.method() === 'POST') {
@@ -106,6 +115,21 @@ async function main() {
   fs.mkdirSync(output,{recursive:true});
   browser = await chromium.launch({headless:true,executablePath:process.env.BROWSER_EXECUTABLE});
   try {
+    // 鹿使用独立品牌；保存、扫描等配网逻辑与猫共用，动态回执也必须使用鹿的名称。
+    {
+      const f = await fixture({profile:'deer',state:{device_id:'deer-C8381AAD4F7C',device_type:'deer'}});
+      const {page} = f; await f.ready();
+      assert.equal(await page.title(), '小鹿 · 连接 Wi-Fi');
+      assert.equal(await page.locator('.cat.deer').count(), 1);
+      assert((await page.innerText('header')).includes('CYBER DEER'));
+      assert(!(await page.innerText('body')).includes('小喵'));
+      await page.screenshot({path:path.join(output,'device-setup-deer-mobile.png'),fullPage:true});
+      await page.fill('#password','test-only-password'); await page.click('#save');
+      await text(page,'#resultTitle','已保存');
+      assert((await page.innerText('#resultCopy')).includes('小鹿'));
+      assert(!(await page.innerText('#resultCopy')).includes('小喵'));
+      await f.close(); ++completed;
+    }
     // 主路径：默认隐藏高级设置、可见选网弹层、SSID 转义与去重、失败可重试。
     {
       const f = await fixture(); const {page} = f; await f.ready();

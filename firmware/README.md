@@ -25,6 +25,28 @@ arduino-cli compile --fqbn 'esp32:esp32:esp32s3:FlashSize=8M,PSRAM=opi,Partition
 
 首次编译需要准备库与核心缓存。第三方 ArduinoWebsockets 与 ESP32Servo 在上述核心下存在弃用警告，应结合完整日志判断结果。`compile` 不访问串口或烧录设备；编译成功也不能替代实物验收。
 
+### 小鹿设备版本
+
+同款 ESP32-S3 硬件可从同一主草图编译鹿版本。须先核对屏幕、摄像头、麦克风、功放、四路舵机接线与现有引脚定义一致；芯片与分区相同不能证明外设兼容。
+
+```powershell
+arduino-cli compile --fqbn 'esp32:esp32:esp32s3:FlashSize=8M,PSRAM=opi,PartitionScheme=custom,CDCOnBoot=cdc,USBMode=hwcdc,FlashMode=qio' --build-property 'upload.maximum_size=2621440' --build-property 'compiler.cpp.extra_flags=-DCYBERMIAO_DEVICE_DEER=1' --build-path artifacts/build/firmware-deer --warnings default --jobs 4 firmware/esp32_servo_control
+```
+
+`DeviceProfile.h` 默认使用猫配置，鹿编译选项只改变设备类型、编号前缀、热点名称、屏幕连接标题和配网页品牌，不改接线、分区或音视频协议。猫编号保持 `cat-<芯片后缀>`，鹿使用 `deer-<芯片后缀>`，热点为 `CyberDeer-<后六位>`。USB `status` 返回 `device_type`、`product_name`；原凭证只有编号完全一致时才会加载，不能在猫、鹿间复用。
+
+仅更新 `0x10000` 主程序可保留原文件系统和 NVS，但原表情的目录及帧格式仍须兼容主草图。`diagnostics` 的 `filesystem_ready`、`animation_sets`、`animation_frames` 和 `psram_bytes` 可辅助核对挂载、动画扫描和 PSRAM；这些计数不能代替查看屏幕、试听及检查舵机。不得因为资源不兼容而自动格式化或覆盖原资源。
+
+鹿使用独立设备凭证登记到同一后端，然后由账号通过配对码绑定。写入鹿程序并不等于已经登记、联网或完成云端验收，首次身份配发与网络配置仍按 [USB 配置说明](tools/README.md) 操作。
+
+设备类型测试可用原生 C++ 编译器分别运行 `firmware/tests/device_profile_test.cpp`（默认猫）和带 `-DCYBERMIAO_DEVICE_DEER=1` 的鹿版本。USB 模拟测试包含跨类型凭证拒绝，设置页浏览器测试覆盖两种品牌与鹿的保存回执。
+
+2026 年 11 月 10 日，一台 8MB Flash / 8MB OPI PSRAM 的 ESP32-S3 小鹿完成了主程序升级。烧录前核验完整 Flash 备份，写入后校验新程序以及保留的启动、分区、NVS 和文件系统区域。设备随后自动连接原 Wi-Fi，挂载原有 4 组共 160 帧表情；USB 诊断确认摄像头持续采集，摄像头、I2S 和任务创建未报告初始化错误，用户确认屏幕显示正常、舵机无异常。
+
+同日，在完成云端数据库一致性备份后，为小鹿登记了独立身份并通过 USB 配发凭证，沿用原 Wi-Fi 切换到公网账号模式。设备已完成时钟同步并通过 HTTPS 成功申请配对码；操作前后核对确认云服务未重启，其他设备的绑定与语音偏好未变。
+
+用户选择稍后绑定，随后完成了未绑定状态的只读检查：健康、数据库就绪、凭证验证及访问限制共 8 项云端检查通过，HTTPS 验证证书与 IP 匹配；未绑定设备的播放请求返回 409，音频和摄像头 WebSocket 握手返回 403。约 31 秒的 4 次 USB 采样中，设备保持联网、未重启，摄像头采集计数持续增长且无失败，I2S、任务及资源状态正常，空闲内存读数一致，音视频上传和播放计数均为 0。本轮未绑定、未改配置或调用模型；实际收音、扬声器听感、云端画面、模型对话与长期稳定性仍待后续验收。
+
 ## 设备身份与网络
 
 主草图中的 `DeviceConfig` 与 `DeviceProvisioning` 提供芯片派生的稳定编号、独立 NVS 身份、服务器协议/主机/端口配置、旧 Wi-Fi 配置兼容，以及 USB 状态查询和凭证配发。工具和模拟串口测试位于 `tools/`、`tests/`，操作说明见 [USB 配置说明](tools/README.md)。

@@ -260,6 +260,7 @@ DeviceSetup setupPortal(deviceConfig, deviceLink);
 DeviceSocket wsCam(deviceConfig);
 DeviceSocket wsAud(deviceConfig);
 DeviceRuntimeDiagnostics runtimeDiagnostics;
+bool filesystemReady = false;
 NetworkClient ttsPlainClient;
 NetworkClientSecure ttsSecureClient;
 NetworkClient* ttsClient = &ttsPlainClient;
@@ -966,7 +967,7 @@ void drawConnectionBanner(const String& line1, const String& line2, const String
     canvas.print(s);
   };
 
-  printCentered("CYBER MIAO", 54, COLOR_ACCENT, 3);
+  printCentered(DeviceProfile::brand, 54, COLOR_ACCENT, 3);
   canvas.drawFastHLine((pageW - 120) / 2, 98, 120, COLOR_MUTED);
   printCentered(line1, 114, COLOR_PRIMARY, 2);
   printCentered(line2, 148, COLOR_MUTED, 1);
@@ -2910,6 +2911,16 @@ void addRuntimeDiagnostics(cJSON* object) {
   cJSON_AddNumberToObject(object, "largest_internal_block_bytes", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   cJSON_AddNumberToObject(object, "minimum_free_heap_bytes", ESP.getMinFreeHeap());
   cJSON_AddNumberToObject(object, "free_psram_bytes", ESP.getFreePsram());
+  cJSON_AddNumberToObject(object, "psram_bytes", ESP.getPsramSize());
+  cJSON_AddBoolToObject(object, "filesystem_ready", filesystemReady);
+  int animationSets = 0;
+  int animationFrames = 0;
+  for (int i = 1; i <= maxAnimIndex; ++i) {
+    if (animFrames[i] > 0) ++animationSets;
+    animationFrames += animFrames[i];
+  }
+  cJSON_AddNumberToObject(object, "animation_sets", animationSets);
+  cJSON_AddNumberToObject(object, "animation_frames", animationFrames);
   cJSON_AddNumberToObject(object, "camera_init_error", runtimeDiagnostics.cameraInitError.load());
   cJSON_AddBoolToObject(object, "i2s_input_ready", runtimeDiagnostics.microphoneReady.load());
   cJSON_AddBoolToObject(object, "i2s_output_ready", runtimeDiagnostics.speakerReady.load());
@@ -2999,7 +3010,8 @@ void setup() {
   centerCatPose();
 
   initScreen();
-  if (LittleFS.begin(false)) {
+  filesystemReady = LittleFS.begin(false);
+  if (filesystemReady) {
     LOGLN("[FS] LittleFS ready");
     scanAnimationFolders();
     scanMouthAssets();

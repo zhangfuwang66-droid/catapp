@@ -97,6 +97,8 @@ void DeviceSetup::status() {
   DeviceLinkSnapshot state = link_.snapshot();
   cJSON* body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "device_id", config_.deviceId().c_str());
+  cJSON_AddStringToObject(body, "device_type", DeviceProfile::type);
+  cJSON_AddStringToObject(body, "product_name", DeviceProfile::name);
   cJSON_AddStringToObject(body, "server_url", config_.serverUrl().c_str());
   cJSON_AddStringToObject(body, "wifi_ssid", config_.network().ssid.c_str());
   cJSON_AddBoolToObject(body, "wifi_connected", WiFi.status() == WL_CONNECTED);
@@ -148,7 +150,7 @@ void DeviceSetup::configure() {
   cJSON_AddBoolToObject(body, "saved", true);
   cJSON_AddStringToObject(body, "save_request_id", saveRequestId_.c_str());
   cJSON_AddNumberToObject(body, "restart_in_ms", SetupSession::REBOOT_DELAY_MS);
-  cJSON_AddStringToObject(body, "message", "设置已保存，即将重启。请等待小喵连接网络；连接失败时可重新加入设备热点修改。");
+  cJSON_AddStringToObject(body, "message", "设置已保存，即将重启。请等待" CYBERMIAO_SHORT_NAME "连接网络；连接失败时可重新加入设备热点修改。");
   json(200, body);
 }
 

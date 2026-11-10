@@ -253,7 +253,7 @@ function renderAudit(data) {
   items.forEach(item => {
     const row = node('tr'); addCell(row,date(item.created_at)); addCell(row,item.actor_username || `ID ${item.actor_id}`);
     addCell(row,item.action || '未知操作'); addCell(row,`${item.target_type || '对象'} · ${item.target_id ?? '—'}`);
-    addCell(row).append(pill(item.result === 'success' ? '成功' : item.result === 'failed' ? '失败' : item.result === 'started' ? '进行中' : '未知', item.result === 'success' ? 'good' : item.result === 'failed' ? 'bad' : 'warn'));
+    addCell(row).append(pill(item.result === 'success' ? '成功' : item.result === 'failed' ? '失败' : item.result === 'started' ? '未完成' : '未知', item.result === 'success' ? 'good' : item.result === 'failed' ? 'bad' : 'warn'));
     body.append(row);
   });
   $('auditEmpty').hidden = items.length > 0; $('auditEmpty').textContent = data.total ? '本页暂无审计记录' : '暂无审计记录';

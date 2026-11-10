@@ -9,7 +9,7 @@ from async_helpers import run_blocking
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -115,7 +115,19 @@ async def admin_page(request: Request):
         if exc.status_code == 401:
             return RedirectResponse("/?notice=login", status_code=303, headers={"Cache-Control": "no-store"})
         raise
-    return HTMLResponse(admin_html(), headers={"Cache-Control": "no-store"})
+    return HTMLResponse(admin_html(), headers={"Cache-Control": "no-store",
+        "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"})
+
+
+@router.get("/web/admin/{asset:path}")
+async def admin_asset(asset: str, request: Request):
+    # 在公共静态挂载前截住后台目录，避免绕过页面入口。
+    await require_admin(request)
+    if asset not in {"index.html", "admin.js", "admin.css"}:
+        raise HTTPException(404, "资源不存在")
+    if asset == "index.html":
+        return await admin_page(request)
+    return FileResponse(WEB_ROOT / "admin" / asset, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/api/health", response_class=PlainTextResponse)

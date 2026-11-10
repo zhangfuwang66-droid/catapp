@@ -62,7 +62,8 @@ async function fixtureUrl() {
     await mobilePage.locator('#devicesBody').getByText('cat-browser-test').waitFor();
     await mobilePage.screenshot({path:path.join(output,'live-mobile.png'),fullPage:true});
     await page.getByRole('button',{name:'操作审计',exact:true}).click();
-    await page.locator('#auditBody').getByText('pause-voice').waitFor();
+    await page.locator('#auditBody').getByText('暂停语音',{exact:true}).waitFor();
+    await page.locator('#auditBody').getByText('授予管理员',{exact:true}).waitFor();
     const ordinary = await browser.newContext();
     const ordinaryLogin = await ordinary.request.post(url + '/api/auth/login',
       {headers:{Origin:url},data:{username:'ordinary-user',password:'temporary-test-password'}});

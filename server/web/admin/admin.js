@@ -6,6 +6,11 @@ const views = {
   devices: ['设备', '绑定关系与连接状态'], storage: ['资料与记忆', '用量、处理与归档元数据'],
   backups: ['备份', '备份状态与异常'], audit: ['操作审计', '管理员操作记录'],
 };
+const auditActions = new Map([
+  ['disable-user','停用账号'], ['enable-user','启用账号'], ['revoke-sessions','撤销网页登录'],
+  ['pause-voice','暂停语音'], ['resume-voice','恢复语音'], ['unbind-device','解绑设备'],
+  ['grant-admin','授予管理员'], ['revoke-admin','撤销管理员'],
+]);
 const state = {view:'overview', csrf:'', user:null, requests:{}, serial:{}, busy:false,
   pages:{users:1,devices:1,audit:1}, queries:{users:'',devices:'',audit:''},
   statuses:{users:'all',devices:'all'}};
@@ -71,35 +76,40 @@ function loginExpired() {
   window.location.assign('/?notice=login');
 }
 async function api(path, {method='GET', body, signal, timeout=12000}={}) {
+  const writing = method !== 'GET' && method !== 'HEAD';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   const cancel = () => controller.abort();
   signal?.addEventListener('abort', cancel, {once:true});
+  if(signal?.aborted) cancel();
   const headers = new Headers({'Accept':'application/json'});
   if(body !== undefined) headers.set('Content-Type', 'application/json');
-  if(method !== 'GET' && method !== 'HEAD') {
+  if(writing) {
     headers.set('X-CSRF-Token', state.csrf);
     headers.set('Origin', location.origin);
   }
   try {
     const response = await fetch(path, {method,headers,body:body === undefined ? undefined : JSON.stringify(body),
       credentials:'same-origin',cache:'no-store',signal:controller.signal});
-    const payload = await response.json().catch(() => ({}));
+    const payload = await response.json().catch(error => {
+      if(response.ok || error.name === 'AbortError') throw error;
+      return {};
+    });
     if(response.status === 401) { loginExpired(); throw new ApiError('登录已过期，请重新登录。', 401); }
     if(!response.ok) {
       const detail = typeof payload.detail === 'string' ? payload.detail : '';
       const fallback = response.status === 403 ? '无权执行此操作，或请求校验已失效。' :
-        response.status === 409 ? '状态已变化，请刷新后重试。' : '请求失败，请稍后重试。';
+        response.status === 409 ? '状态已变化，请刷新后重试。' : writing ? '服务未能确认操作结果。' : '请求失败，请稍后重试。';
       throw new ApiError(detail || fallback, response.status);
     }
     return payload;
   } catch(error) {
     if(error.name === 'AbortError') {
       if(signal?.aborted) throw error;
-      throw new ApiError('请求超时，请检查网络后重试。');
+      throw new ApiError(writing ? '请求超时，未能确认操作结果。' : '请求超时，请检查网络后重试。');
     }
     if(error instanceof ApiError) throw error;
-    throw new ApiError('暂时无法连接服务，请稍后重试。');
+    throw new ApiError(writing ? '连接中断或响应异常，未能确认操作结果。' : '暂时无法连接服务，请稍后重试。');
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', cancel);
@@ -114,12 +124,12 @@ function queryPath(view) {
   return `/api/admin/${view}?${params}`;
 }
 async function load(view=state.view) {
-  if(!views[view]) return;
+  if(!views[view]) return false;
   state.requests[view]?.abort();
   const controller = new AbortController();
   const serial = (state.serial[view] || 0) + 1;
   state.requests[view] = controller; state.serial[view] = serial;
-  $('refreshButton').disabled = true;
+  if(view === state.view) $('refreshButton').disabled = true;
   if(['users','devices','audit'].includes(view)) {
     $(`${view}Prev`).disabled = true; $(`${view}Next`).disabled = true;
   }
@@ -127,13 +137,15 @@ async function load(view=state.view) {
   try {
     const data = await api(['users','devices','audit'].includes(view) ? queryPath(view) : `/api/admin/${view}`,
       {signal:controller.signal});
-    if(serial !== state.serial[view]) return;
+    if(serial !== state.serial[view]) return false;
     ({overview:renderOverview,users:renderUsers,devices:renderDevices,storage:renderStorage,
       backups:renderBackups,audit:renderAudit})[view](data);
     if(view === state.view) feedback();
+    return true;
   } catch(error) {
-    if(error.name === 'AbortError' || serial !== state.serial[view] || error.status === 401) return;
+    if(error.name === 'AbortError' || serial !== state.serial[view] || error.status === 401) return false;
     if(view === state.view) feedback(error.message, 'error');
+    return false;
   } finally {
     if(state.requests[view] === controller) {
       delete state.requests[view];
@@ -252,7 +264,9 @@ function renderAudit(data) {
   const items = Array.isArray(data.items) ? data.items : [];
   items.forEach(item => {
     const row = node('tr'); addCell(row,date(item.created_at)); addCell(row,item.actor_username || `ID ${item.actor_id}`);
-    addCell(row,item.action || '未知操作'); addCell(row,`${item.target_type || '对象'} · ${item.target_id ?? '—'}`);
+    const action = addCell(row,auditActions.get(item.action) || (item.action ? `未知操作（${item.action}）` : '未知操作'));
+    if(item.action) action.title = item.action;
+    addCell(row,`${item.target_type || '对象'} · ${item.target_id ?? '—'}`);
     addCell(row).append(pill(item.result === 'success' ? '成功' : item.result === 'failed' ? '失败' : item.result === 'started' ? '未完成' : '未知', item.result === 'success' ? 'good' : item.result === 'failed' ? 'bad' : 'warn'));
     body.append(row);
   });
@@ -267,28 +281,53 @@ function actionButton(parent, label, handler, danger=false, disabled=false) {
   button.addEventListener('click', handler); parent.append(button);
 }
 function confirmAction({title,description,expected,buttonLabel,run}) {
-  if(state.busy) return;
   const dialog = $('confirmDialog');
+  if(state.busy || dialog.open) return;
+  const view = state.view;
+  let active = true, submitted = false;
   text('confirmTitle',title); text('confirmDescription',description);
   text('confirmLabel', `输入 ${expected} 以确认`);
   $('confirmLabel').hidden = false; $('confirmInput').hidden = false;
-  $('confirmInput').value = ''; text('confirmError','');
+  $('confirmInput').disabled = false; $('confirmCancel').disabled = false; text('confirmCancel','取消');
+  $('confirmInput').value = ''; $('confirmError').textContent = '';
   text('confirmSubmit',buttonLabel); $('confirmSubmit').disabled = true;
   dialog.showModal(); $('confirmInput').focus();
-  const update = () => { $('confirmSubmit').disabled = state.busy || $('confirmInput').value !== expected; };
-  const close = () => { dialog.close(); cleanup(); };
+  const update = () => { $('confirmSubmit').disabled = state.busy || submitted || $('confirmInput').value !== expected; };
+  const close = () => { if(state.busy) return; cleanup(); dialog.close(); };
+  const cancel = event => { event.preventDefault(); close(); };
   const submit = async event => {
     event.preventDefault();
-    if(state.busy || $('confirmInput').value !== expected) return;
+    if(!active || state.busy || submitted || $('confirmInput').value !== expected) return;
+    submitted = true;
     state.busy = true; $('confirmSubmit').disabled = true; $('confirmCancel').disabled = true;
-    text('confirmSubmit','处理中…'); text('confirmError','');
-    try { await run(); close(); toast('操作已完成'); await load(state.view); }
-    catch(error) { if(error.status !== 401) text('confirmError',error.message || '操作未完成'); }
-    finally { state.busy = false; $('confirmCancel').disabled = false; text('confirmSubmit',buttonLabel); update(); }
+    $('confirmInput').disabled = true;
+    text('confirmSubmit','处理中…'); $('confirmError').textContent = '';
+    try {
+      let failure;
+      try { await run(); } catch(error) { failure = error; }
+      if(failure?.status === 401) return;
+      const notice = failure ? `${failure.message || '未能确认操作结果。'}\n${!failure.status || failure.status >= 500 ?
+        '操作可能已经生效或仍在处理中，勿直接重复提交。' : '请先核对状态，勿直接重复提交。'}` : '操作已完成。';
+      if(active) { text('confirmSubmit','正在核对…'); text('confirmError',`${notice}\n正在核对${views[view][0]}与操作审计…`); }
+      // 写请求超时或中断后服务端可能仍在执行；只读核对，不自动重试写入。
+      const checked = (await Promise.all([load(view),load('audit')])).every(Boolean);
+      const message = `${notice}\n${checked ? `已刷新${views[view][0]}与操作审计，请关闭后核对。` :
+        '状态或审计刷新未完成，请关闭后手动刷新核对。'}`;
+      if(active && !failure && checked) { cleanup(); dialog.close(); toast('操作已完成'); }
+      else if(active) text('confirmError',message);
+      else toast(`${title}：${message}`,Boolean(failure) || !checked);
+    } finally {
+      state.busy = false;
+      if(active) { $('confirmCancel').disabled = false; text('confirmCancel','关闭'); text('confirmSubmit','已提交'); update(); }
+    }
   };
-  const cleanup = () => { $('confirmInput').removeEventListener('input',update); $('confirmForm').removeEventListener('submit',submit); $('confirmCancel').removeEventListener('click',close); dialog.removeEventListener('cancel',cleanup); };
+  const cleanup = () => {
+    active = false;
+    $('confirmInput').removeEventListener('input',update); $('confirmForm').removeEventListener('submit',submit);
+    $('confirmCancel').removeEventListener('click',close); dialog.removeEventListener('cancel',cancel); dialog.removeEventListener('close',cleanup);
+  };
   $('confirmInput').addEventListener('input',update); $('confirmForm').addEventListener('submit',submit);
-  $('confirmCancel').addEventListener('click',close); dialog.addEventListener('cancel',cleanup,{once:true});
+  $('confirmCancel').addEventListener('click',close); dialog.addEventListener('cancel',cancel); dialog.addEventListener('close',cleanup,{once:true});
 }
 function userAction(user, kind) {
   const status = kind === 'status', disabled = !user.disabled;

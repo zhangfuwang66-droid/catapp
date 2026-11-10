@@ -237,6 +237,75 @@ class AdminAuthorizationBoundaryTests(unittest.TestCase):
         with closing(sqlite3.connect(restored)) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM admin_audit").fetchone()[0], 1)
 
+    def admin_headers(self):
+        session = self.ids.login(self.admin.username, "fictional-password-123", client_key="fictional-local")
+        return {"Cookie": f"{SESSION_COOKIE}={session.token}", "Origin": "https://fictional.example",
+                "X-CSRF-Token": csrf_for_session(session.token)}
+
+    def latest_device_audit(self, headers):
+        rows = self.client.get("/api/admin/audit", headers=headers).json()["items"]
+        return next(row for row in rows if row["target_type"] == "device")
+
+    def test_unbind_cleanup_failure_can_be_retried_after_commit(self):
+        headers = self.admin_headers()
+        runtime = self.client.portal.call(self.app.state.devices.resolve, "cat-fictional-a", self.member.id)
+        before = self.ids.credential_device("cat-fictional-a", self.credential.token)["access_epoch"]
+        path = "/api/admin/devices/cat-fictional-a/unbind"
+        payload = {"confirm_device_id": "cat-fictional-a"}
+        with patch.object(self.app.state.connections, "revoke_device",
+                          new=AsyncMock(side_effect=RuntimeError("fictional revoke failure"))):
+            response = self.client.post(path, headers=headers, json=payload)
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertIsNone(self.ids.credential_device("cat-fictional-a", self.credential.token)["owner_user_id"])
+        self.assertEqual(self.latest_device_audit(headers)["result"], "started")
+        self.assertIn("已生效", response.json()["detail"])
+        self.assertNotIn("fictional revoke failure", response.text)
+        self.assertIs(self.app.state.devices.devices["cat-fictional-a"], runtime)
+
+        # A second cleanup failure must still be retryable after the binding is gone.
+        with patch.object(runtime, "close", new=AsyncMock(side_effect=RuntimeError("fictional close failure"))):
+            response = self.client.post(path, headers=headers, json=payload)
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(self.latest_device_audit(headers)["result"], "started")
+        response = self.client.post(path, headers=headers, json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.latest_device_audit(headers)["result"], "success")
+        self.assertNotIn("cat-fictional-a", self.app.state.devices.devices)
+        self.assertEqual(self.ids.credential_device("cat-fictional-a", self.credential.token)["access_epoch"], before + 1)
+
+    def test_voice_sync_failure_preserves_committed_progress_and_retries(self):
+        headers = self.admin_headers()
+        runtime = self.client.portal.call(self.app.state.devices.resolve, "cat-fictional-a", self.member.id)
+        path = "/api/admin/devices/cat-fictional-a/voice"
+        for paused in (True, False):
+            with self.subTest(paused=paused):
+                payload = {"confirm_device_id": "cat-fictional-a", "paused": paused}
+                with patch.object(runtime, "_sync_voice_control",
+                                  new=AsyncMock(side_effect=RuntimeError("fictional sync failure"))):
+                    response = self.client.post(path, headers=headers, json=payload)
+                self.assertEqual(response.status_code, 503, response.text)
+                self.assertEqual(self.ids.voice_preference(self.member.id, "cat-fictional-a"), paused)
+                self.assertEqual(runtime.voice_paused, paused)
+                self.assertEqual(self.latest_device_audit(headers)["result"], "started")
+                self.assertIn("已生效", response.json()["detail"])
+                self.assertNotIn("fictional sync failure", response.text)
+                with patch.object(runtime, "_sync_voice_control", new=AsyncMock()) as synchronize:
+                    response = self.client.post(path, headers=headers, json=payload)
+                self.assertEqual(response.status_code, 200, response.text)
+                synchronize.assert_awaited_once()
+                self.assertEqual(self.latest_device_audit(headers)["result"], "success")
+
+    def test_voice_write_failure_before_commit_is_recorded_failed(self):
+        headers = self.admin_headers()
+        path = "/api/admin/devices/cat-fictional-a/voice"
+        with patch.object(self.ids, "save_voice_preference", side_effect=RuntimeError("fictional database failure")):
+            response = self.client.post(path, headers=headers,
+                                        json={"confirm_device_id": "cat-fictional-a", "paused": True})
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(self.latest_device_audit(headers)["result"], "failed")
+        self.assertFalse(self.ids.voice_preference(self.member.id, "cat-fictional-a"))
+        self.assertNotIn("已生效", response.json()["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()

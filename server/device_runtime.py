@@ -1624,11 +1624,14 @@ class DeviceRuntime:
         finally:
             await self._broadcast_voice_state()
 
-    async def set_voice_paused(self, paused: bool):
+    async def set_voice_paused(self, paused: bool, *, on_committed=None):
         async with self._voice_control_lock:
             if self.preferences:
                 await run_blocking(self.preferences.save_voice_preference, self.user_id, self.device_id, bool(paused))
             self.voice_paused = bool(paused)
+            if on_committed is not None:
+                # 保存与同步分开计审计进度；设备同步失败也不能谎报偏好未保存。
+                on_committed()
             async with self.interrupt_lock:
                 await self._sync_voice_control()
             return self.voice_state()

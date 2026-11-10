@@ -14,7 +14,9 @@
 - `GET /backups` → `{enabled,running,last_success_at,last_failure_at,last_error_type,backup_count,skipped_unverified,pruned}`，复用现有备份任务状态，无路径和异常原文；暂无成功时间不代表完成过备份，不提供在线恢复。
 - `GET /audit?q=&page=1&page_size=20` → `{items:[{id,actor_id,actor_username,target_type,target_id,action,result,created_at}],total,page,page_size}`。result 为 started/success/failed，日志不接收任意详情文本。
 
-账号状态或会话撤销已提交、后续连接或任务清理失败时返回 503 并明确提示已生效及需要重试，审计保持 started（未完成），不谎报整体失败或成功。
+账号状态、会话撤销、设备解绑或语音偏好已提交，后续连接、任务清理或设备同步失败时返回 503 并明确提示已生效及需要重试，审计保持 started（未完成），不谎报整体失败或成功。设备已解绑时可用相同确认编号重试收尾，不重复变更设备授权代次；语音操作重试会再次同步设备状态。重试成功产生 success 审计，先前未完成尝试的 started 记录保留。
+
+管理资源仅通过受管理员权限保护的 `/admin` 和 `/web/admin/{index.html|admin.js|admin.css}` 提供。公共静态挂载在文件系统路径解析后排除整个后台目录；大小写、反斜杠等非规范别名返回 404，本地模式也不提供后台资源。
 
 分页 page>=1，page_size 为 1～100，q 最长 80。管理员授权/撤销仅通过服务端 `python server/admin_cli.py --database /绝对路径/memory.sqlite3 grant|revoke|list --username 账号`；不提供网页提权接口。禁止撤销最后启用管理员；回退程序可保留新增 admin 表，不改变原身份表版本。
 

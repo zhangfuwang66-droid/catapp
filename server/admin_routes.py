@@ -149,7 +149,7 @@ async def audited(request,user,target_type,target_id,action,perform,progress=Non
             except BaseException as exc:
                 if progress and progress.get('committed'):
                     # 保留 started 表示尚未完整收尾，不能将已生效的权限变更记为全失败。
-                    raise HTTPException(503,'账号状态或会话撤销已生效，连接与任务清理未完成；请刷新后重试，审计保留未完成状态') from None
+                    raise HTTPException(503,'状态变更已生效，连接、任务或设备状态同步未完成；请刷新后重试，审计保留未完成状态') from None
                 await run_blocking(store.finish_action,audit_id,False)
                 if isinstance(exc,HTTPException):
                     raise
@@ -214,41 +214,52 @@ async def revoke_sessions(user_id: str,payload: ConfirmUser,request: Request,use
 
 async def device_action(request,user,device_id,payload,paused=None):
     store = request.app.state.admin_store
-    found = [d for d in await run_blocking(store.devices) if d['id'] == device_id]
+    progress = {'committed':False}
+    found = await run_blocking(store.devices,device_ids=(device_id,))
     if not found:
         raise HTTPException(404,'设备不存在')
+    def mark_committed():
+        progress['committed'] = True
     async def perform():
         if payload.confirm_device_id != device_id:
             raise HTTPException(409,'请准确输入目标设备编号确认')
         # 与 resolve_runtime 相同的用户锁→设备锁顺序，防止与停用/Key 更新互锁。
         initial = found[0]
-        if not initial['active_user_id']:
+        registry = request.app.state.devices
+        runtime = registry.devices.get(device_id)
+        lock_user_id = initial['active_user_id'] or (runtime.user_id if runtime else None)
+        if paused is not None and not initial['active_user_id']:
             raise ValueError('设备尚未绑定')
-        async with lock_for(request.app,initial['active_user_id']):
-            registry = request.app.state.devices
-            async with registry.locked(device_id):
-                current = next(d for d in await run_blocking(store.devices) if d['id'] == device_id)
-                if current['active_user_id'] != initial['active_user_id'] or current['owner_user_id'] != initial['owner_user_id'] or current['revoked']:
-                    raise ValueError('设备使用权已改变')
-                if not await run_blocking(store.is_admin,user.id):
-                    raise PermissionError()
-                if paused is None:
+        async with AsyncExitStack() as locks:
+            if lock_user_id is not None:
+                await locks.enter_async_context(lock_for(request.app,lock_user_id))
+            await locks.enter_async_context(registry.locked(device_id))
+            current = next(iter(await run_blocking(store.devices,device_ids=(device_id,))),None)
+            if not current or current['active_user_id'] != initial['active_user_id'] or current['owner_user_id'] != initial['owner_user_id'] or current['revoked']:
+                raise ValueError('设备使用权已改变')
+            if not await run_blocking(store.is_admin,user.id):
+                raise PermissionError()
+            if paused is None:
+                if current['owner_user_id'] is not None:
                     await run_blocking(request.app.state.identities.unbind_device,device_id,current['owner_user_id'])
-                    await request.app.state.connections.revoke_device(device_id,code=4403,reason='设备已解绑')
-                    await registry.retire_locked(device_id)
-                    return {'ok':True}
-                if not current['active_user_enabled']:
-                    raise ValueError('当前使用者已停用')
-                runtime = registry.devices.get(device_id)
-                if runtime and runtime.user_id != current['active_user_id']:
-                    raise ValueError('运行身份已改变')
-                if runtime:
-                    await runtime.set_voice_paused(paused)
-                else:
-                    # 离线设备只保存偏好；不创建运行时，更不为统计或操作建立模型连接。
-                    await run_blocking(request.app.state.identities.save_voice_preference,current['active_user_id'],device_id,paused)
-                return {'ok':True,'paused':paused}
-    return await audited(request,user,'device',device_id,'unbind-device' if paused is None else 'pause-voice' if paused else 'resume-voice',perform)
+                # 已解绑时仍重试收尾，不重复变更 access_epoch 或设备凭证。
+                mark_committed()
+                await request.app.state.connections.revoke_device(device_id,code=4403,reason='设备已解绑')
+                await registry.retire_locked(device_id)
+                return {'ok':True}
+            if not current['active_user_enabled']:
+                raise ValueError('当前使用者已停用')
+            runtime = registry.devices.get(device_id)
+            if runtime and runtime.user_id != current['active_user_id']:
+                raise ValueError('运行身份已改变')
+            if runtime:
+                await runtime.set_voice_paused(paused,on_committed=mark_committed)
+            else:
+                # 离线设备只保存偏好；不创建运行时，更不为统计或操作建立模型连接。
+                await run_blocking(request.app.state.identities.save_voice_preference,current['active_user_id'],device_id,paused)
+                mark_committed()
+            return {'ok':True,'paused':paused}
+    return await audited(request,user,'device',device_id,'unbind-device' if paused is None else 'pause-voice' if paused else 'resume-voice',perform,progress)
 
 
 @router.post('/devices/{device_id}/voice')

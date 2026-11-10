@@ -8,6 +8,7 @@ import httpx
 
 from provider_routes import lock_for
 import test_admin_acceptance as fixture
+from tools.memory_database import backup_database, restore_database
 
 
 class AdminFinalAcceptanceTests(unittest.TestCase):
@@ -145,6 +146,31 @@ class AdminFinalAcceptanceTests(unittest.TestCase):
         audit = self.request("GET", "/api/admin/audit", actor="owner").json()["items"]
         unbind = next(row for row in audit if row["action"] == "unbind-device")
         self.assertEqual(unbind["result"], "started")
+
+    def test_cutover_restore_preserves_changes_made_after_trial_backup(self):
+        user_id = self.users["alice"].id
+        store = self.app.state.memory_manager.store
+        conversation = store.create_conversation(user_id, "cat-alice")
+        store.append_message(conversation, "user", "before isolation trial")
+        provider = self.app.state.provider_settings
+        provider.save(user_id, "sk-simulated-before-trial")
+        directory = self.database.parent
+        trial = backup_database(self.database, directory / "trial-only.sqlite3")
+
+        store.append_message(conversation, "user", "new data during isolation trial")
+        provider.save(user_id, "sk-simulated-at-cutover")
+        cutover_path = directory / "cutover.sqlite3"
+        cutover = backup_database(self.database, cutover_path)
+        self.assertGreater(cutover["row_counts"]["messages"], trial["row_counts"]["messages"])
+        store.append_message(conversation, "user", "after cutover requires separate recovery")
+
+        restored = directory / "restored-cutover.sqlite3"
+        restore_database(cutover_path, restored, cutover["sha256"], apply=True, offline=True)
+        recovered = fixture.MemoryStore(restored)
+        self.assertEqual([row["content"] for row in recovered.context_for(user_id, "cat-alice")["messages"]],
+                         ["before isolation trial", "new data during isolation trial"])
+        self.assertEqual(fixture.ProviderSettings(restored, key_file=provider.key_file).get(user_id),
+                         "sk-simulated-at-cutover")
 
 
 if __name__ == "__main__":

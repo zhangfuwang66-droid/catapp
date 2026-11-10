@@ -75,6 +75,7 @@ async function main() {
     assert.equal((await context.request.get(info.accounts_url + link)).status(),404);
     await context.close();
     const mobile = await browser.newContext({viewport:{width:390,height:844},isMobile:true});
+    await mobile.route(/https:\/\/(fonts\.|cdn\.jsdelivr)/,route => route.abort());
     const phone = await mobile.newPage(); phone.on('pageerror',error => errors.push(error.message));
     await login(phone,'alice'); await phone.locator('.summary-strip a[href="/knowledge"]').click();
     await phone.locator('.document-row').waitFor();

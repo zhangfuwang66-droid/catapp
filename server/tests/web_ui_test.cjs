@@ -228,6 +228,7 @@ async function main() {
     await page.locator('.device-card').filter({hasText:'cat-alice'}).getByRole('button',{name:'查看记忆'}).click();
     await page.waitForFunction(() => document.getElementById('memoryContent').textContent.includes('Alice的专属记忆'));
     const mobile = await browser.newContext({viewport:{width:390,height:844},isMobile:true});
+    await mobile.route(/https:\/\/(fonts\.|cdn\.jsdelivr)/,route => route.abort());
     const mobilePage = await mobile.newPage(); observe(mobilePage);
     await mobilePage.goto(info.accounts_url); await mobilePage.locator('#loginView').waitFor({state:'visible'});
     await mobilePage.screenshot({path:path.join(output,'mobile-login.png'),fullPage:true});

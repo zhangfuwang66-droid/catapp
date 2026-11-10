@@ -109,7 +109,12 @@ async def device_console(device_id: str, request: Request):
 
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
-    await require_admin(request)
+    try:
+        await require_admin(request)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return RedirectResponse("/?notice=login", status_code=303, headers={"Cache-Control": "no-store"})
+        raise
     return HTMLResponse(admin_html(), headers={"Cache-Control": "no-store"})
 
 

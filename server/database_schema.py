@@ -6,6 +6,12 @@ KNOWLEDGE_SCHEMA_VERSION = 2
 PROVIDER_SCHEMA_VERSION = 1
 RETENTION_SCHEMA_VERSION = 1
 SPEECH_SCHEMA_VERSION = 1
+ADMIN_SCHEMA_VERSION = 1
+ADMIN_COLUMNS = {
+    "admin_schema": {"version"},
+    "admin_roles": {"user_id", "granted_at"},
+    "admin_audit": {"id", "actor_id", "actor_username", "target_type", "target_id", "action", "result", "created_at"},
+}
 SPEECH_COLUMNS = {"account_speech_settings": {"user_id", "settings_json", "updated_at"}}
 RETENTION_COLUMNS = {
     "memory_policies": {"user_id", "device_id", "mode", "updated_at", "archived_at"},
@@ -59,7 +65,23 @@ def schema_versions(connection):
     return dict(connection.execute("SELECT component, version FROM schema_migrations")) if exists else {}
 
 
+def validate_admin_schema(connection):
+    """允许没有管理模块的旧库；部分结构及未知版本必须拒绝写入和恢复。"""
+    names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    present = names.intersection(ADMIN_COLUMNS)
+    if not present:
+        return 0
+    if present != set(ADMIN_COLUMNS):
+        raise ValueError("管理员数据库表结构不完整，请使用完整备份")
+    validate_columns(connection, ADMIN_COLUMNS)
+    versions = [row[0] for row in connection.execute("SELECT version FROM admin_schema")]
+    if versions != [ADMIN_SCHEMA_VERSION]:
+        raise ValueError("管理员数据库版本不受支持，请使用匹配版本")
+    return ADMIN_SCHEMA_VERSION
+
+
 def validate_versions(connection):
+    validate_admin_schema(connection)
     versions = schema_versions(connection)
     for component, supported in (("memory", MEMORY_SCHEMA_VERSION), ("identity", IDENTITY_SCHEMA_VERSION),
                                  ("knowledge", KNOWLEDGE_SCHEMA_VERSION), ("provider", PROVIDER_SCHEMA_VERSION),

@@ -16,6 +16,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from memory_store import MemoryStore
+from database_schema import ADMIN_COLUMNS, validate_admin_schema
 from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, IDENTITY_SHARING_COLUMNS, KNOWLEDGE_COLUMNS, KNOWLEDGE_PROFILE_COLUMNS, PROVIDER_COLUMNS, RETENTION_COLUMNS, SPEECH_COLUMNS, validate_columns, validate_versions
 
 
@@ -149,6 +150,8 @@ def inspect_database(database: Path) -> dict:
                            for name in sorted(identity_tables)}
         knowledge_counts = {name: connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
                             for name in sorted(knowledge_tables)}
+        admin_counts = {name: connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+                        for name in ADMIN_COLUMNS if name != 'admin_schema'} if validate_admin_schema(connection) else {}
         pending = connection.execute("""SELECT COUNT(*) FROM conversations c WHERE EXISTS
             (SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.id>c.summarized_through_message_id)""").fetchone()[0]
         page_size = connection.execute("PRAGMA page_size").fetchone()[0]
@@ -162,6 +165,7 @@ def inspect_database(database: Path) -> dict:
         return {"ok": True, "database": str(database), "integrity": "ok", "foreign_keys": "ok",
                 "relations": "ok", "schema_versions": versions, "row_counts": counts,
                 "identity_row_counts": identity_counts, "knowledge_row_counts": knowledge_counts,
+                "admin_schema_version": validate_admin_schema(connection), "admin_row_counts": admin_counts,
                 "pending_conversations": pending,
                 "storage": {"database_bytes": database.stat().st_size, "wal_bytes": wal_bytes,
                             "logical_bytes": page_count * page_size, "reusable_bytes": free_pages * page_size,

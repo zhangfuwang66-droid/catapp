@@ -1,6 +1,7 @@
 """管理员显式授权与白名单元数据；与原身份迁移独立，可保留新增表回退代码。"""
 
 import time
+from database_schema import validate_admin_schema
 
 
 class AdminStore:
@@ -8,6 +9,7 @@ class AdminStore:
         self.identities = identities
         self.path = identities.path
         with identities._transaction(write=True) as db:
+            validate_admin_schema(db)
             db.execute("CREATE TABLE IF NOT EXISTS admin_schema (version INTEGER PRIMARY KEY CHECK(version=1))")
             db.execute("INSERT OR IGNORE INTO admin_schema VALUES(1)")
             db.execute("""CREATE TABLE IF NOT EXISTS admin_roles (
@@ -17,6 +19,7 @@ class AdminStore:
                 target_type TEXT NOT NULL, target_id TEXT NOT NULL, action TEXT NOT NULL,
                 result TEXT NOT NULL CHECK(result IN ('started','success','failed')), created_at REAL NOT NULL)""")
             db.execute("CREATE INDEX IF NOT EXISTS idx_admin_audit_time ON admin_audit(created_at,id)")
+            validate_admin_schema(db)
 
     @staticmethod
     def _is_admin(db, user_id):

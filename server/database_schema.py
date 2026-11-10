@@ -2,11 +2,14 @@
 
 MEMORY_SCHEMA_VERSION = 1
 IDENTITY_SCHEMA_VERSION = 2
-KNOWLEDGE_SCHEMA_VERSION = 1
+KNOWLEDGE_SCHEMA_VERSION = 2
 PROVIDER_SCHEMA_VERSION = 1
 
 PROVIDER_COLUMNS = {
     "account_provider_keys": {"user_id", "ciphertext", "masked", "revision", "updated_at"},
+}
+KNOWLEDGE_PROFILE_COLUMNS = {
+    "knowledge_documents": {"summary", "keywords_json", "aliases_json", "profile_source", "profile_version"},
 }
 
 KNOWLEDGE_COLUMNS = {

@@ -16,7 +16,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from memory_store import MemoryStore
-from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, KNOWLEDGE_COLUMNS, PROVIDER_COLUMNS, validate_columns, validate_versions
+from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, KNOWLEDGE_COLUMNS, KNOWLEDGE_PROFILE_COLUMNS, PROVIDER_COLUMNS, validate_columns, validate_versions
 
 
 TABLES = ("conversations", "messages", "conversation_summaries", "memories")
@@ -57,6 +57,8 @@ def check_database_ready(database: Path):
         validate_columns(connection, {**MEMORY_COLUMNS, **IDENTITY_COLUMNS})
         if versions.get("knowledge"):
             validate_columns(connection, KNOWLEDGE_COLUMNS)
+        if versions.get("knowledge", 0) >= 2:
+            validate_columns(connection, KNOWLEDGE_PROFILE_COLUMNS)
         if versions.get("provider"):
             validate_columns(connection, PROVIDER_COLUMNS)
         for table in (*MEMORY_COLUMNS, *IDENTITY_COLUMNS):
@@ -89,6 +91,8 @@ def inspect_database(database: Path) -> dict:
                 raise ValueError("身份数据库表结构与版本记录不一致")
             validate_columns(connection, required)
         knowledge_tables = set(KNOWLEDGE_COLUMNS).intersection(names)
+        if versions.get("knowledge", 0) >= 2:
+            validate_columns(connection, KNOWLEDGE_PROFILE_COLUMNS)
         if knowledge_tables or versions.get("knowledge"):
             if not versions.get("knowledge") or knowledge_tables != set(KNOWLEDGE_COLUMNS):
                 raise ValueError("资料库表结构与版本记录不一致")

@@ -138,6 +138,22 @@ class SearchBody(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
 
 
+class ProfileBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    summary: str = Field(default="", max_length=500)
+    keywords: list[str] = Field(default_factory=list, max_length=24)
+    aliases: list[str] = Field(default_factory=list, max_length=16)
+
+
+@router.put("/api/knowledge/documents/{doc_id}/profile")
+async def profile(doc_id: str, body: ProfileBody, request: Request, user_id=Depends(writer)):
+    if any(not 2 <= len(word.strip()) <= 40 for word in body.keywords + body.aliases):
+        raise HTTPException(400, "关键词和同义词需为 2–40 个字符")
+    if not await run_blocking(request.app.state.knowledge.store.save_profile, user_id, doc_id, body.model_dump()):
+        raise HTTPException(404, "资料不存在或无权访问")
+    return {"ok":True}
+
+
 @router.post("/api/knowledge/search")
 async def search(body: SearchBody, request: Request, user_id=Depends(writer)):
     if not body.query.strip():

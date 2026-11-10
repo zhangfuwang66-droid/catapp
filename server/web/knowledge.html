@@ -23,7 +23,7 @@
             <label class="primary file-button" for="fileInput" id="chooseLabel">＋ 上传资料</label>
             <input id="fileInput" type="file" multiple accept=".txt,.md,.markdown,.csv,.json,.html,.htm,.pdf,.docx" class="visually-hidden">
             <small>PDF · Word · Markdown · 纯文本 · CSV · JSON · HTML<br>单文件 ≤ 20 MiB · PDF 最多 100 页 · 扫描件请先 OCR</small>
-            <p class="upload-disclosure">文档文字会发送至阿里云百炼建立检索索引；提问时会发送问题和相关片段。请仅上传有权使用的资料。</p>
+            <p class="upload-disclosure">配置账号 Key 后，文档文字会发送至百炼生成简介、话题和检索索引。聊天先在本地判断话题，相关时才检索；可手动编辑话题。请仅上传有权使用的资料。</p>
             <div id="uploadProgress" class="upload-progress" hidden><progress id="progress" max="100" value="0"></progress><span id="progressText" role="status"></span><button id="cancelUpload" class="quiet" type="button">取消上传</button></div>
           </div>
           <div class="library-note"><span class="overline">YOUR PRIVATE LIBRARY</span><h2>整理一次，<br>随时聊起。</h2><p>工作文档、学习笔记、产品手册……<br>小喵会先查找相关片段，再组织回答。</p><div class="note-divider"></div><p class="muted">上传的资料与聊天记忆分别管理。<br>删除资料，不会清除已有聊天记录。</p><div class="capacity"><div><span id="capacityText">正在读取用量…</span><span id="documentCount"></span></div><progress id="capacityBar" max="100" value="0"></progress></div></div>
@@ -36,5 +36,6 @@
   </main>
   <dialog id="deleteDialog" class="dialog"><span class="overline">REMOVE DOCUMENT</span><h2>删除这份资料？</h2><p id="deleteName" class="document-name"></p><p class="muted">原文件和索引会从资料库中删除，后续检索将不再引用。已有聊天记录仍会保留，历史备份中也可能留有资料。</p><p id="deleteError" class="form-error" role="alert"></p><div class="dialog-actions"><button id="cancelDelete" class="secondary">保留资料</button><button id="confirmDelete" class="danger">确认删除</button></div></dialog>
   <div id="notice" class="notice" role="status" hidden></div>
+  <dialog id="profileDialog" class="dialog"><form id="profileForm"><span class="overline">DOCUMENT TOPICS</span><h2>让小喵知道何时查阅</h2><p id="profileName" class="document-name"></p><label for="profileSummary">简介</label><textarea id="profileSummary" maxlength="500" rows="4"></textarea><label for="profileKeywords">关键词（最多 24 个，用逗号分隔）</label><input id="profileKeywords" placeholder="请假，OA，审批"><label for="profileAliases">同义说法（最多 16 个）</label><input id="profileAliases" placeholder="休假，年假，调休"><p class="muted">每个词 2–40 个字符。手动修改后，重建索引不会覆盖你的话题设置。</p><p id="profileError" class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" id="cancelProfile" class="secondary">取消</button><button type="submit" id="saveProfile" class="primary">保存话题</button></div></form></dialog>
 </body>
 </html>

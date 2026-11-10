@@ -5,6 +5,7 @@ from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
+import json
 import math
 from pathlib import Path
 import re
@@ -13,12 +14,21 @@ import sqlite3
 import time
 import uuid
 
-from database_schema import KNOWLEDGE_COLUMNS, KNOWLEDGE_SCHEMA_VERSION, validate_columns, validate_versions
+from database_schema import KNOWLEDGE_COLUMNS, KNOWLEDGE_PROFILE_COLUMNS, KNOWLEDGE_SCHEMA_VERSION, validate_columns, validate_versions
+from knowledge_routing import normalize_profile, local_profile
 from document_parser import MAX_UPLOAD_BYTES, SUPPORTED_EXTENSIONS
 
 CHUNK_CHARS = 900
 CHUNK_OVERLAP = 120
 PUBLIC_FIELDS = "id,filename,size_bytes,status,error_code,chunk_count,embedding_model,created_at,updated_at"
+PUBLIC_FIELDS += ",summary,keywords_json,aliases_json,profile_source,profile_version"
+
+
+def public_document(row):
+    result = dict(row)
+    result["keywords"] = json.loads(result.pop("keywords_json", "[]"))
+    result["aliases"] = json.loads(result.pop("aliases_json", "[]"))
+    return result
 
 
 class KnowledgeLimit(ValueError):
@@ -114,8 +124,15 @@ class KnowledgeStore:
                     "CREATE INDEX idx_knowledge_chunks_owner ON knowledge_chunks(user_id)",
                 ):
                     db.execute(statement)
-                db.execute("INSERT INTO schema_migrations(component,version) VALUES('knowledge',?)", (KNOWLEDGE_SCHEMA_VERSION,))
+                db.execute("INSERT INTO schema_migrations(component,version) VALUES('knowledge',1)")
+            if version < 2:
+                for column, definition in (("summary", "TEXT NOT NULL DEFAULT ''"), ("keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
+                        ("aliases_json", "TEXT NOT NULL DEFAULT '[]'"), ("profile_source", "TEXT NOT NULL DEFAULT 'local'"),
+                        ("profile_version", "INTEGER NOT NULL DEFAULT 0")):
+                    db.execute(f"ALTER TABLE knowledge_documents ADD COLUMN {column} {definition}")
+                db.execute("UPDATE schema_migrations SET version=2 WHERE component='knowledge'")
             validate_columns(db, KNOWLEDGE_COLUMNS)
+            validate_columns(db, KNOWLEDGE_PROFILE_COLUMNS)
 
     @contextmanager
     def connection(self, *, write=False):
@@ -134,7 +151,7 @@ class KnowledgeStore:
 
     def list_documents(self, user_id):
         with self.connection() as db:
-            docs = [dict(row) for row in db.execute(f"SELECT {PUBLIC_FIELDS} FROM knowledge_documents WHERE user_id=? ORDER BY created_at DESC", (user_id,))]
+            docs = [public_document(row) for row in db.execute(f"SELECT {PUBLIC_FIELDS} FROM knowledge_documents WHERE user_id=? ORDER BY created_at DESC", (user_id,))]
         return {"documents": docs, "usage": {"documents": len(docs), "bytes": sum(doc["size_bytes"] for doc in docs),
                 "chunks": sum(doc["chunk_count"] for doc in docs)},
                 "limits": {"documents": self.limits.max_documents, "bytes": self.limits.user_bytes,
@@ -158,7 +175,7 @@ class KnowledgeStore:
         with self.connection(write=True) as db:
             existing = db.execute(f"SELECT {PUBLIC_FIELDS} FROM knowledge_documents WHERE user_id=? AND sha256=?", (user_id, digest)).fetchone()
             if existing:
-                return dict(existing), False
+                return public_document(existing), False
             count, used = db.execute("SELECT COUNT(*),COALESCE(SUM(size_bytes),0) FROM knowledge_documents WHERE user_id=?", (user_id,)).fetchone()
             total = db.execute("SELECT COALESCE(SUM(size_bytes),0) FROM knowledge_documents").fetchone()[0]
             if count >= self.limits.max_documents or used + len(data) > self.limits.user_bytes:
@@ -170,7 +187,7 @@ class KnowledgeStore:
             doc_id, now = uuid.uuid4().hex, time.time()
             db.execute("""INSERT INTO knowledge_documents(id,user_id,filename,size_bytes,sha256,original,status,created_at,updated_at)
                           VALUES(?,?,?,?,?,?,'queued',?,?)""", (doc_id, user_id, filename, len(data), digest, data, now, now))
-            return dict(db.execute(f"SELECT {PUBLIC_FIELDS} FROM knowledge_documents WHERE id=? AND user_id=?", (doc_id, user_id)).fetchone()), True
+            return public_document(db.execute(f"SELECT {PUBLIC_FIELDS} FROM knowledge_documents WHERE id=? AND user_id=?", (doc_id, user_id)).fetchone()), True
 
     def download(self, user_id, doc_id):
         with self.connection() as db:
@@ -205,7 +222,7 @@ class KnowledgeStore:
             db.execute("UPDATE knowledge_documents SET status='processing',job_token=?,updated_at=? WHERE id=?", (token, time.time(), row["id"]))
             return {**dict(row), "job_token": token}
 
-    def finish(self, job, chunks, embeddings=None, *, model="", error=""):
+    def finish(self, job, chunks, embeddings=None, *, model="", error="", profile=None):
         if embeddings is not None and len(chunks) != len(embeddings):
             raise ValueError("invalid_embedding")
         with self.connection(write=True) as db:
@@ -223,23 +240,53 @@ class KnowledgeStore:
             db.execute("""UPDATE knowledge_documents SET status=?,error_code=?,chunk_count=?,embedding_model=?,
                           job_token=NULL,updated_at=? WHERE id=? AND user_id=? AND job_token=?""",
                        (status, error, len(chunks), model if embeddings is not None else "", time.time(), *owner))
+            if profile and chunks:
+                self._save_profile(db, job["user_id"], job["id"], profile, overwrite_manual=False)
             return True
+
+    @staticmethod
+    def _save_profile(db, user_id, doc_id, profile, *, overwrite_manual=True):
+        profile = normalize_profile(profile)
+        suffix = "" if overwrite_manual else " AND profile_source<>'manual'"
+        return bool(db.execute("""UPDATE knowledge_documents SET summary=?,keywords_json=?,aliases_json=?,
+            profile_source=?,profile_version=profile_version+1,updated_at=? WHERE id=? AND user_id=?""" + suffix,
+            (profile["summary"], json.dumps(profile["keywords"], ensure_ascii=False), json.dumps(profile["aliases"], ensure_ascii=False),
+             profile["profile_source"], time.time(), doc_id, user_id)).rowcount)
+
+    def save_profile(self, user_id, doc_id, profile):
+        with self.connection(write=True) as db:
+            return self._save_profile(db, user_id, doc_id, {**profile, "profile_source":"manual"})
+
+    def profiles(self, user_id):
+        with self.connection(write=True) as db:
+            rows = db.execute(f"SELECT {PUBLIC_FIELDS} FROM knowledge_documents WHERE user_id=? AND status IN ('ready','keyword')", (user_id,)).fetchall()
+            for row in rows:
+                if not row["profile_version"]:
+                    text = "\n".join(r[0] for r in db.execute("SELECT content FROM knowledge_chunks WHERE user_id=? AND document_id=? ORDER BY ordinal LIMIT 18", (user_id,row["id"])))
+                    self._save_profile(db, user_id, row["id"], local_profile(row["filename"], text), overwrite_manual=False)
+            return [public_document(row) for row in db.execute(f"SELECT {PUBLIC_FIELDS} FROM knowledge_documents WHERE user_id=? AND status IN ('ready','keyword')", (user_id,))]
 
     def has_documents(self, user_id):
         with self.connection() as db:
             return bool(db.execute("SELECT 1 FROM knowledge_documents WHERE user_id=? AND status IN ('ready','keyword') LIMIT 1", (user_id,)).fetchone())
 
-    def has_embeddings(self, user_id, model):
+    def has_embeddings(self, user_id, model, document_ids=None):
+        if document_ids is not None and not document_ids:
+            return False
+        clause = "" if document_ids is None else " AND id IN (" + ",".join("?" for _ in document_ids) + ")"
         with self.connection() as db:
-            return bool(db.execute("SELECT 1 FROM knowledge_documents WHERE user_id=? AND status='ready' AND embedding_model=? LIMIT 1",
-                                   (user_id, model)).fetchone())
+            return bool(db.execute("SELECT 1 FROM knowledge_documents WHERE user_id=? AND status='ready' AND embedding_model=?" + clause + " LIMIT 1",
+                                   (user_id, model, *(document_ids or []))).fetchone())
 
-    def search(self, user_id, query, *, vector=None, model="", top_k=4):
+    def search(self, user_id, query, *, vector=None, model="", top_k=4, document_ids=None):
+        if document_ids is not None and not document_ids:
+            return []
+        clause = "" if document_ids is None else " AND d.id IN (" + ",".join("?" for _ in document_ids) + ")"
         # 不设跨账号缓存；SQL 在加载正文和向量之前就限制归属。
         with self.connection() as db:
             rows = db.execute("""SELECT c.document_id,c.ordinal,c.content,c.embedding,d.filename,d.embedding_model
                 FROM knowledge_chunks c JOIN knowledge_documents d ON d.id=c.document_id AND d.user_id=c.user_id
-                WHERE c.user_id=? AND d.status IN ('ready','keyword')""", (user_id,)).fetchall()
+                WHERE c.user_id=? AND d.status IN ('ready','keyword')""" + clause, (user_id, *(document_ids or []))).fetchall()
         if not rows:
             return []
         tokens = set(tokenize(query))

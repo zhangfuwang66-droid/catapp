@@ -2198,14 +2198,19 @@ class DeviceRuntime:
         if self.knowledge is None:
             return ""
         try:
-            hits = await self.knowledge.search(self.user_id, user_text)
+            if hasattr(self.knowledge, "chat_search"):
+                hits, self._knowledge_topic, reason = await self.knowledge.chat_search(
+                    self.user_id, user_text, previous=getattr(self, "_knowledge_topic", None))
+            else:
+                hits = await self.knowledge.search(self.user_id, user_text)
+                reason = "search"
         except Exception as exc:
             log_event(f"[KNOWLEDGE] chat lookup failed: {type(exc).__name__}", flush=True)
             await self.ui_broadcast_raw('KNOWLEDGE:{"sources":[],"unavailable":true}')
             return "\n\n本轮资料检索暂不可用，不要声称已查阅主人的文档。"
         await self.ui_broadcast_raw("KNOWLEDGE:" + json.dumps({"sources": [
             {"filename": hit["filename"], "ordinal": hit["ordinal"]} for hit in hits
-        ]}, ensure_ascii=False))
+        ], "reason":reason, "searched":reason not in ("chat", "unrelated")}, ensure_ascii=False))
         return format_for_prompt(hits)
 
     async def start_ai_with_text(self, user_text: str):

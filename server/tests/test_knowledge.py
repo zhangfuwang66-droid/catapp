@@ -107,7 +107,7 @@ class StoreTests(unittest.TestCase):
         backup = Path(self.temp.name) / "backup.sqlite3"
         restored = Path(self.temp.name) / "restored.sqlite3"
         report = backup_database(self.path, backup)
-        self.assertEqual(report["schema_versions"]["knowledge"], 1)
+        self.assertEqual(report["schema_versions"]["knowledge"], 2)
         self.assertEqual(report["knowledge_row_counts"]["knowledge_chunks"], 1)
         restore_database(backup, restored, report["sha256"], apply=True, offline=True)
         clone = KnowledgeStore(restored)

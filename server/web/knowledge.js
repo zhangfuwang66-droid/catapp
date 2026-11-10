@@ -24,6 +24,7 @@ function clearPrivate() {
   $('pageError').textContent = ''; $('searchStatus').textContent = ''; $('capacityText').textContent = '';
   $('fileInput').value = ''; $('query').value = ''; $('username').textContent = ''; $('avatar').textContent = '·';
   $('deleteDialog').close(); $('deleteName').textContent = ''; $('deleteError').textContent = '';
+  $('profileDialog').close(); $('profileForm').reset(); profileId = null;
   $('progressText').textContent = ''; $('uploadProgress').hidden = true;
   $('notice').hidden = true; clearTimeout(noticeTimer);
 }
@@ -70,6 +71,8 @@ function renderDocuments(data) {
     meta.append(el('span','',bytes(doc.size_bytes)),el('span','',doc.chunk_count + ' 个片段'),
       el('span','document-state ' + doc.status,statuses[doc.status] || '待处理'));
     info.append(name,meta); if(doc.message) info.append(el('p','document-error',doc.message));
+    if(doc.summary) info.append(el('p','document-summary',doc.summary));
+    if(doc.keywords?.length) info.append(el('p','document-keywords','话题：' + doc.keywords.join(' · ')));
     const actions = el('div','document-actions'), download = el('a','quiet','下载'); download.href = docUrl(doc.id) + '/download';
     const retry = el('button','quiet','重建索引'); retry.type = 'button'; retry.disabled = ['queued','processing'].includes(doc.status);
     retry.addEventListener('click',async () => {
@@ -82,11 +85,30 @@ function renderDocuments(data) {
       state.deleteId = doc.id; $('deleteName').textContent = doc.filename; $('deleteError').textContent = '';
       $('confirmDelete').disabled = false; $('deleteDialog').showModal();
     });
-    actions.append(download,retry,remove);
+    const edit = el('button','quiet','编辑话题'); edit.type = 'button';
+    edit.addEventListener('click', () => {
+      profileId = doc.id; $('profileName').textContent = doc.filename;
+      $('profileSummary').value = doc.summary || ''; $('profileKeywords').value = (doc.keywords || []).join('，');
+      $('profileAliases').value = (doc.aliases || []).join('，'); $('profileError').textContent = ''; $('profileDialog').showModal();
+    });
+    actions.append(download,edit,retry,remove);
     row.append(el('div','document-badge',doc.filename.split('.').pop().slice(0,5).toUpperCase()),info,actions);
     $('documentList').append(row);
   }
 }
+let profileId = null;
+$('cancelProfile').addEventListener('click', () => $('profileDialog').close());
+$('profileForm').addEventListener('submit', async event => {
+  event.preventDefault(); const id = profileId; if(!id) return;
+  $('saveProfile').disabled = true; $('profileError').textContent = '';
+  const words = id => $(id).value.split(/[，,、\n]/).map(word => word.trim()).filter(Boolean);
+  try {
+    await api(docUrl(id) + '/profile', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+      summary:$('profileSummary').value, keywords:words('profileKeywords'), aliases:words('profileAliases')})});
+    $('profileDialog').close(); notify('话题已更新，下次对话立即生效。'); await refresh();
+  } catch(error) { if(!(error instanceof Stale)) $('profileError').textContent = error.message; }
+  finally { $('saveProfile').disabled = false; }
+});
 function sendFile(file,epoch) {
   return new Promise((resolve,reject) => {
     const xhr = new XMLHttpRequest(); state.xhr = xhr;

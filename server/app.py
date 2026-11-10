@@ -49,6 +49,8 @@ from speech_routes import router as speech_router
 from admin_store import AdminStore
 from admin_routes import router as admin_router
 from admin_operations import AccountOperations, AccountOperationsMiddleware
+from admin_pages import admin_html
+from admin_routes import require_admin
 
 router = APIRouter()
 
@@ -103,6 +105,12 @@ async def device_console(device_id: str, request: Request):
     if device is None:
         raise HTTPException(status_code=404, detail="设备不存在或无权访问")
     return console_html(device_id, account_mode=True)
+
+
+@router.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    await require_admin(request)
+    return HTMLResponse(admin_html(), headers={"Cache-Control": "no-store"})
 
 
 @router.get("/api/health", response_class=PlainTextResponse)

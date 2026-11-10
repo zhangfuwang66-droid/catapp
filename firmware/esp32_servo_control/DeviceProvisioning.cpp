@@ -55,6 +55,8 @@ void DeviceProvisioning::command(const String& line) {
   cJSON_AddStringToObject(response, "request_id", requestId.c_str());
   cJSON_AddBoolToObject(response, "ok", ok);
   cJSON_AddStringToObject(response, "device_id", config_.deviceId().c_str());
+  cJSON_AddStringToObject(response, "device_type", DeviceProfile::type);
+  cJSON_AddStringToObject(response, "product_name", DeviceProfile::name);
   cJSON_AddBoolToObject(response, "credential_configured", config_.hasCredential());
   cJSON_AddBoolToObject(response, "pending_reboot", rebootPending_);
   cJSON_AddBoolToObject(response, "identity_saved", changed && operation == "provision");

@@ -25,6 +25,22 @@ arduino-cli compile --fqbn 'esp32:esp32:esp32s3:FlashSize=8M,PSRAM=opi,Partition
 
 首次编译需要准备库与核心缓存。第三方 ArduinoWebsockets 与 ESP32Servo 在上述核心下存在弃用警告，应结合完整日志判断结果。`compile` 不访问串口或烧录设备；编译成功也不能替代实物验收。
 
+### 小鹿设备版本
+
+同款 ESP32-S3 硬件可从同一主草图编译鹿版本。须先核对屏幕、摄像头、麦克风、功放、四路舵机接线与现有引脚定义一致；芯片与分区相同不能证明外设兼容。
+
+```powershell
+arduino-cli compile --fqbn 'esp32:esp32:esp32s3:FlashSize=8M,PSRAM=opi,PartitionScheme=custom,CDCOnBoot=cdc,USBMode=hwcdc,FlashMode=qio' --build-property 'upload.maximum_size=2621440' --build-property 'compiler.cpp.extra_flags=-DCYBERMIAO_DEVICE_DEER=1' --build-path artifacts/build/firmware-deer --warnings default --jobs 4 firmware/esp32_servo_control
+```
+
+`DeviceProfile.h` 默认使用猫配置，鹿编译选项只改变设备类型、编号前缀、热点名称、屏幕连接标题和配网页品牌，不改接线、分区或音视频协议。猫编号保持 `cat-<芯片后缀>`，鹿使用 `deer-<芯片后缀>`，热点为 `CyberDeer-<后六位>`。USB `status` 返回 `device_type`、`product_name`；原凭证只有编号完全一致时才会加载，不能在猫、鹿间复用。
+
+仅更新 `0x10000` 主程序可保留原文件系统和 NVS，但原表情的目录及帧格式仍须兼容主草图。`diagnostics` 的 `filesystem_ready`、`animation_sets`、`animation_frames` 和 `psram_bytes` 可辅助核对挂载、动画扫描和 PSRAM；这些计数不能代替查看屏幕、试听及检查舵机。不得因为资源不兼容而自动格式化或覆盖原资源。
+
+鹿使用独立设备凭证登记到同一后端，然后由账号通过配对码绑定。写入鹿程序并不等于已经登记、联网或完成云端验收，首次身份配发与网络配置仍按 [USB 配置说明](tools/README.md) 操作。
+
+设备类型测试可用原生 C++ 编译器分别运行 `firmware/tests/device_profile_test.cpp`（默认猫）和带 `-DCYBERMIAO_DEVICE_DEER=1` 的鹿版本。USB 模拟测试包含跨类型凭证拒绝，设置页浏览器测试覆盖两种品牌与鹿的保存回执。
+
 ## 设备身份与网络
 
 主草图中的 `DeviceConfig` 与 `DeviceProvisioning` 提供芯片派生的稳定编号、独立 NVS 身份、服务器协议/主机/端口配置、旧 Wi-Fi 配置兼容，以及 USB 状态查询和凭证配发。工具和模拟串口测试位于 `tools/`、`tests/`，操作说明见 [USB 配置说明](tools/README.md)。

@@ -28,6 +28,8 @@ class FakeSerial:
         result = {"protocol":1, "request_id":request["request_id"], "device_id":self.device_id,
                   "ok":not self.reject, "credential_configured":True, "has_wifi":True,
                   "server_url":"https://cat.example:443", "mode":"accounts"}
+        result["device_type"] = "deer" if self.device_id.startswith("deer-") else "cat"
+        result["product_name"] = "赛博小鹿" if result["device_type"] == "deer" else "赛博小喵"
         if request["op"] in {"provision", "configure"}:
             result.update(pending_reboot=True, identity_saved=request["op"] == "provision")
         result["device_token"] = "unexpected-private-field"
@@ -47,6 +49,17 @@ class FakeSerial:
 
 
 class ProvisionDeviceTests(unittest.TestCase):
+    def test_deer_profile_and_credential_are_isolated_from_cat(self):
+        stream = FakeSerial(device_id="deer-C8381AAD4F7C")
+        response = ProvisioningClient(stream).exchange("status")
+        self.assertEqual(response["device_type"], "deer")
+        self.assertEqual(response["product_name"], "赛博小鹿")
+        with self.assertRaises(ProvisioningError):
+            ProvisioningClient(stream).provision({"device_id":"cat-C8381AAD4F7C", "device_token":"T"*43})
+        self.assertNotIn("provision", [request["op"] for request in stream.writes])
+        response = ProvisioningClient(stream).provision({"device_id":"deer-C8381AAD4F7C", "device_token":"T"*43})
+        self.assertTrue(response["identity_saved"])
+
     def test_fragmented_status_and_noise_do_not_expose_unexpected_fields(self):
         response = ProvisioningClient(FakeSerial()).exchange("status")
         self.assertEqual(response["device_id"], "cat-112233445566")
@@ -101,6 +114,7 @@ class ProvisionDeviceTests(unittest.TestCase):
 
     def test_diagnostics_cli_is_read_only_and_filters_nested_private_fields(self):
         stream = FakeSerial(diagnostics={
+            "filesystem_ready": True, "animation_sets": 4, "animation_frames": 120, "psram_bytes": 8388608,
             "wifi_connected": True, "camera_init_error": 0, "link_state": "bound",
             "socket_phase": "audio_connect", "free_heap_bytes": 32000, "tls_psram_preferred": True,
             "speaker_volume_percent": 78, "playback_pcm_bytes": 48000, "playback_body_errors": 0,
@@ -121,6 +135,10 @@ class ProvisionDeviceTests(unittest.TestCase):
         self.assertNotIn("diagnostic-secret", output.getvalue())
         self.assertNotIn("unexpected-private-field", output.getvalue())
         diagnostics = json.loads(output.getvalue())["diagnostics"]
+        self.assertIs(diagnostics["filesystem_ready"], True)
+        self.assertEqual(diagnostics["animation_sets"], 4)
+        self.assertEqual(diagnostics["animation_frames"], 120)
+        self.assertEqual(diagnostics["psram_bytes"], 8388608)
         self.assertIs(diagnostics["tls_psram_preferred"], True)
         self.assertEqual(diagnostics["playback_pcm_bytes"], 48000)
         self.assertEqual(diagnostics["playback_body_errors"], 0)

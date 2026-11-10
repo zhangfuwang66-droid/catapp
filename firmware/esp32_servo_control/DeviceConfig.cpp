@@ -89,7 +89,7 @@ bool DeviceConfig::validCredential(const String& credential) {
 bool DeviceConfig::begin() {
   uint64_t mac = ESP.getEfuseMac();
   char id[24];
-  snprintf(id, sizeof(id), "cat-%04X%08X", static_cast<unsigned int>(mac >> 32), static_cast<unsigned int>(mac));
+  if (!DeviceProfile::formatDeviceId(id, sizeof(id), mac)) return false;
   deviceId_ = id;
   Preferences preferences;
   if (!preferences.begin("cmiao_id", false)) return false;
@@ -152,7 +152,7 @@ String DeviceConfig::serverUrl() const {
   return String(network_.tls ? "https://" : "http://") + network_.host + ":" + String(network_.port);
 }
 
-String DeviceConfig::setupSsid() const { return "CyberMiao-" + deviceId_.substring(deviceId_.length() - 6); }
+String DeviceConfig::setupSsid() const { return String(DeviceProfile::setupPrefix) + deviceId_.substring(deviceId_.length() - 6); }
 
 bool DeviceConfig::saveNetwork(const DeviceNetworkConfig& config, String& error) {
   if (!config.ssid.length() || config.ssid.length() > 32 || config.password.length() > 64) {

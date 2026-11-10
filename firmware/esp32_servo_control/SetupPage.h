@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "DeviceProfile.h"
 
 // 全离线配网页，不依赖手机的互联网连接。
 static const char DEVICE_SETUP_HTML[] PROGMEM = R"CMIAOHTML(
@@ -10,7 +11,7 @@ static const char DEVICE_SETUP_HTML[] PROGMEM = R"CMIAOHTML(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light">
-<title>小喵 · 连接 Wi-Fi</title>
+<title>)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML( · 连接 Wi-Fi</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;color:#302d42;background:#f5f4f8;font-synthesis:none;--accent:#7760d5;--muted:#848095;--line:#eeecf3}
 
@@ -34,6 +35,11 @@ main{max-width:460px;margin:auto}
 .cat:before,.cat:after{content:"";position:absolute;top:-9px;width:20px;height:23px;background:#e4ddf7;border-radius:5px;transform:rotate(16deg);z-index:-1}
 .cat:before{left:2px;transform:rotate(-16deg)}
 .cat:after{right:2px}
+.cat.deer{background:#e8d9c7}
+.cat.deer:before,.cat.deer:after{top:-22px;width:7px;height:29px;border-radius:4px;background:#baa082}
+.cat.deer:before{left:7px;transform:rotate(-20deg);box-shadow:-6px 7px 0 -1px #baa082}
+.cat.deer:after{right:7px;transform:rotate(20deg);box-shadow:6px 7px 0 -1px #baa082}
+.cat.deer .nose{background:#ad8867}
 .eyes{position:absolute;left:16px;top:18px;width:5px;height:7px;background:var(--accent);border-radius:4px;box-shadow:19px 0 var(--accent)}
 .nose{position:absolute;left:26px;top:28px;width:4px;height:3px;border-radius:0 0 5px 5px;background:#9b86dc}
 h1{font-size:29px;letter-spacing:-1px;margin:0 0 9px;font-weight:750}
@@ -136,9 +142,9 @@ h1{font-size:26px}
 </head>
 <body>
 <main>
-<header class="top"><span class="brand">CYBER MIAO<span style="color:#b9a6e2"> ·</span></span><span id="connection" class="connection"><i class="dot" aria-hidden="true"></i><span id="connectionText">正在连接小喵</span></span></header>
-<div class="hero"><div class="cat" aria-hidden="true"><i class="eyes"></i><i class="nose"></i></div><h1>给小喵一个家</h1><p class="intro">连上 Wi-Fi，就可以和你说话了。</p><nav class="steps" aria-label="配网步骤"><span id="step1" class="step active"><b>1</b>选网络</span><i class="step-line"></i><span id="step2" class="step"><b>2</b>输密码</span><i class="step-line"></i><span id="step3" class="step"><b>3</b>完成</span></nav></div>
-<div id="offline" class="banner" role="status" hidden>没有连上小喵。请保持连接它的 Wi-Fi 热点，选择“保持连接”或“使用此网络”，再试一次。<button id="reconnect" class="text-button" type="button">重新连接页面</button></div>
+<header class="top"><span class="brand">)CMIAOHTML" CYBERMIAO_BRAND R"CMIAOHTML(<span style="color:#b9a6e2"> ·</span></span><span id="connection" class="connection"><i class="dot" aria-hidden="true"></i><span id="connectionText">正在连接)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(</span></span></header>
+<div class="hero"><div class=")CMIAOHTML" CYBERMIAO_SETUP_AVATAR R"CMIAOHTML(" aria-hidden="true"><i class="eyes"></i><i class="nose"></i></div><h1>给)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(一个家</h1><p class="intro">连上 Wi-Fi，就可以和你说话了。</p><nav class="steps" aria-label="配网步骤"><span id="step1" class="step active"><b>1</b>选网络</span><i class="step-line"></i><span id="step2" class="step"><b>2</b>输密码</span><i class="step-line"></i><span id="step3" class="step"><b>3</b>完成</span></nav></div>
+<div id="offline" class="banner" role="status" hidden>没有连上)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(。请保持连接它的 Wi-Fi 热点，选择“保持连接”或“使用此网络”，再试一次。<button id="reconnect" class="text-button" type="button">重新连接页面</button></div>
 <form id="form" class="card" novalidate>
 <fieldset id="fields" disabled>
 <div class="section-top"><h2>连接 Wi-Fi</h2><span class="tag">2.4 GHz</span></div>
@@ -146,20 +152,20 @@ h1{font-size:26px}
 <div id="manualFields" hidden><label class="field-label" for="ssid">Wi-Fi 名称</label><input id="ssid" maxlength="32" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="请输入完整的 Wi-Fi 名称"></div>
 <label class="field-label" for="password">Wi-Fi 密码</label>
 <div class="password-wrap"><input id="password" type="password" maxlength="64" autocomplete="new-password" autocapitalize="off" spellcheck="false" placeholder="输入这个 Wi-Fi 的密码"><button id="showPassword" class="show-pass" type="button" aria-pressed="false">显示</button></div>
-<p id="passwordNote" class="small">密码只保存在小喵里。</p>
+<p id="passwordNote" class="small">密码只保存在)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(里。</p>
 <label id="openNetworkLabel" class="check" hidden><input id="openNetwork" type="checkbox">这是无需密码的开放网络</label>
 <button id="save" class="primary" type="submit">连接这个 Wi-Fi</button>
 <p id="hint" role="status" aria-live="polite"></p>
 <details id="advanced"><summary>高级设置<span style="font-size:10px;margin-left:auto">一般无需修改</span></summary><p class="advanced-note">服务器地址与账号模式会沿用设备现有设置。更换 Wi-Fi 不会清除账号绑定、聊天记忆或资料。</p><label class="field-label" for="server">服务器地址</label><input id="server" maxlength="300" placeholder="https://cat.example.com" autocomplete="off" autocapitalize="off" spellcheck="false"><label class="field-label" for="mode">连接方式</label><select id="mode"><option value="accounts">账号模式 · 云端记忆</option><option value="local">本地调试</option></select><p class="advanced-note">仅自行部署服务时修改。局域网测试需填写完整的 HTTP 地址和端口。</p></details>
 </fieldset>
 </form>
-<section id="result" class="card result" role="status" aria-live="polite" hidden><div id="resultIcon" class="result-icon" aria-hidden="true">✓</div><h2 id="resultTitle"></h2><p id="resultCopy" class="result-copy"></p><ol id="nextSteps" class="next-steps" hidden><li>等待小喵重启，留意屏幕上的连接状态。</li><li id="bindingStep"></li><li>手机切回日常网络，然后<a id="consoleLink" target="_blank" rel="noopener noreferrer">打开小喵控制台</a>。</li></ol><button id="verify" class="primary" type="button" hidden>重新检查设备</button><p id="verifyHint" class="small"></p></section>
-<section id="pairCard" class="card pair-card" hidden><h2>把小喵添加到账号</h2><div id="pair" class="pair-code"></div><div id="ttl" class="small"></div><p id="guide" class="small">手机切回可上网的 Wi-Fi，登录服务器网站，在“添加设备”中输入这个配对码。也可以查看小喵屏幕上的配对码。</p><button id="refresh" class="text-button" type="button" hidden>换一个配对码</button></section>
+<section id="result" class="card result" role="status" aria-live="polite" hidden><div id="resultIcon" class="result-icon" aria-hidden="true">✓</div><h2 id="resultTitle"></h2><p id="resultCopy" class="result-copy"></p><ol id="nextSteps" class="next-steps" hidden><li>等待)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(重启，留意屏幕上的连接状态。</li><li id="bindingStep"></li><li>手机切回日常网络，然后<a id="consoleLink" target="_blank" rel="noopener noreferrer">打开)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(控制台</a>。</li></ol><button id="verify" class="primary" type="button" hidden>重新检查设备</button><p id="verifyHint" class="small"></p></section>
+<section id="pairCard" class="card pair-card" hidden><h2>把)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(添加到账号</h2><div id="pair" class="pair-code"></div><div id="ttl" class="small"></div><p id="guide" class="small">手机切回可上网的 Wi-Fi，登录服务器网站，在“添加设备”中输入这个配对码。也可以查看)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(屏幕上的配对码。</p><button id="refresh" class="text-button" type="button" hidden>换一个配对码</button></section>
 <div class="device-status"><span id="state">正在读取设备</span></div><p id="device" class="device-id"></p>
-<details class="help"><summary>换了地方，每次都要这样连接吗？</summary><p>不用。同一个 Wi-Fi 下，小喵开机会自动重连。首次使用或更换 Wi-Fi 时才需要设置；当前只保存一组网络。</p><p>优先使用无需网页登录的 2.4 GHz 家庭 Wi-Fi 或手机热点。iPhone 热点请开启“最大兼容性”。页面没有自动弹出时，在浏览器打开 http://192.168.4.1。</p><p>若密码填错，重启后等待约 30 秒，再连接屏幕上显示的小喵热点即可修改。这里的“已保存”只代表设置写入设备，联网结果请看小喵屏幕。</p></details>
+<details class="help"><summary>换了地方，每次都要这样连接吗？</summary><p>不用。同一个 Wi-Fi 下，)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(开机会自动重连。首次使用或更换 Wi-Fi 时才需要设置；当前只保存一组网络。</p><p>优先使用无需网页登录的 2.4 GHz 家庭 Wi-Fi 或手机热点。iPhone 热点请开启“最大兼容性”。页面没有自动弹出时，在浏览器打开 http://192.168.4.1。</p><p>若密码填错，重启后等待约 30 秒，再连接屏幕上显示的)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(热点即可修改。这里的“已保存”只代表设置写入设备，联网结果请看)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(屏幕。</p></details>
 <p class="footer">设置一次，下一次见面就会自动连接。<br><strong>你的账号与记忆，都会好好保留。</strong></p>
 </main>
-<div id="wifiSheet" class="overlay" hidden><section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1"><div class="sheet-top"><h2 id="sheetTitle">选择 Wi-Fi</h2><button id="closeSheet" class="close" type="button" aria-label="关闭网络列表">×</button></div><p id="scanStatus" class="scan-status" role="status" aria-live="polite"></p><div id="nets"></div><div class="sheet-actions"><button id="manual" class="text-button" type="button">手动输入名称</button><button id="scan" class="text-button" type="button">重新扫描</button></div><p class="small">这里只显示小喵能发现的 2.4 GHz 网络。</p></section></div>
+<div id="wifiSheet" class="overlay" hidden><section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1"><div class="sheet-top"><h2 id="sheetTitle">选择 Wi-Fi</h2><button id="closeSheet" class="close" type="button" aria-label="关闭网络列表">×</button></div><p id="scanStatus" class="scan-status" role="status" aria-live="polite"></p><div id="nets"></div><div class="sheet-actions"><button id="manual" class="text-button" type="button">手动输入名称</button><button id="scan" class="text-button" type="button">重新扫描</button></div><p class="small">这里只显示)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(能发现的 2.4 GHz 网络。</p></section></div>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -178,13 +184,13 @@ async function api(path, options = {}, timeout = REQUEST_TIMEOUT_MS, signal) {
   try {
     const response = await fetch(path, {...options,cache:'no-store',signal:controller.signal});
     let data;
-    try { data = await response.json(); } catch (error) { if (controller.signal.aborted) throw error; throw Error('设备响应不完整，请重新连接小喵热点后重试。'); }
+    try { data = await response.json(); } catch (error) { if (controller.signal.aborted) throw error; throw Error('设备响应不完整，请重新连接)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(热点后重试。'); }
     if (!response.ok) { const error = Error(data.error || '请求未完成，请重试。'); error.status = response.status; throw error; }
     return data;
   } catch (error) {
-    if (timedOut) throw Error('连接超时。请保持连接小喵热点，再试一次。');
+    if (timedOut) throw Error('连接超时。请保持连接)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(热点，再试一次。');
     if (signal && signal.aborted) throw error;
-    if (error instanceof TypeError) throw Error('与小喵的连接中断了，请重新连接它的热点。');
+    if (error instanceof TypeError) throw Error('与)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(的连接中断了，请重新连接它的热点。');
     throw error;
   } finally {
     clearTimeout(timer);
@@ -199,7 +205,7 @@ function stopStatus() { clearTimeout(statusTimer); if (statusController) statusC
 function scheduleStatus() { clearTimeout(statusTimer); if (operation === 'idle' && phase === 'editing' && !document.hidden) statusTimer = setTimeout(status, 2500); }
 function updateStatus(data) {
   csrf = data.csrf_token;
-  $('connection').classList.add('ready'); $('connectionText').textContent = '已连接小喵热点'; $('offline').hidden = true;
+  $('connection').classList.add('ready'); $('connectionText').textContent = '已连接)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(热点'; $('offline').hidden = true;
   $('state').textContent = labels[data.status] || '设备已连接'; $('device').textContent = data.device_id || '';
   $('pairCard').hidden = !(data.wifi_connected && data.mode === 'accounts' && data.credential_configured && !data.bound && data.pairing_code);
   $('pair').textContent = data.pairing_code || ''; $('ttl').textContent = data.expires_in ? '配对码剩余 ' + data.expires_in + ' 秒' : '';
@@ -233,7 +239,7 @@ function updateNetwork() {
   $('selectedNote').textContent = ssid ? '已选择 · 点此切换网络' : '点这里，查看附近的网络';
   $('password').disabled = open;
   $('password').placeholder = open ? '这个网络不需要密码' : keep ? '已保存，留空即可沿用' : '输入这个 Wi-Fi 的密码';
-  $('passwordNote').textContent = open ? '开放网络没有密码，请确认是你信任的网络。' : keep ? '留空沿用这个网络的已保存密码，也可以输入新密码。' : '密码只保存在小喵里。';
+  $('passwordNote').textContent = open ? '开放网络没有密码，请确认是你信任的网络。' : keep ? '留空沿用这个网络的已保存密码，也可以输入新密码。' : '密码只保存在)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(里。';
   $('step1').classList.toggle('active', !ssid); $('step2').classList.toggle('active', !!ssid);
 }
 function closeSheet() {
@@ -311,9 +317,9 @@ function showSaved() {
   phase = 'saved'; operation = 'idle'; stopStatus(); clearPassword();
   $('form').hidden = true; $('pairCard').hidden = true; $('result').hidden = false; $('result').classList.remove('uncertain');
   $('resultIcon').textContent = '✓'; $('resultTitle').textContent = '网络设置已保存';
-  $('resultCopy').textContent = '小喵将在几秒内重启，尝试连接你选择的 Wi-Fi。\n重启时手机与小喵热点断开，属于正常现象。';
+  $('resultCopy').textContent = ')CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(将在几秒内重启，尝试连接你选择的 Wi-Fi。\n重启时手机与)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(热点断开，属于正常现象。';
   $('nextSteps').hidden = false; $('verify').hidden = true; $('verifyHint').textContent = '';
-  $('bindingStep').textContent = $('mode').value === 'local' ? '联网结果以小喵屏幕为准；若仍提示配网，重新加入热点更正设置。' : initial.bound ? '账号绑定与记忆已保留。若仍提示配网，重新加入热点更正设置。' : '联网后在屏幕查看配对码，登录账号并在“添加设备”中填写。';
+  $('bindingStep').textContent = $('mode').value === 'local' ? '联网结果以)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(屏幕为准；若仍提示配网，重新加入热点更正设置。' : initial.bound ? '账号绑定与记忆已保留。若仍提示配网，重新加入热点更正设置。' : '联网后在屏幕查看配对码，登录账号并在“添加设备”中填写。';
   $('step1').classList.remove('active'); $('step2').classList.remove('active'); $('step3').classList.add('active');
   try { const url = new URL($('server').value); if (!['http:','https:'].includes(url.protocol) || url.username || url.password) throw Error(); $('consoleLink').href = url.href; } catch (_) { $('consoleLink').removeAttribute('href'); }
 }
@@ -321,7 +327,7 @@ function showUncertain() {
   phase = 'uncertain'; operation = 'idle'; stopStatus(); clearPassword();
   $('form').hidden = true; $('pairCard').hidden = true; $('result').hidden = false; $('result').classList.add('uncertain');
   $('resultIcon').textContent = '?'; $('resultTitle').textContent = '还未确认保存结果';
-  $('resultCopy').textContent = '连接中断，设备可能已保存并重启。\n请先看小喵屏幕：恢复猫脸后可直接使用。\n若仍显示配网，请重新加入小喵热点，再检查设备。';
+  $('resultCopy').textContent = '连接中断，设备可能已保存并重启。\n请先看)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(屏幕：恢复表情画面后可直接使用。\n若仍显示配网，请重新加入)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(热点，再检查设备。';
   $('nextSteps').hidden = true; $('verify').hidden = false; $('verifyHint').textContent = '不会自动重复提交你的密码。';
 }
 async function verifySaved() {
@@ -339,7 +345,7 @@ $('form').addEventListener('submit', async event => {
   if (new TextEncoder().encode(password).length > 64) { $('hint').textContent = 'Wi-Fi 密码不能超过 64 字节。'; return; }
   if (!/^https?:\/\/[^\s]+$/.test($('server').value)) { $('advanced').open = true; $('hint').textContent = '请在高级设置中填写完整的服务器地址。'; $('server').focus(); return; }
   const body = new URLSearchParams({ssid,password:open ? '' : password,keep_password:keep ? '1' : '0',server_url:$('server').value,mode:$('mode').value,request_id:newRequestId()});
-  lastRequestId = body.get('request_id'); stopStatus(); operation = 'save'; $('fields').disabled = true; $('save').classList.add('busy'); $('save').textContent = '正在保存设置'; $('hint').textContent = '请保持连接小喵热点，稍等片刻…';
+  lastRequestId = body.get('request_id'); stopStatus(); operation = 'save'; $('fields').disabled = true; $('save').classList.add('busy'); $('save').textContent = '正在保存设置'; $('hint').textContent = '请保持连接)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(热点，稍等片刻…';
   try {
     const data = await post('/configure', body);
     if (!data.saved || data.save_request_id !== lastRequestId) throw Error('未收到保存确认');
@@ -353,7 +359,7 @@ $('form').addEventListener('submit', async event => {
   } finally { $('save').classList.remove('busy'); $('save').textContent = '连接这个 Wi-Fi'; }
 });
 $('verify').addEventListener('click', async () => {
-  if (operation !== 'idle') return; operation = 'check'; $('verify').disabled = true; $('verifyHint').textContent = '正在检查，请保持连接小喵热点…';
+  if (operation !== 'idle') return; operation = 'check'; $('verify').disabled = true; $('verifyHint').textContent = '正在检查，请保持连接)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(热点…';
   try {
     const data = await verifySaved();
     if (data !== true) {

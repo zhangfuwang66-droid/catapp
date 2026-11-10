@@ -11,6 +11,12 @@ const auditActions = new Map([
   ['pause-voice','暂停语音'], ['resume-voice','恢复语音'], ['unbind-device','解绑设备'],
   ['grant-admin','授予管理员'], ['revoke-admin','撤销管理员'],
 ]);
+const deviceTypes = new Map([['cat','小喵'],['deer','小鹿'],['unknown','未知类型']]);
+// queued 是当前资料库值；兼容服务端曾返回的 pending，二者都计入待处理。
+const documentStatuses = new Map([
+  ['queued','待处理'], ['pending','待处理'], ['processing','处理中'],
+  ['ready','已就绪'], ['keyword','关键词检索可用'], ['failed','处理失败'],
+]);
 const state = {view:'overview', csrf:'', user:null, requests:{}, serial:{}, busy:false,
   pages:{users:1,devices:1,audit:1}, queries:{users:'',devices:'',audit:''},
   statuses:{users:'all',devices:'all'}};
@@ -211,7 +217,7 @@ function renderDevices(data) {
   const items = Array.isArray(data.items) ? data.items : [];
   items.forEach(device => {
     const row = node('tr'); const name = addCell(row); name.append(node('strong', device.display_name || device.id), node('small', device.id));
-    addCell(row, device.device_type === 'cat' ? '小喵' : '未知类型');
+    addCell(row, deviceTypes.get(device.device_type) || '未知类型');
     const relation = addCell(row);
     relation.append(node('strong', device.owner_username || '未绑定'));
     if(device.loan_active) relation.append(node('small', `当前由 ${device.active_username || '未知用户'} 借用${device.loan_expires_at ? ` · 至 ${date(device.loan_expires_at)}` : ''}`));
@@ -232,12 +238,15 @@ function renderDevices(data) {
 function renderStorage(data) {
   text('storageDocuments', data.documents?.count); text('storageMemories', data.memory?.memories);
   text('storageBytes', data.documents && data.memory ? bytes(Number(data.documents.bytes || 0) + Number(data.memory.content_bytes || 0) + Number(data.memory.archive_bytes || 0)) : '暂无');
-  const statuses = data.documents?.statuses || {};
-  text('storagePending', statuses.pending ?? statuses.queued ?? '暂无');
+  const statuses = data.documents?.statuses;
+  text('storagePending', statuses ? Number(statuses.pending || 0) + Number(statuses.queued || 0) : '暂无');
+  text('storageProcessing', statuses ? Number(statuses.processing || 0) : '暂无');
   text('storageTime', `更新于 ${new Intl.DateTimeFormat('zh-CN',{dateStyle:'medium',timeStyle:'short'}).format(new Date())}`);
   const body = $('storageBody'); body.replaceChildren();
-  Object.entries(statuses).forEach(([status,count]) => {
-    const row = node('tr'); addCell(row, '资料处理'); addCell(row, count); addCell(row, status); addCell(row, '暂无'); body.append(row);
+  Object.entries(statuses || {}).forEach(([status,count]) => {
+    const row = node('tr'); addCell(row, '资料处理'); addCell(row, count);
+    const cell = addCell(row, documentStatuses.get(status) || '未知状态'); cell.title = status;
+    addCell(row, '暂无'); body.append(row);
   });
   if(data.memory) {
     for(const [label,count] of [['对话',data.memory.conversations],['消息',data.memory.messages],['摘要',data.memory.summaries],['归档消息',data.memory.archived_messages]]) {

@@ -58,7 +58,7 @@
 
         <section class="view" id="view-storage" aria-label="资料与记忆" hidden>
           <div class="section-heading"><h2>用量概览</h2><span>仅显示元数据</span></div>
-          <div class="metrics compact"><div class="metric"><span>资料数量</span><strong id="storageDocuments">—</strong></div><div class="metric"><span>记忆数量</span><strong id="storageMemories">—</strong></div><div class="metric"><span>总占用</span><strong id="storageBytes">—</strong></div><div class="metric"><span>待处理</span><strong id="storagePending">—</strong></div></div>
+          <div class="metrics compact"><div class="metric"><span>资料数量</span><strong id="storageDocuments">—</strong></div><div class="metric"><span>记忆数量</span><strong id="storageMemories">—</strong></div><div class="metric"><span>总占用</span><strong id="storageBytes">—</strong></div><div class="metric"><span>待处理 / 处理中</span><strong><span id="storagePending">—</span> / <span id="storageProcessing">—</span></strong><small>等待开始 / 正在处理</small></div></div>
           <div class="section-heading"><h2>处理与归档</h2><span id="storageTime">—</span></div><div class="table-scroll"><table><thead><tr><th scope="col">类型</th><th scope="col">数量</th><th scope="col">状态</th><th scope="col">更新时间</th></tr></thead><tbody id="storageBody"></tbody></table></div><p class="empty" id="storageEmpty" hidden>暂无处理或归档记录</p>
         </section>
 

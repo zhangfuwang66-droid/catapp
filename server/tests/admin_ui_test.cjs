@@ -21,6 +21,12 @@ const ordinary = {...user,id:2,username:'ordinary-user',is_admin:false};
 const device = {id:'cat-one',display_name:'小喵一号',device_type:'cat',owner_user_id:1,owner_username:'admin',
   active_user_id:1,active_username:'admin',loan_active:false,loan_pending:false,revoked:false,
   audio_online:false,camera_online:false,online:false,voice_paused:true};
+const otherDevices = [
+  {...device,id:'deer-one',display_name:'小鹿一号',device_type:'deer',owner_user_id:null,owner_username:null,active_user_id:null,voice_paused:null},
+  {...device,id:'mystery-one',display_name:'待识别设备',device_type:'unknown',owner_user_id:null,owner_username:null,active_user_id:null,voice_paused:null},
+];
+let storage = {documents:{count:20,bytes:0,statuses:{queued:2,pending:3,processing:4,ready:5,keyword:1,failed:2,future:3}},
+  memory:{memories:0,content_bytes:0,archive_bytes:0,conversations:0,messages:0,summaries:0,archived_messages:0}};
 
 function reply(res,status,data) {
   res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});
@@ -53,8 +59,8 @@ const server = http.createServer(async (req,res) => {
     '/api/admin/overview':{users:{total:2,enabled:2,disabled:0,admins:1},devices:{total:1,bound:1,online:0},uptime_seconds:3600,
       storage:{database_bytes:1024,wal_bytes:0,knowledge_bytes:0,archive_bytes:0},backups:{last_success_at:null}},
     '/api/admin/users':{items:[user,ordinary],total:2,page:1,page_size:20},
-    '/api/admin/devices':{items:[device],total:1,page:1,page_size:20},
-    '/api/admin/storage':{documents:{count:0,bytes:0,statuses:{}},memory:{memories:0,content_bytes:0,archive_bytes:0,conversations:0,messages:0,summaries:0,archived_messages:0}},
+    '/api/admin/devices':{items:[device,...otherDevices],total:3,page:1,page_size:20},
+    '/api/admin/storage':storage,
     '/api/admin/backups':{enabled:true,running:false,last_success_at:null,last_error_code:null},
     '/api/admin/audit':{items:audit,total:audit.length,page:1,page_size:20},
   }[url.pathname];
@@ -76,10 +82,24 @@ const server = http.createServer(async (req,res) => {
     assert.equal(actions.length,0,'页面加载不能触发写请求');
     const output = path.resolve(root,'../artifacts/admin-ui'); fs.mkdirSync(output,{recursive:true});
     await page.screenshot({path:path.join(output,'desktop.png'),fullPage:true});
+    await page.getByRole('button',{name:'资料与记忆',exact:true}).click();
+    await page.locator('#storageBody tr').first().waitFor();
+    assert.equal(await page.locator('#storagePending').innerText(),'5','待处理必须累加 pending 和 queued，不能互相覆盖');
+    assert.equal(await page.locator('#storageProcessing').innerText(),'4','处理中应单独统计');
+    const storageText = await page.locator('#storageBody').innerText();
+    for(const label of ['待处理','处理中','已就绪','关键词检索可用','处理失败','未知状态']) assert.ok(storageText.includes(label),label);
+    assert.doesNotMatch(storageText,/queued|pending|processing|ready|keyword|failed|future/,'状态编码不直接展示给用户');
+    storage = {...storage,documents:{count:0,bytes:0,statuses:{}}};
+    await page.click('#refreshButton');
+    await page.waitForFunction(() => document.getElementById('storagePending').textContent === '0');
+    assert.equal(await page.locator('#storageProcessing').innerText(),'0','空状态聚合表示零而非暂无');
     await page.getByRole('button',{name:'用户',exact:true}).click();
     await page.locator('#usersBody tr').first().waitFor();
     assert.doesNotMatch(await page.locator('#usersBody').innerText(),/test-csrf/);
     await page.getByRole('button',{name:'设备',exact:true}).click();
+    await page.locator('#devicesBody').getByText('小鹿',{exact:true}).waitFor();
+    assert.equal(await page.locator('#devicesBody').getByText('小喵',{exact:true}).count(),1);
+    assert.equal(await page.locator('#devicesBody').getByText('未知类型',{exact:true}).count(),1);
     await page.getByRole('button',{name:'恢复语音'}).click();
     await page.locator('#confirmDescription').getByText(/模型连接/).waitFor();
     assert.equal(actions.length,0,'确认前不能恢复语音');

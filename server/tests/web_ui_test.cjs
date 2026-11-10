@@ -78,12 +78,22 @@ async function main() {
     await consolePage.click('#pauseVoiceBtn');
     await consolePage.waitForFunction(() => document.getElementById('voiceState').textContent.includes('已设置暂停'));
     assert.match(await consolePage.locator('#uiStatus').innerText(), /控制已连/);
+    const peerConsole = await context.newPage(); observe(peerConsole);
+    await peerConsole.goto(info.accounts_url + '/console/cat-alice');
+    await peerConsole.waitForFunction(() => document.getElementById('voiceState').textContent.includes('已设置暂停'));
     await consolePage.reload();
     await consolePage.waitForFunction(() => document.getElementById('voiceState').textContent.includes('已设置暂停'));
     assert.equal(await consolePage.locator('#pauseVoiceBtn').isDisabled(), true);
     await consolePage.click('#resumeVoiceBtn');
     await consolePage.waitForFunction(() => document.getElementById('voiceState').textContent === '设备离线' && !document.getElementById('pauseVoiceBtn').disabled);
     assert.equal(await consolePage.locator('#pauseVoiceBtn').isDisabled(), false);
+    await peerConsole.waitForFunction(() => document.getElementById('voiceState').textContent === '设备离线');
+    await consolePage.evaluate(() => {
+      applyVoiceState({paused:true,connected:false,active:false,revision:100000});
+      connectUI();
+    });
+    await consolePage.waitForFunction(() => document.getElementById('voiceState').textContent === '设备离线');
+    await peerConsole.close();
     const write = await consolePage.evaluate(async () => {
       disconnectUI();
       const response = await deviceFetch('/screen_mode?mode=1', {method:'POST'});

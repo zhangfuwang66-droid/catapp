@@ -1158,6 +1158,7 @@ setInterval(()=>{
 function connectUI(){
   if(!consoleReady) return;
   disconnectUI();
+  applyVoiceState(null);
   chatBox.querySelectorAll('.chat-line').forEach(row => row.remove()); partialText.textContent = '';
   const socket = new WebSocket(consoleSocketUrl('ui'));
   wsUi = socket;

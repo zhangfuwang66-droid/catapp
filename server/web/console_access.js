@@ -68,6 +68,7 @@ function deviceFetch(path, options={}) { return deviceRequest(path, options); }
 function deviceJson(path, options={}) { return deviceRequest(path, options, true); }
 
 function clearConsoleData() {
+  if(typeof modelInput !== 'undefined') { modelInput.value = ''; modelDialog.close(); }
   consoleReady = false; consoleEpoch++; consoleAbort.abort();
   consoleCsrf = ''; consoleUserId = null;
   const viewer = wsViewer, ui = wsUi;

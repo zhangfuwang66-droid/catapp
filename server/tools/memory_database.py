@@ -16,7 +16,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from memory_store import MemoryStore
-from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, KNOWLEDGE_COLUMNS, validate_columns, validate_versions
+from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, KNOWLEDGE_COLUMNS, PROVIDER_COLUMNS, validate_columns, validate_versions
 
 
 TABLES = ("conversations", "messages", "conversation_summaries", "memories")
@@ -57,6 +57,8 @@ def check_database_ready(database: Path):
         validate_columns(connection, {**MEMORY_COLUMNS, **IDENTITY_COLUMNS})
         if versions.get("knowledge"):
             validate_columns(connection, KNOWLEDGE_COLUMNS)
+        if versions.get("provider"):
+            validate_columns(connection, PROVIDER_COLUMNS)
         for table in (*MEMORY_COLUMNS, *IDENTITY_COLUMNS):
             connection.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone()
     finally:
@@ -75,6 +77,8 @@ def inspect_database(database: Path) -> dict:
         if not set(TABLES).issubset(names):
             raise ValueError("数据库缺少聊天记忆所需的数据表")
         versions = validate_versions(connection)
+        if versions.get("provider"):
+            validate_columns(connection, PROVIDER_COLUMNS)
         validate_columns(connection, MEMORY_COLUMNS)
         identity_version = versions.get("identity", 0)
         identity_tables = set(IDENTITY_COLUMNS).intersection(names)

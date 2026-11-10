@@ -14,15 +14,17 @@ from runtime_logging import log_event
 class Embeddings:
     def __init__(self):
         self.model = os.getenv("QWEN_EMBED_MODEL", "text-embedding-v3")
-        self.client = None
 
-    async def embed(self, texts, *, timeout=8):
-        if self.client is None:
-            from openai import AsyncOpenAI
-            self.client = AsyncOpenAI(api_key=os.getenv("DASHSCOPE_API_KEY", ""),
+    async def embed(self, texts, *, timeout=8, api_key=None):
+        from openai import AsyncOpenAI
+        from provider_settings import MissingProviderKey
+        key = os.getenv("DASHSCOPE_API_KEY", "") if api_key is None else api_key
+        if not key:
+            raise MissingProviderKey()
+        async with AsyncOpenAI(api_key=key,
                 base_url=os.getenv("DASHSCOPE_COMPAT_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-                max_retries=0)
-        response = await self.client.embeddings.create(model=self.model, input=texts, dimensions=512,
+                max_retries=0) as client:
+            response = await client.embeddings.create(model=self.model, input=texts, dimensions=512,
                                                         encoding_format="float", timeout=timeout)
         items = sorted(response.data, key=lambda item: item.index)
         if [item.index for item in items] != list(range(len(texts))):
@@ -35,8 +37,7 @@ class Embeddings:
         return vectors
 
     async def close(self):
-        if self.client is not None:
-            await self.client.close()
+        pass
 
 
 class KnowledgeService:
@@ -48,6 +49,16 @@ class KnowledgeService:
         self._queries = asyncio.Semaphore(2)
         self._wake = asyncio.Event()
         self._task = None
+        self.providers = None
+
+    async def embed(self, user_id, texts, *, timeout):
+        if not isinstance(self.embedder, Embeddings):
+            return await self.embedder.embed(texts, timeout=timeout)
+        key = await run_blocking(self.providers.key, user_id) if self.providers else os.getenv("DASHSCOPE_API_KEY", "")
+        result = await self.embedder.embed(texts, timeout=timeout, api_key=key)
+        if self.providers and key != await run_blocking(self.providers.key, user_id):
+            raise ValueError("模型凭证已更新，请重新建立索引")
+        return result
 
     async def start(self):
         await run_blocking(self.store.recover_jobs)
@@ -92,7 +103,7 @@ class KnowledgeService:
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
                             raise asyncio.TimeoutError()
-                        batch = await asyncio.wait_for(self.embedder.embed(chunks[start:start + 10],
+                        batch = await asyncio.wait_for(self.embed(job["user_id"], chunks[start:start + 10],
                             timeout=min(8, remaining)), timeout=min(8, remaining))
                         if len(batch) != len(chunks[start:start + 10]):
                             raise ValueError("invalid_embedding")
@@ -127,7 +138,7 @@ class KnowledgeService:
             if await run_blocking(self.store.has_embeddings, user_id, self.embedder.model):
                 await asyncio.wait_for(self._queries.acquire(), timeout=.05)
                 acquired = True
-                vector = (await asyncio.wait_for(self.embedder.embed([query], timeout=3), timeout=3))[0]
+                vector = (await asyncio.wait_for(self.embed(user_id, [query], timeout=3), timeout=3))[0]
                 pack_vector(vector)
         except Exception as exc:
             vector = None

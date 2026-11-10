@@ -172,7 +172,7 @@ def _parse_memory_summary(text: str) -> Optional[Dict[str, Any]]:
         return None
     return parsed if isinstance(parsed, dict) else None
 
-async def summarize_memory_messages(messages: List[Dict[str, object]]) -> SummaryResult:
+async def summarize_memory_messages(messages: List[Dict[str, object]], *, api_key=None) -> SummaryResult:
     """调用文本模型总结一段已结束的对话；失败时保留未总结消息以便重试。"""
     lines = []
     for message in messages[-40:]:
@@ -186,6 +186,7 @@ async def summarize_memory_messages(messages: List[Dict[str, object]]) -> Summar
         response = await plain_text_async(
             MEMORY_SUMMARY_SYSTEM_PROMPT,
             "请整理以下聊天记录：\n\n" + "\n".join(lines),
+            api_key=api_key,
         )
     except Exception as exc:
         log_event(f"[MEMORY] summary failed: {type(exc).__name__}", flush=True)
@@ -712,7 +713,8 @@ async def _viewer_sender_loop(state: CameraViewerState) -> None:
 class DeviceRuntime:
     """一只设备的连接、模型、音视频与活动状态；只读资源在模块内共享。"""
 
-    def __init__(self, device_id: str, user_id: str, memory_manager: MemoryManager, *, storage=None, knowledge=None):
+    def __init__(self, device_id: str, user_id: str, memory_manager: MemoryManager, *, storage=None, knowledge=None, providers=None):
+        self.providers = providers
         self.device_id = device_id
         self.user_id = user_id
         self.memory_manager = memory_manager
@@ -1908,7 +1910,7 @@ class DeviceRuntime:
                 log_event(f"[RECORD] save failed: {type(exc).__name__}", flush=True)
                 return None
 
-            description = await describe_image_async(jpeg_bytes)
+            description = await describe_image_async(jpeg_bytes, api_key=self.model_key())
             entry = {
                 "id": f"{session_id}-{self.recording_entry_seq:04d}",
                 "timestamp": now,
@@ -2181,6 +2183,16 @@ class DeviceRuntime:
             log_event(f"[MEMORY] UI conversation unavailable: {type(exc).__name__}", flush=True)
             return None, empty
 
+    def model_key(self):
+        if self.providers is not None:
+            return self.providers.key(self.user_id)
+        return API_KEY
+
+    def model_available(self):
+        if self.providers is not None:
+            return self.providers.available(self.user_id)
+        return bool(API_KEY)
+
     async def knowledge_context(self, user_text: str) -> str:
         """归属只取运行时身份，资料仅注入本轮，不存为用户的长期记忆。"""
         if self.knowledge is None:
@@ -2244,6 +2256,7 @@ class DeviceRuntime:
                     content_list,
                     voice="Mochi",
                     audio_format="wav",
+                    api_key=self.model_key(),
                     system_prompt=_memory_context_prompt(
                         VISUAL_DIALOG_SYSTEM_PROMPT if visual_turn else SYSTEM_PROMPT,
                         memory_context,
@@ -2259,7 +2272,7 @@ class DeviceRuntime:
                             await self.update_visual_dialogue_response(full_text, "answering")
                         if not emotion_sent and len(full_text) >= 8:
                             emotion_sent = True
-                            self.current_emotion = await asyncio.get_running_loop().run_in_executor(None, analyze_emotion, full_text)
+                            self.current_emotion = await asyncio.to_thread(analyze_emotion, full_text, self.model_key())
                             await self._send_ui_expression(self.current_emotion)
                     if piece.audio_b64:
                         pcm24 = base64.b64decode(piece.audio_b64)
@@ -2380,6 +2393,7 @@ class DeviceRuntime:
             try:
                 session = OmniRealtimeSession(
                     loop=asyncio.get_running_loop(),
+                    api_key=self.model_key(),
                     system_prompt=repeat_prompt,
                     on_input_transcript=on_input_transcript,
                     on_output_text_delta=on_output_text_delta,
@@ -2683,6 +2697,7 @@ class DeviceRuntime:
             try:
                 new_session = OmniRealtimeSession(
                     loop=asyncio.get_running_loop(),
+                    api_key=self.model_key(),
                     system_prompt=init_prompt,
                     on_input_transcript=guarded_callback(on_input_transcript, generation),
                     on_output_text_delta=guarded_callback(on_output_text_delta, generation),
@@ -2731,10 +2746,10 @@ class DeviceRuntime:
                 session_epoch = self.realtime_restart_epoch
                 log_event("[WS_AUDIO] realtime session restarting (context switch)", flush=True)
                 await stop_session()
-                if API_KEY:
+                if self.model_available():
                     await start_realtime_session()
                 else:
-                    await self.ui_broadcast_partial("（未设置 DASHSCOPE_API_KEY）")
+                    await self.ui_broadcast_partial("（请在模型设置中填写自己的百炼 API Key）")
 
         async def on_realtime_debug(message: str):
             log_event(f"[REALTIME] {message}", flush=True)
@@ -2943,8 +2958,8 @@ class DeviceRuntime:
                 if not self.voice_allowed():
                     await stop_session()
                 elif session is None and self.esp32_audio_ws is ws and not upload_stop.is_set():
-                    if not API_KEY:
-                        raise HTTPException(status_code=503, detail="未设置 DASHSCOPE_API_KEY，无法恢复语音")
+                    if not self.model_available():
+                        raise HTTPException(status_code=503, detail="请先在模型设置中填写自己的百炼 API Key")
                     session_epoch = self.realtime_restart_epoch
                     if not await start_realtime_session():
                         raise HTTPException(status_code=503, detail="语音服务暂未连接，请稍后重试")
@@ -2982,11 +2997,11 @@ class DeviceRuntime:
                             if not self.voice_allowed():
                                 await ws.send_text("TTS_STOP")
                                 await ws.send_text("STOP")
-                            elif API_KEY:
+                            elif self.model_available():
                                 session_epoch = self.realtime_restart_epoch
                                 await start_realtime_session()
                             else:
-                                await self.ui_broadcast_partial("（未设置 DASHSCOPE_API_KEY）")
+                                await self.ui_broadcast_partial("（请在模型设置中填写自己的百炼 API Key）")
                             await ws.send_text("OK:STARTED")
                         await self._broadcast_voice_state()
                     elif cmd == "STOP":
@@ -3197,7 +3212,7 @@ class DeviceRuntime:
         if not question:
             raise HTTPException(status_code=400, detail="question is required")
         entries_snapshot = list(self.recording_entries[-80:])
-        answer = await answer_with_record_context_async(entries_snapshot, question)
+        answer = await answer_with_record_context_async(entries_snapshot, question, api_key=self.model_key())
         await self.ui_broadcast_final(f"[记录] 我：{question}")
         await self.ui_broadcast_final(f"[记录答复] {answer}")
         return {"ok": True, "answer": answer, "used_entries": len(entries_snapshot)}
@@ -3210,7 +3225,7 @@ class DeviceRuntime:
         self.recording_analysis_in_flight = True
         try:
             await self._broadcast_record_event("analysis_started", {"count": len(self.recording_entries)})
-            result = await analyze_activity_entries_async(self.recording_entries)
+            result = await analyze_activity_entries_async(self.recording_entries, api_key=self.model_key())
             await self._broadcast_record_event("analysis_result", result)
             return {"ok": True, "result": result}
         finally:

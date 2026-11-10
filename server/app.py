@@ -39,6 +39,8 @@ from device_routes import router as devices_router
 from knowledge_store import KnowledgeStore
 from knowledge_service import KnowledgeService
 from knowledge_routes import router as knowledge_router
+from provider_settings import ProviderSettings, ModelCredentials
+from provider_routes import router as provider_router
 
 router = APIRouter()
 
@@ -294,7 +296,18 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     access = access if access is not None else AccessSettings.from_environment()
     identities = IdentityStore(manager.store.path)
     knowledge = knowledge_service if knowledge_service is not None else KnowledgeService(KnowledgeStore(manager.store.path))
-    devices = DeviceRegistry(manager, storage=storage, knowledge=knowledge)
+    provider_settings = ProviderSettings(manager.store.path)
+    import device_runtime
+    providers = ModelCredentials(provider_settings, account_mode=access.mode == "accounts", local_key=lambda: device_runtime.API_KEY)
+    knowledge.providers = providers
+    if summarizer is summarize_memory_messages:
+        async def account_summarizer(messages):
+            owner = await run_blocking(manager.store.conversation_owner, messages[0]["conversation_id"])
+            if owner is None:
+                raise ValueError("对话归属不存在")
+            return await summarize_memory_messages(messages, api_key=await run_blocking(providers.key, owner["user_id"]))
+        manager.summarize = account_summarizer
+    devices = DeviceRegistry(manager, storage=storage, knowledge=knowledge, providers=providers)
     storage.protected_paths = devices.protected_record_paths
     connections = ConnectionAuthorizer(identities)
     backups = DatabaseBackups(manager.store.path, backup_settings if backup_settings is not None else BackupSettings.from_environment())
@@ -354,12 +367,16 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.state.database_backups = backups
     application.state.runtime_storage = storage
     application.state.knowledge = knowledge
+    application.state.provider_settings = provider_settings
+    application.state.providers = providers
+    application.state.model_locks = {}
     application.state.default_user_id = MEMORY_USER_ID
     application.state.default_device_id = MEMORY_DEVICE_ID
     application.include_router(router)
     application.include_router(auth_router)
     application.include_router(devices_router)
     application.include_router(knowledge_router)
+    application.include_router(provider_router)
     application.mount("/web", StaticFiles(directory=str(WEB_ROOT)), name="web")
     application.add_middleware(LocalAccessMiddleware, settings=access)
     return application

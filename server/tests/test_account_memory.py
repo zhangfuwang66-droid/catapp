@@ -41,6 +41,7 @@ class AccountMemoryTests(unittest.TestCase):
         for name in ("alice", "bob"):
             identities = self.app.state.identities
             self.users[name] = identities.create_user(name, name + "-test-password")
+            self.app.state.provider_settings.save(self.users[name].id, "simulated-" + name + "-key")
             session = identities.login(name, name + "-test-password", client_key="local")
             self.sessions[name] = {"Cookie": f"{SESSION_COOKIE}={session.token}", "Origin": "http://testserver",
                                    "X-CSRF-Token": csrf_for_session(session.token)}

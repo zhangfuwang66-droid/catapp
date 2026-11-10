@@ -590,7 +590,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <link rel="stylesheet" href="/web/console_ui.css">
 </head>
 <body class="__CYBERMIAO_BODY_CLASS__">
-<div id="consoleAccount" class="console-account" hidden><a href="/">← 我的设备</a><a href="/knowledge">我的资料库</a><span id="consoleAccountName"></span><button id="consoleLogout" class="btn sm" onclick="logoutConsole()">退出登录</button></div>
+<div id="consoleAccount" class="console-account" hidden><a href="/">← 我的设备</a><a href="/knowledge">我的资料库</a><button class="btn sm" onclick="openModelSettings()">模型设置</button><span id="consoleAccountName"></span><button id="consoleLogout" class="btn sm" onclick="logoutConsole()">退出登录</button></div>
 <p id="consoleAccessError" class="access-error" role="alert" hidden></p>
 <!-- SVG icon sprite -->
 <svg width="0" height="0" style="position:absolute">
@@ -929,8 +929,19 @@ INDEX_HTML = r"""<!DOCTYPE html>
 
 <div id="toasts" class="toasts" aria-live="polite" aria-relevant="additions"></div>
 
+<dialog id="modelDialog" class="model-dialog"><form id="modelForm">
+  <div class="model-heading"><div><small>属于你的 AI 连接</small><h2>模型设置</h2></div><button type="button" id="closeModel" class="btn sm" aria-label="关闭模型设置">关闭</button></div>
+  <p class="hint">Key 归当前账号所有，同账号的小猫共用此配置。解绑后，新使用者填写自己的 Key。</p>
+  <p id="modelStatus" role="status">正在读取…</p>
+  <label for="modelKey">百炼 API Key</label><input id="modelKey" type="password" autocomplete="new-password" maxlength="512" spellcheck="false" required placeholder="粘贴你的 API Key，保存后不再显示明文">
+  <p class="hint">请使用与服务器模型地域匹配的 Key。凭证加密保存在服务器，不写入小猫。更新时会重连本账号的小猫。</p>
+  <div class="btn-row"><button type="submit" class="btn primary">保存 Key</button><button type="button" id="testModel" class="btn">测试连接</button><button type="button" id="deleteModel" class="btn danger">移除 Key</button></div>
+  <p class="hint">连接测试会产生少量模型用量。</p><p id="modelFeedback" class="action-feedback" role="status" aria-live="polite"></p>
+</form></dialog>
+
 <script src="/web/console_access.js"></script>
 <script src="/web/console_controls.js"></script>
+<script src="/web/model_settings.js"></script>
 <script>
 let wsViewer = null;
 let wsUi = null;

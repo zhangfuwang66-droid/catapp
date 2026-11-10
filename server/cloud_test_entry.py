@@ -21,12 +21,14 @@ def prepare_environment():
     if credentials_dir:
         try:
             key = (Path(credentials_dir) / "dashscope_api_key").read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            key = ""
         except (OSError, UnicodeError):
             raise ValueError("无法读取 systemd 交付的 API Key") from None
     else:
         key = os.getenv("DASHSCOPE_API_KEY", "").strip()
-    if not key or "\n" in key or "\r" in key:
-        raise ValueError("缺少有效格式的 API Key")
+    if "\n" in key or "\r" in key:
+        raise ValueError("API Key 格式无效")
 
     os.environ.update({
         "DASHSCOPE_API_KEY": key,

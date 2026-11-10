@@ -50,3 +50,6 @@ desktop/config/settings.ini
 artifacts/
 /CyberMiao.exe
 *.spec.bak
+# 账号模型凭证的独立加密主密钥
+provider.key
+*.provider-key

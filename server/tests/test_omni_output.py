@@ -4,7 +4,7 @@ import base64
 import threading
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, MagicMock, patch
 
 import httpx
 from openai import BadRequestError, AuthenticationError
@@ -32,19 +32,21 @@ def provider_error(cls, body, status=400):
 
 class OmniOutputTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.capability = patch.object(omni_client, "_text_only_output", threading.Event())
-        self.capability.start()
-        self.addCleanup(self.capability.stop)
+        self.client = MagicMock()
+        self.client.__enter__.return_value = self.client
+        self.factory = patch.object(omni_client, "make_client", return_value=self.client)
+        self.factory.start()
+        self.addCleanup(self.factory.stop)
 
     async def collect(self, text="集合口令", prompt="按当前账号资料回答"):
         return [piece async for piece in omni_client.stream_chat([{"type":"text","text":text}], system_prompt=prompt)]
 
-    async def test_audio_rejection_retries_text_preserves_prompt_and_caches_only_capability(self):
+    async def test_audio_rejection_retries_text_preserves_prompt_and_isolates_requests(self):
         error = provider_error(BadRequestError, {"code":"invalid_parameter_error",
             "message":"The current model does not support the modalities parameter containing audio."})
         first, second = OutputStream(), OutputStream()
         create = Mock(side_effect=[error, first, second])
-        with patch.object(omni_client.oai_client.chat.completions, "create", create):
+        with patch.object(self.client.chat.completions, "create", create):
             pieces = await self.collect()
             self.assertTrue(pieces[0].notice)
             self.assertEqual(pieces[1].text_delta, "来自资料的回答")
@@ -64,15 +66,14 @@ class OmniOutputTests(unittest.IsolatedAsyncioTestCase):
         for error in errors:
             create = Mock(side_effect=error)
             with self.subTest(kind=type(error).__name__), \
-                    patch.object(omni_client.oai_client.chat.completions, "create", create):
+                    patch.object(self.client.chat.completions, "create", create):
                 with self.assertRaises(type(error)):
                     await self.collect()
                 self.assertEqual(create.call_count, 1)
-                self.assertFalse(omni_client._text_only_output.is_set())
 
     async def test_audio_capable_model_keeps_audio_and_closes_stream(self):
         stream = OutputStream(audio=True)
-        with patch.object(omni_client.oai_client.chat.completions, "create", Mock(return_value=stream)):
+        with patch.object(self.client.chat.completions, "create", Mock(return_value=stream)):
             pieces = await self.collect()
         self.assertEqual(len(pieces), 1)
         self.assertTrue(pieces[0].audio_b64)
@@ -86,7 +87,7 @@ class OmniOutputTests(unittest.IsolatedAsyncioTestCase):
             if not release.wait(timeout=2):
                 raise TimeoutError("test event loop was blocked")
             return OutputStream()
-        with patch.object(omni_client.oai_client.chat.completions, "create", create):
+        with patch.object(self.client.chat.completions, "create", create):
             task = asyncio.create_task(self.collect())
             try:
                 async def wait_until_entered():

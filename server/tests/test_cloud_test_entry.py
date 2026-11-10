@@ -26,7 +26,7 @@ SERVER_ROOT = Path(__file__).resolve().parents[1]
 
 
 class CloudTestConfigurationTests(unittest.TestCase):
-    def test_requires_absolute_data_directory_and_key(self):
+    def test_requires_absolute_data_directory_but_key_is_per_account(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(ValueError):
                 prepare_environment()
@@ -34,8 +34,7 @@ class CloudTestConfigurationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 prepare_environment()
             os.environ["CYBERMIAO_DATA_DIR"] = str(SERVER_ROOT)
-            with self.assertRaises(ValueError):
-                prepare_environment()
+            self.assertEqual(prepare_environment()[0], SERVER_ROOT.resolve())
 
     def test_systemd_credential_takes_precedence_and_invalid_port_fails(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
@@ -55,8 +54,8 @@ class CloudTestConfigurationTests(unittest.TestCase):
                 prepare_environment()
             os.environ["CYBERMIAO_CLOUD_TEST_PORT"] = "8081"
             (root / "dashscope_api_key").unlink()
-            with self.assertRaises(ValueError):
-                prepare_environment()
+            prepare_environment()
+            self.assertEqual(os.environ["DASHSCOPE_API_KEY"], "")
 
 
 class CloudTestProcessTests(unittest.TestCase):

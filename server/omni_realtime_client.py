@@ -39,6 +39,7 @@ class OmniRealtimeSession:
         on_debug: Optional[Callable[[str], Awaitable[None]]] = None,
         get_latest_image_bytes: Optional[Callable[[], bytes]] = None,
         manual_response: bool = False,
+        api_key: Optional[str] = None,
     ):
         self.loop = loop
         self.system_prompt = system_prompt
@@ -52,6 +53,7 @@ class OmniRealtimeSession:
         self.on_debug = on_debug
         self.get_latest_image_bytes = get_latest_image_bytes
         self.manual_response = manual_response
+        self.api_key = API_KEY if api_key is None else api_key
 
         self._ws = None
         self._message_task: Optional[asyncio.Task] = None
@@ -95,7 +97,7 @@ class OmniRealtimeSession:
         return state_name in {"CLOSED", "CLOSING"}
 
     async def ensure_connected(self):
-        if not API_KEY:
+        if not self.api_key:
             raise RuntimeError("未设置 DASHSCOPE_API_KEY")
 
         async with self._connect_lock:
@@ -111,7 +113,7 @@ class OmniRealtimeSession:
             self._session_updated = False
 
             url = f"{REALTIME_WS_URL}?model={REALTIME_MODEL}"
-            headers = {"Authorization": f"Bearer {API_KEY}"}
+            headers = {"Authorization": f"Bearer {self.api_key}"}
             await self._debug(f"connecting url={REALTIME_WS_URL} model={REALTIME_MODEL}")
             connect_kwargs = {
                 "open_timeout": 10,

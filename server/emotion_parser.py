@@ -34,22 +34,23 @@ happy, sad, angry, surprised, thinking, sleepy, excited, confused, love, neutral
 3. 无法判断时返回 neutral"""
 
 
-def _make_client() -> OpenAI:
+def _make_client(api_key) -> OpenAI:
     return OpenAI(
-        api_key=API_KEY,
+        api_key=api_key,
         base_url=os.getenv("DASHSCOPE_COMPAT_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         timeout=4.0,
         max_retries=0,
     )
 
 
-def analyze_emotion(text: str) -> str:
-    if not API_KEY:
+def analyze_emotion(text: str, api_key=None) -> str:
+    api_key = API_KEY if api_key is None else api_key
+    if not api_key:
         return DEFAULT_EMOTION
     if not text or len(text.strip()) < 2:
         return DEFAULT_EMOTION
     try:
-        with _make_client() as client:
+        with _make_client(api_key) as client:
             response = client.chat.completions.create(
                 model=os.getenv("QWEN_MODEL", "qwen-turbo"),
                 messages=[

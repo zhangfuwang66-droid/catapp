@@ -12,21 +12,20 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from openai import OpenAI, BadRequestError
 from runtime_logging import log_event
 
-API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
-if not API_KEY:
-    raise RuntimeError("未设置 DASHSCOPE_API_KEY")
-
 QWEN_MODEL = os.getenv("QWEN_OMNI_MODEL", "qwen3.8-omni-flash")
 QWEN_VISION_MODEL = os.getenv("QWEN_VISION_MODEL", "qwen-vl-plus")
 QWEN_TEXT_MODEL = os.getenv("QWEN_TEXT_MODEL", "qwen-plus")
 
-oai_client = OpenAI(
-    api_key=API_KEY,
-    base_url=os.getenv("DASHSCOPE_COMPAT_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-)
+def make_client(api_key=None):
+    from provider_settings import MissingProviderKey
+    key = os.getenv("DASHSCOPE_API_KEY", "") if api_key is None else api_key
+    if not key:
+        raise MissingProviderKey()
+    return OpenAI(api_key=key,
+                  base_url=os.getenv("DASHSCOPE_COMPAT_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                  timeout=30, max_retries=0)
 
 _executor = ThreadPoolExecutor(max_workers=2)
-_text_only_output = threading.Event()
 
 SYSTEM_PROMPT = """你是一只桌面小猫机器人，名字叫“小喵”。
 
@@ -88,15 +87,14 @@ def _sync_iterate_completion(completion, result_queue: queue.Queue, cancelled=No
         result_queue.put(None)
 
 
-def _sync_chat(request, result_queue, cancelled):
+def _sync_chat(request, result_queue, cancelled, api_key):
     # 请求建立和流读取均在线程中，避免同步 SDK 阻塞实时语音事件循环。
-    text_only = _text_only_output.is_set()
-    if text_only:
-        request = {**request, "modalities": ["text"]}
-        request.pop("audio", None)
+    text_only = False
+    client = None
     try:
+        client = make_client(api_key)
         try:
-            completion = oai_client.chat.completions.create(**request)
+            completion = client.chat.completions.create(**request)
         except BadRequestError as exc:
             payload = exc.body if isinstance(exc.body, dict) else {}
             payload = payload.get("error", payload)
@@ -106,19 +104,23 @@ def _sync_chat(request, result_queue, cancelled):
                     word in message for word in ("does not support", "modalities", "audio")):
                 raise
             # 仅明确不支持音频输出的参数错误降为文本；鉴权/额度等错误继续报错。
-            _text_only_output.set()
             text_only = True
             log_event("[OMNI] audio output unsupported; using text output", flush=True)
             request = {**request, "modalities": ["text"]}
             request.pop("audio", None)
-            completion = oai_client.chat.completions.create(**request)
+            completion = client.chat.completions.create(**request)
         if text_only and not cancelled.is_set():
             result_queue.put(OmniStreamPiece(notice="本次文字回复不播放声音，语音对话请使用小喵的麦克风。"))
     except Exception as exc:
+        if client is not None:
+            client.close()
         result_queue.put(exc)
         result_queue.put(None)
         return
-    _sync_iterate_completion(completion, result_queue, cancelled)
+    try:
+        _sync_iterate_completion(completion, result_queue, cancelled)
+    finally:
+        client.close()
 
 
 async def stream_chat(
@@ -126,6 +128,7 @@ async def stream_chat(
     voice: str = "Mochi",
     audio_format: str = "wav",
     system_prompt: Optional[str] = None,
+    api_key: Optional[str] = None,
 ) -> AsyncGenerator[OmniStreamPiece, None]:
     request = dict(
         model=QWEN_MODEL,
@@ -142,7 +145,7 @@ async def stream_chat(
     result_queue: queue.Queue = queue.Queue()
     cancelled = threading.Event()
     loop = asyncio.get_running_loop()
-    future = loop.run_in_executor(_executor, _sync_chat, request, result_queue, cancelled)
+    future = loop.run_in_executor(_executor, _sync_chat, request, result_queue, cancelled, api_key)
     try:
         while True:
             try:
@@ -160,29 +163,30 @@ async def stream_chat(
         cancelled.set()
 
 
-def _sync_describe_image(jpeg_bytes: bytes) -> str:
+def _sync_describe_image(jpeg_bytes: bytes, api_key=None) -> str:
     b64 = base64.b64encode(jpeg_bytes).decode("ascii")
-    completion = oai_client.chat.completions.create(
-        model=QWEN_VISION_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "你是活动日志记录员。只用一两句自然中文描述画面中主人当下正在做什么、"
-                    "使用什么物品、所处场景，不要解释自己是 AI，不要加序号或列表，"
-                    "不要出现“画面”“图中”等词。"
-                ),
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                    {"type": "text", "text": "用一句话描述此刻主人正在做什么。"},
-                ],
-            },
-        ],
-        stream=False,
-    )
+    with make_client(api_key) as client:
+        completion = client.chat.completions.create(
+            model=QWEN_VISION_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是活动日志记录员。只用一两句自然中文描述画面中主人当下正在做什么、"
+                        "使用什么物品、所处场景，不要解释自己是 AI，不要加序号或列表，"
+                        "不要出现“画面”“图中”等词。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                        {"type": "text", "text": "用一句话描述此刻主人正在做什么。"},
+                    ],
+                },
+            ],
+            stream=False,
+        )
     text = ""
     try:
         text = (completion.choices[0].message.content or "").strip()
@@ -191,34 +195,35 @@ def _sync_describe_image(jpeg_bytes: bytes) -> str:
     return text or "没有看清画面内容。"
 
 
-async def describe_image_async(jpeg_bytes: bytes) -> str:
+async def describe_image_async(jpeg_bytes: bytes, *, api_key=None) -> str:
     if not jpeg_bytes:
         return ""
     loop = asyncio.get_event_loop()
     try:
-        return await loop.run_in_executor(_executor, _sync_describe_image, jpeg_bytes)
+        return await loop.run_in_executor(_executor, _sync_describe_image, jpeg_bytes, api_key)
     except Exception as exc:
-        return f"描述失败：{exc}"
+        return f"描述失败：{type(exc).__name__}"
 
 
-def _sync_plain_text(system_prompt: str, user_text: str, model: Optional[str] = None) -> str:
-    completion = oai_client.chat.completions.create(
-        model=model or QWEN_TEXT_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text},
-        ],
-        stream=False,
-    )
+def _sync_plain_text(system_prompt: str, user_text: str, model: Optional[str] = None, api_key=None) -> str:
+    with make_client(api_key) as client:
+        completion = client.chat.completions.create(
+            model=model or QWEN_TEXT_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text},
+            ],
+            stream=False,
+        )
     try:
         return (completion.choices[0].message.content or "").strip()
     except Exception:
         return ""
 
 
-async def plain_text_async(system_prompt: str, user_text: str, model: Optional[str] = None) -> str:
+async def plain_text_async(system_prompt: str, user_text: str, model: Optional[str] = None, *, api_key=None) -> str:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _sync_plain_text, system_prompt, user_text, model)
+    return await loop.run_in_executor(_executor, _sync_plain_text, system_prompt, user_text, model, api_key)
 
 
 def _extract_json_block(text: str) -> Optional[Dict[str, Any]]:
@@ -250,7 +255,7 @@ def _format_entries_for_prompt(entries: List[Dict[str, Any]]) -> str:
     return "\n".join(lines) if lines else "（还没有记录）"
 
 
-async def analyze_activity_entries_async(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+async def analyze_activity_entries_async(entries: List[Dict[str, Any]], *, api_key=None) -> Dict[str, Any]:
     joined = _format_entries_for_prompt(entries)
     system_prompt = (
         "你是一位严谨的个人时间分析师，会把一段时间内的摄像头观察记录整理为可视化数据。"
@@ -272,9 +277,9 @@ async def analyze_activity_entries_async(entries: List[Dict[str, Any]]) -> Dict[
     )
     user_text = f"记录如下（按时间顺序）：\n{joined}\n\n请按上述 JSON 格式输出。"
     try:
-        text = await plain_text_async(system_prompt, user_text)
+        text = await plain_text_async(system_prompt, user_text, api_key=api_key)
     except Exception as exc:
-        return {"error": f"分析失败：{exc}", "summary": "", "activities": [], "categories": []}
+        return {"error": f"分析失败：{type(exc).__name__}", "summary": "", "activities": [], "categories": []}
     parsed = _extract_json_block(text)
     if parsed is None:
         return {"error": "模型未返回有效 JSON", "raw": text, "summary": "", "activities": [], "categories": []}
@@ -284,7 +289,7 @@ async def analyze_activity_entries_async(entries: List[Dict[str, Any]]) -> Dict[
     return parsed
 
 
-async def answer_with_record_context_async(entries: List[Dict[str, Any]], question: str) -> str:
+async def answer_with_record_context_async(entries: List[Dict[str, Any]], question: str, *, api_key=None) -> str:
     joined = _format_entries_for_prompt(entries)
     system_prompt = (
         "你是一只温柔的桌面小猫机器人，基于下面这段摄像头观察记录回答主人的问题。"
@@ -293,6 +298,6 @@ async def answer_with_record_context_async(entries: List[Dict[str, Any]], questi
     )
     user_text = f"观察记录：\n{joined}\n\n主人问：{question}"
     try:
-        return await plain_text_async(system_prompt, user_text, model=QWEN_TEXT_MODEL)
+        return await plain_text_async(system_prompt, user_text, model=QWEN_TEXT_MODEL, api_key=api_key)
     except Exception as exc:
-        return f"（我刚刚分神了一下：{exc}）"
+        return f"（记录问答暂不可用：{type(exc).__name__}）"

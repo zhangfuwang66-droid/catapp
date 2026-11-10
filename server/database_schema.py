@@ -3,6 +3,11 @@
 MEMORY_SCHEMA_VERSION = 1
 IDENTITY_SCHEMA_VERSION = 2
 KNOWLEDGE_SCHEMA_VERSION = 1
+PROVIDER_SCHEMA_VERSION = 1
+
+PROVIDER_COLUMNS = {
+    "account_provider_keys": {"user_id", "ciphertext", "masked", "revision", "updated_at"},
+}
 
 KNOWLEDGE_COLUMNS = {
     "knowledge_documents": {"id", "user_id", "filename", "size_bytes", "sha256", "original", "status", "error_code",
@@ -41,7 +46,7 @@ def schema_versions(connection):
 def validate_versions(connection):
     versions = schema_versions(connection)
     for component, supported in (("memory", MEMORY_SCHEMA_VERSION), ("identity", IDENTITY_SCHEMA_VERSION),
-                                 ("knowledge", KNOWLEDGE_SCHEMA_VERSION)):
+                                 ("knowledge", KNOWLEDGE_SCHEMA_VERSION), ("provider", PROVIDER_SCHEMA_VERSION)):
         version = versions.get(component, 0)
         if not isinstance(version, int) or not 0 <= version <= supported:
             raise ValueError("数据库组件版本高于当前程序或无效，不能降级写入，请使用匹配版本")

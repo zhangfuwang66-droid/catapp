@@ -10,8 +10,9 @@ from memory_store import MemoryManager
 
 
 class DeviceRegistry:
-    def __init__(self, memory_manager: MemoryManager, *, storage=None, knowledge=None):
+    def __init__(self, memory_manager: MemoryManager, *, storage=None, knowledge=None, providers=None):
         self.memory_manager = memory_manager
+        self.providers = providers
         self.storage = storage
         self.knowledge = knowledge
         self.devices: Dict[str, DeviceRuntime] = {}
@@ -32,7 +33,7 @@ class DeviceRegistry:
         validate_device_id(device_id)
         runtime = self.devices.get(device_id)
         if runtime is None:
-            runtime = DeviceRuntime(device_id, user_id, self.memory_manager, storage=self.storage, knowledge=self.knowledge)
+            runtime = DeviceRuntime(device_id, user_id, self.memory_manager, storage=self.storage, knowledge=self.knowledge, providers=self.providers)
             self.devices[device_id] = runtime
         elif runtime.user_id != user_id:
             raise ValueError("设备运行身份与当前归属不一致")

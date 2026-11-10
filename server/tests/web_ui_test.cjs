@@ -75,6 +75,15 @@ async function main() {
     await consolePage.waitForFunction(() => document.getElementById('chatBox').textContent.includes('Alice的私有对话'));
     await consolePage.evaluate(() => connectCamera());
     await consolePage.waitForFunction(() => document.getElementById('videoCanvas').getContext('2d').getImageData(0,0,1,1).data[0] > 150);
+    await consolePage.click('#pauseVoiceBtn');
+    await consolePage.waitForFunction(() => document.getElementById('voiceState').textContent.includes('已设置暂停'));
+    assert.match(await consolePage.locator('#uiStatus').innerText(), /控制已连/);
+    await consolePage.reload();
+    await consolePage.waitForFunction(() => document.getElementById('voiceState').textContent.includes('已设置暂停'));
+    assert.equal(await consolePage.locator('#pauseVoiceBtn').isDisabled(), true);
+    await consolePage.click('#resumeVoiceBtn');
+    await consolePage.waitForFunction(() => document.getElementById('voiceState').textContent === '设备离线' && !document.getElementById('pauseVoiceBtn').disabled);
+    assert.equal(await consolePage.locator('#pauseVoiceBtn').isDisabled(), false);
     const write = await consolePage.evaluate(async () => {
       disconnectUI();
       const response = await deviceFetch('/screen_mode?mode=1', {method:'POST'});

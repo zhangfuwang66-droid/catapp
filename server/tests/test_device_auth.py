@@ -57,6 +57,18 @@ class DeviceAuthorizationTests(unittest.TestCase):
         return self.stack.enter_context(self.client.websocket_connect(
             f"/ws/devices/cat-{name}/audio", headers=headers or self.credentials[name]))
 
+    def test_voice_control_requires_owner_and_csrf_and_is_scoped_to_device(self):
+        url = '/api/devices/cat-alice/voice'
+        self.assertEqual(self.client.get(url).status_code, 401)
+        self.assertEqual(self.client.post(url, json={'paused': True}, headers=self.headers['bob']).status_code, 404)
+        no_csrf = {key: value for key, value in self.headers['alice'].items() if key != 'X-CSRF-Token'}
+        self.assertEqual(self.client.post(url, json={'paused': True}, headers=no_csrf).status_code, 403)
+        response = self.client.post(url, json={'paused': True}, headers=self.headers['alice'])
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['paused'])
+        self.assertTrue(self.client.get(url, headers=self.headers['alice']).json()['paused'])
+        self.assertFalse(self.client.get('/api/devices/cat-bob/voice', headers=self.headers['bob']).json()['paused'])
+
     def camera(self, name):
         ws = self.stack.enter_context(self.client.websocket_connect(
             f"/ws/devices/cat-{name}/camera", headers=self.credentials[name]))

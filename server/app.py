@@ -214,6 +214,22 @@ async def performance_mode_set(active: Optional[int]=None, runtime: DeviceRuntim
     return await runtime.performance_mode_set(active=active)
 
 
+class VoiceControlRequest(BaseModel):
+    paused: bool
+
+
+@router.get("/voice")
+@router.get("/api/devices/{device_id}/voice")
+async def voice_state(runtime: DeviceRuntime = Depends(get_device_runtime)):
+    return runtime.voice_state()
+
+
+@router.post("/voice")
+@router.post("/api/devices/{device_id}/voice")
+async def voice_control(payload: VoiceControlRequest, runtime: DeviceRuntime = Depends(get_device_runtime)):
+    return await asyncio.shield(runtime.spawn_background(runtime.set_voice_paused(payload.paused)))
+
+
 @router.get("/camera_setting")
 @router.post("/api/devices/{device_id}/camera_setting")
 async def camera_setting(param: str='', value: int=0, runtime: DeviceRuntime = Depends(get_device_runtime)):

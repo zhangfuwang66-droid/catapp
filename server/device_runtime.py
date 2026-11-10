@@ -752,6 +752,10 @@ class DeviceRuntime:
         self.cover_interaction_task: Optional[asyncio.Task] = None
         self.esp32_audio_priority_active: bool = False
         self.performance_mode_active: bool = False
+        self.voice_paused = False
+        self._voice_revision = 0
+        self._voice_control_lock = asyncio.Lock()
+        self._voice_controller = None
         self.recording_active: bool = False
         self.recording_session_id: Optional[str] = None
         self.recording_task: Optional[asyncio.Task] = None
@@ -1576,10 +1580,51 @@ class DeviceRuntime:
     async def send_esp32_command(self, message: str, *, allow_during_audio_priority: bool = False) -> bool:
         if not self.esp32_audio_ws or self.esp32_audio_ws.client_state != WebSocketState.CONNECTED:
             return False
+        # 已结束的播放任务也可能执行 finally；不能让迟到的 START 恢复收音。
+        if message in {"START", "TTS_START"} and not self.voice_allowed():
+            return False
         if not allow_during_audio_priority and self.audio_priority_mode_active() and is_motion_command(message):
             return False
         await self.esp32_audio_ws.send_text(message)
         return True
+
+    def voice_allowed(self) -> bool:
+        return not (self.voice_paused or self.performance_mode_active or self._closed)
+
+    def voice_state(self) -> dict:
+        return {
+            "paused": self.voice_paused,
+            "connected": self.esp32_audio_connected(),
+            "active": self.voice_allowed() and self.current_realtime_session is not None,
+            "performance_mode": self.performance_mode_active,
+            "revision": self._voice_revision,
+        }
+
+    async def _broadcast_voice_state(self):
+        self._voice_revision += 1
+        await self.ui_broadcast_raw("VOICE:" + json.dumps(self.voice_state()))
+
+    async def _sync_voice_control(self):
+        if not self.voice_allowed():
+            # STOP 停止上传，TTS_STOP 停止播放；保留摄像头与网页控制连接。
+            for command in ("TTS_STOP", "STOP"):
+                with contextlib.suppress(Exception):
+                    await self.send_esp32_command(command, allow_during_audio_priority=True)
+            await self.audio.hard_reset_audio("voice paused")
+            await self.recognition.stop_current()
+        controller = self._voice_controller
+        try:
+            if controller is not None:
+                await controller()
+        finally:
+            await self._broadcast_voice_state()
+
+    async def set_voice_paused(self, paused: bool):
+        async with self._voice_control_lock:
+            self.voice_paused = bool(paused)
+            async with self.interrupt_lock:
+                await self._sync_voice_control()
+            return self.voice_state()
 
     async def set_esp32_audio_priority(self, active: bool, *, reason: str = "") -> None:
         active = bool(active)
@@ -1634,6 +1679,8 @@ class DeviceRuntime:
         # 无论开/关，都同步一次 FPS 指令给 ESP32
         with contextlib.suppress(Exception):
             await self.sync_esp32_camera_fps()
+        async with self._voice_control_lock:
+            await self._sync_voice_control()
         await self._broadcast_performance_mode_state()
         return True
 
@@ -2150,6 +2197,9 @@ class DeviceRuntime:
         return format_for_prompt(hits)
 
     async def start_ai_with_text(self, user_text: str):
+        if self.voice_paused:
+            await self.ui_broadcast_final("[语音已暂停] 请先恢复语音，再发送对话")
+            return
         if self.performance_mode_active:
             await self.ui_broadcast_final("[极速模式] 已暂停：文本对话当前不可用")
             return
@@ -2281,6 +2331,9 @@ class DeviceRuntime:
         self.audio.current_ai_task = task
 
     async def start_tts_repeat(self, user_text: str):
+        if self.voice_paused:
+            await self.ui_broadcast_final("[语音已暂停] 请先恢复语音，再复述")
+            return
         if self.performance_mode_active:
             await self.ui_broadcast_final("[极速模式] 已暂停：复述当前不可用")
             return
@@ -2407,6 +2460,7 @@ class DeviceRuntime:
                 "partial": self.current_partial,
                 "finals": self.recent_finals[-10:],
                 "emotion": self.current_emotion,
+                "voice": self.voice_state(),
                 "translation_pairs": [
                     {"pair": k, "name": v.get("name", k), "display": v.get("display", k)}
                     for k, v in TRANSLATION_LANG_PAIRS.items()
@@ -2518,7 +2572,20 @@ class DeviceRuntime:
         upload_queue: asyncio.Queue = asyncio.Queue(maxsize=120)
         upload_stop = asyncio.Event()
         session_epoch = 0
+        session_generation = 0
+        session_lock = asyncio.Lock()
         session_background_tasks: Set[asyncio.Task] = set()
+
+        def session_is_current(generation):
+            return (generation == session_generation and self.voice_allowed()
+                    and self.esp32_audio_ws is ws and not upload_stop.is_set())
+
+        def guarded_callback(callback, generation):
+            async def guarded(*args):
+                if not session_is_current(generation):
+                    return False
+                return await callback(*args)
+            return guarded
 
         async def record_memory(role: str, content: str) -> None:
             if memory_conversation_id is None or not content.strip():
@@ -2539,7 +2606,7 @@ class DeviceRuntime:
                 if data is None:
                     break
                 current_session = session
-                if current_session is None:
+                if current_session is None or not self.voice_allowed():
                     continue
                 try:
                     await current_session.append_audio(data)
@@ -2559,20 +2626,23 @@ class DeviceRuntime:
                         pass
 
         async def stop_session(send_notice: Optional[str] = None):
-            nonlocal session, streaming, playback_release_event, response_text_parts, response_emotion_sent
+            nonlocal session, streaming, playback_release_event, response_text_parts, response_emotion_sent, session_generation
+            session_generation += 1
+            streaming = False
+            old_session, session = session, None
+            self.current_realtime_session = None
+            while not upload_queue.empty():
+                upload_queue.get_nowait()
             if playback_release_event is not None:
                 playback_release_event.set()
                 playback_release_event = None
                 self._set_playing_task_marker(None)
             await finish_pcm_stream()
-            if session is not None:
+            if old_session is not None:
                 try:
-                    await session.close()
+                    await old_session.close()
                 except Exception:
                     pass
-                session = None
-            if self.current_realtime_session is not None:
-                self.current_realtime_session = None
             await self.recognition.set_current(None)
             streaming = False
             response_text_parts = []
@@ -2587,6 +2657,9 @@ class DeviceRuntime:
 
         async def start_realtime_session() -> bool:
             nonlocal session, streaming, memory_context
+            generation = session_generation
+            if not session_is_current(generation):
+                return False
             if self.translation_active:
                 init_prompt = build_translation_prompt(self.translation_pair)
             else:
@@ -2598,19 +2671,23 @@ class DeviceRuntime:
                 new_session = OmniRealtimeSession(
                     loop=asyncio.get_running_loop(),
                     system_prompt=init_prompt,
-                    on_input_transcript=on_input_transcript,
-                    on_output_text_delta=on_output_text_delta,
-                    on_output_audio=on_output_audio,
-                    on_response_started=on_response_started,
-                    on_response_done=on_response_done,
-                    on_speech_started=on_speech_started,
-                    on_error=on_realtime_error,
+                    on_input_transcript=guarded_callback(on_input_transcript, generation),
+                    on_output_text_delta=guarded_callback(on_output_text_delta, generation),
+                    on_output_audio=guarded_callback(on_output_audio, generation),
+                    on_response_started=guarded_callback(on_response_started, generation),
+                    on_response_done=guarded_callback(on_response_done, generation),
+                    on_speech_started=guarded_callback(on_speech_started, generation),
+                    on_error=guarded_callback(on_realtime_error, generation),
                     on_debug=on_realtime_debug,
                     get_latest_image_bytes=self._current_realtime_image_bytes,
                     manual_response=self.knowledge is not None,
                 )
                 self.current_realtime_session = new_session
                 await new_session.ensure_connected()
+                if not session_is_current(generation):
+                    await new_session.close()
+                    self.current_realtime_session = None
+                    return False
                 session = new_session
                 streaming = True
                 log_event("[WS_AUDIO] realtime session connected", flush=True)
@@ -2634,23 +2711,17 @@ class DeviceRuntime:
             用于进入/退出翻译模式等"换脑"场景：DashScope 会话里的历史 item
             无法靠 session.update 覆盖，必须重建会话才能把上下文清干净。
             """
-            nonlocal session, session_epoch
-            if session is None or session_epoch == self.realtime_restart_epoch:
-                return
-            session_epoch = self.realtime_restart_epoch
-            log_event("[WS_AUDIO] realtime session restarting (context switch)", flush=True)
-            old = session
-            await finish_pcm_stream()
-            session = None
-            self.current_realtime_session = None
-            try:
-                await old.close()
-            except Exception:
-                pass
-            if API_KEY:
-                await start_realtime_session()
-            else:
-                await self.ui_broadcast_partial("（未设置 DASHSCOPE_API_KEY）")
+            nonlocal session_epoch
+            async with session_lock:
+                if not self.voice_allowed() or session is None or session_epoch == self.realtime_restart_epoch:
+                    return
+                session_epoch = self.realtime_restart_epoch
+                log_event("[WS_AUDIO] realtime session restarting (context switch)", flush=True)
+                await stop_session()
+                if API_KEY:
+                    await start_realtime_session()
+                else:
+                    await self.ui_broadcast_partial("（未设置 DASHSCOPE_API_KEY）")
 
         async def on_realtime_debug(message: str):
             log_event(f"[REALTIME] {message}", flush=True)
@@ -2765,6 +2836,7 @@ class DeviceRuntime:
 
         async def on_response_done():
             nonlocal playback_release_event, response_text_parts, response_emotion_sent, response_was_translation
+            generation = session_generation
             final_text = ("".join(response_text_parts)).strip() or "（空响应）"
             log_event(f"[REALTIME] response_done chars={len(final_text)}", flush=True)
             if response_was_translation and self.translation_active:
@@ -2784,6 +2856,8 @@ class DeviceRuntime:
                 if response_text_parts:
                     await record_memory("assistant", final_text)
             await asyncio.sleep(0.5)
+            if not session_is_current(generation):
+                return
             if playback_release_event is not None:
                 playback_release_event.set()
                 playback_release_event = None
@@ -2832,6 +2906,23 @@ class DeviceRuntime:
             await self.ui_broadcast_partial(f"（Realtime出错：{message}）")
             await stop_session(send_notice="RESTART")
 
+        async def apply_voice_control():
+            nonlocal session_epoch
+            async with session_lock:
+                if not self.voice_allowed():
+                    await stop_session()
+                elif session is None and self.esp32_audio_ws is ws and not upload_stop.is_set():
+                    if not API_KEY:
+                        raise HTTPException(status_code=503, detail="未设置 DASHSCOPE_API_KEY，无法恢复语音")
+                    session_epoch = self.realtime_restart_epoch
+                    if not await start_realtime_session():
+                        raise HTTPException(status_code=503, detail="语音服务暂未连接，请稍后重试")
+                    # 固件接到 START 仅回 OK:STARTED，不会替服务器建立模型连接。
+                    await self.send_esp32_command("START", allow_during_audio_priority=True)
+
+        self._voice_controller = apply_voice_control
+        await self._broadcast_voice_state()
+
         try:
             while True:
                 try:
@@ -2850,25 +2941,27 @@ class DeviceRuntime:
                             self.hand_tracking_waiting_token = None
                         continue
                     if cmd == "START":
-                        await stop_session()
-                        await self.ui_broadcast_partial("")
-                        audio_chunk_count = 0
-                        audio_total_bytes = 0
-                        audio_log_started_at = time.monotonic()
-                        log_event("[WS_AUDIO] START command received", flush=True)
-                        if self.performance_mode_active:
-                            log_event("[WS_AUDIO] START ignored: performance mode active", flush=True)
-                            await self.ui_broadcast_partial("（极速画面模式开启中，已暂停语音会话）")
+                        async with session_lock:
+                            await stop_session()
+                            await self.ui_broadcast_partial("")
+                            audio_chunk_count = 0
+                            audio_total_bytes = 0
+                            audio_log_started_at = time.monotonic()
+                            log_event("[WS_AUDIO] START command received", flush=True)
+                            if not self.voice_allowed():
+                                await ws.send_text("TTS_STOP")
+                                await ws.send_text("STOP")
+                            elif API_KEY:
+                                session_epoch = self.realtime_restart_epoch
+                                await start_realtime_session()
+                            else:
+                                await self.ui_broadcast_partial("（未设置 DASHSCOPE_API_KEY）")
                             await ws.send_text("OK:STARTED")
-                            continue
-                        if API_KEY:
-                            session_epoch = self.realtime_restart_epoch
-                            await start_realtime_session()
-                        else:
-                            await self.ui_broadcast_partial("（未设置 DASHSCOPE_API_KEY）")
-                        await ws.send_text("OK:STARTED")
+                        await self._broadcast_voice_state()
                     elif cmd == "STOP":
-                        await stop_session(send_notice="OK:STOPPED")
+                        async with session_lock:
+                            await stop_session(send_notice="OK:STOPPED")
+                        await self._broadcast_voice_state()
                     elif raw.startswith("PROMPT:"):
                         text = raw[7:].strip()
                         if text:
@@ -2876,7 +2969,7 @@ class DeviceRuntime:
                                 await self.start_ai_with_text(text)
                             await ws.send_text("OK:PROMPT_ACCEPTED")
                 elif "bytes" in msg and msg["bytes"]:
-                    if streaming and session is not None:
+                    if streaming and session is not None and self.voice_allowed():
                         data = msg["bytes"]
                         audio_chunk_count += 1
                         audio_total_bytes += len(data)
@@ -2902,6 +2995,8 @@ class DeviceRuntime:
             pass
         finally:
             upload_stop.set()
+            if self._voice_controller is apply_voice_control:
+                self._voice_controller = None
             try:
                 upload_queue.put_nowait(None)
             except Exception:
@@ -2912,7 +3007,8 @@ class DeviceRuntime:
                 task.cancel()
             await asyncio.gather(*session_background_tasks, return_exceptions=True)
             try:
-                await stop_session()
+                async with session_lock:
+                    await stop_session()
                 await self.audio.hard_reset_audio("audio disconnected")
             finally:
                 if memory_conversation_id is not None:
@@ -2922,6 +3018,7 @@ class DeviceRuntime:
                         log_event(f"[MEMORY] audio conversation finish failed: {type(exc).__name__}", flush=True)
             if self.esp32_audio_ws is ws:
                 self.esp32_audio_ws = None
+            await self._broadcast_voice_state()
 
     def _enqueue_frame_to_viewers(self, data: bytes) -> None:
         # 把一帧 JPEG 丢进所有 viewer 的有界队列，队列满就丢最旧的

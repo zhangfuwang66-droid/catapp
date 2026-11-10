@@ -51,6 +51,7 @@ function clearConsoleData() {
   if(viewer) { viewer.onmessage = null; viewer.onclose = null; viewer.close(); }
   if(ui) { ui.onmessage = null; ui.onclose = null; ui.close(); }
   stopLocalTtsAudio();
+  voiceControlBusy = false; applyVoiceState(null);
   ctx.clearRect(0,0,canvas.width,canvas.height); lastFrameAt = 0;
   chatBox.querySelectorAll('.chat-line').forEach(row => row.remove()); partialText.textContent = '';
   entriesCache = []; renderTimeline();

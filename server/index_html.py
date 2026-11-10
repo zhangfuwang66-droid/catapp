@@ -778,8 +778,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
                 <div class="subtitle">Qwen3.8-Omni-Flash · 实时双工</div>
               </div>
               <div class="side">
-                <button class="btn sm ghost" onclick="disconnectUI()"><svg><use href="#i-close"/></svg>断开</button>
-                <button class="btn sm primary" onclick="connectUI()"><svg><use href="#i-mic"/></svg>连接控制</button>
+                <span class="subtitle" id="voiceState" role="status">语音状态待同步</span>
+                <button id="pauseVoiceBtn" class="btn sm ghost" onclick="setVoicePaused(true)" disabled><svg><use href="#i-close"/></svg>暂停语音</button>
+                <button id="resumeVoiceBtn" class="btn sm primary" onclick="setVoicePaused(false)" disabled><svg><use href="#i-mic"/></svg>恢复语音</button>
+                <button class="btn sm ghost" onclick="connectUI()">重连控制</button>
               </div>
             </div>
             <div class="card-body">
@@ -1166,8 +1168,41 @@ function connectUI(){
 }
 function disconnectUI(){ const socket = wsUi; wsUi = null; if(socket) socket.close(); setConn(uiStatus, footerUi, false, '控制未连'); }
 
+let voiceState = null;
+let voiceControlBusy = false;
+function applyVoiceState(state){
+  if(state && voiceState && state.revision < voiceState.revision) return;
+  voiceState = state || null;
+  const paused = !!(voiceState && voiceState.paused);
+  document.getElementById('pauseVoiceBtn').disabled = !consoleReady || !voiceState || paused || voiceControlBusy;
+  document.getElementById('resumeVoiceBtn').disabled = !consoleReady || !voiceState || (!paused && voiceState.active) || voiceControlBusy;
+  document.getElementById('voiceState').textContent = !voiceState ? '语音状态待同步' :
+    paused ? (voiceState.connected ? '语音已暂停' : '设备离线 · 已设置暂停') :
+    voiceState.performance_mode ? '极速画面中 · 语音暂停' :
+    !voiceState.connected ? '设备离线' : voiceState.active ? '语音已连接' : '语音未就绪';
+}
+async function setVoicePaused(paused){
+  if(!consoleReady || voiceControlBusy) return;
+  const epoch = consoleEpoch;
+  voiceControlBusy = true; applyVoiceState(voiceState);
+  try {
+    const response = await deviceFetch('/voice', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({paused})});
+    const state = await response.json();
+    if(epoch !== consoleEpoch) return;
+    applyVoiceState(state);
+    if(paused){ stopLocalTtsAudio(); toast('success','已暂停小猫收音和播放'); }
+    else toast('success', state.performance_mode ? '已取消手动暂停，退出极速画面后恢复' : state.active ? '语音已恢复' : '已取消暂停，等待设备连接');
+  } catch(error) {
+    if(epoch === consoleEpoch) toast('error',error.message || '语音控制失败，请重试');
+  } finally {
+    if(epoch === consoleEpoch){ voiceControlBusy = false; applyVoiceState(voiceState); }
+  }
+}
+
 function handleUiMessage(data){
-  if(data.startsWith('PARTIAL:')){
+  if(data.startsWith('VOICE:')){
+    applyVoiceState(JSON.parse(data.substring(6)));
+  } else if(data.startsWith('PARTIAL:')){
     partialText.textContent = data.substring(8) || '...';
   } else if(data.startsWith('FINAL:')){
     const text = data.substring(6);
@@ -1177,6 +1212,7 @@ function handleUiMessage(data){
     partialText.textContent = '';
   } else if(data.startsWith('INIT:')){
     const init = JSON.parse(data.substring(5));
+    applyVoiceState(init.voice);
     (init.finals || []).forEach((item) => {
       const kind = item.startsWith('[记录答复]') ? 'rec' :
                    ((item.startsWith('[AI]')||item.startsWith('[复述]')||item.startsWith('[译文]')||item.startsWith('[原文]')) ? 'ai' : '');

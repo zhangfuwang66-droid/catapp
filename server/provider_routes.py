@@ -78,16 +78,19 @@ async def test(request: Request, response: Response, user: User = Depends(requir
         async def ignore(*args):
             return None
         realtime = None
+        async def check_connection():
+            nonlocal realtime
+            async with AsyncOpenAI(api_key=key, base_url=os.getenv("DASHSCOPE_COMPAT_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                                   max_retries=0, timeout=8) as client:
+                await client.chat.completions.create(model=os.getenv("QWEN_TEXT_MODEL", "qwen-plus"),
+                    messages=[{"role": "user", "content": "回复 OK"}], max_tokens=8)
+            realtime = OmniRealtimeSession(loop=asyncio.get_running_loop(), api_key=key, system_prompt="请简短回答。",
+                on_input_transcript=ignore, on_output_text_delta=ignore, on_output_audio=ignore,
+                on_response_started=ignore, on_response_done=ignore, on_speech_started=ignore, on_error=ignore)
+            await realtime.ensure_connected()
         try:
-            async with asyncio.timeout(20):
-                async with AsyncOpenAI(api_key=key, base_url=os.getenv("DASHSCOPE_COMPAT_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-                                       max_retries=0, timeout=8) as client:
-                    await client.chat.completions.create(model=os.getenv("QWEN_TEXT_MODEL", "qwen-plus"),
-                        messages=[{"role": "user", "content": "回复 OK"}], max_tokens=8)
-                realtime = OmniRealtimeSession(loop=asyncio.get_running_loop(), api_key=key, system_prompt="请简短回答。",
-                    on_input_transcript=ignore, on_output_text_delta=ignore, on_output_audio=ignore,
-                    on_response_started=ignore, on_response_done=ignore, on_speech_started=ignore, on_error=ignore)
-                await realtime.ensure_connected()
+            # asyncio.timeout requires Python 3.11; the cloud deployment uses Python 3.10.
+            await asyncio.wait_for(check_connection(), timeout=20)
         except Exception as exc:
             status = getattr(exc, "status_code", None)
             message = "Key 无效或地域不匹配" if status in (401, 403) else "文本或实时语音连接未通过，请检查额度、模型权限和服务地域"
@@ -95,5 +98,5 @@ async def test(request: Request, response: Response, user: User = Depends(requir
         finally:
             if realtime is not None:
                 with suppress(Exception):
-                    await realtime.close()
+                    await asyncio.wait_for(realtime.close(), timeout=3)
     return {"ok": True, "message": "文本与实时语音连接均通过；测试会产生少量模型用量"}

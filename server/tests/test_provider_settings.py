@@ -5,15 +5,18 @@ from contextlib import closing
 from pathlib import Path
 import sqlite3
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
+from starlette.responses import Response
 from support import server_app
 from access_control import AccessSettings, SESSION_COOKIE
 from identity_store import IdentityStore, csrf_for_session
 from memory_store import MemoryStore
 from provider_settings import ProviderSettings, ModelCredentials, MissingProviderKey, VaultUnavailable
+import provider_routes
 
 
 class VaultTests(unittest.TestCase):
@@ -103,6 +106,93 @@ class ProviderRouteTests(unittest.TestCase):
         with patch('device_runtime.plain_text_async', AsyncMock(return_value='{"summary":"模拟摘要"}')) as call:
             asyncio.run(self.app.state.memory_manager.summarize_now(conversation))
             self.assertEqual(call.call_args.kwargs['api_key'], 'sk-simulated-summary-alice')
+
+    @staticmethod
+    def simulated_connections():
+        text = MagicMock()
+        text.__aenter__ = AsyncMock(return_value=text)
+        text.__aexit__ = AsyncMock(return_value=False)
+        text.chat.completions.create = AsyncMock()
+        realtime = MagicMock()
+        realtime.ensure_connected = AsyncMock()
+        realtime.close = AsyncMock()
+        return text, realtime
+
+    def test_connection_endpoint_works_without_python311_timeout_and_uses_only_owner_key(self):
+        # Limit only this module's asyncio surface so the HTTP framework is unaffected.
+        py310 = SimpleNamespace(Lock=asyncio.Lock, get_running_loop=asyncio.get_running_loop,
+                                wait_for=asyncio.wait_for)
+        for name in ('alice', 'bob'):
+            with self.subTest(account=name):
+                key = 'sk-simulated-private-' + name
+                self.app.state.provider_settings.save(self.users[name].id, key)
+                text, realtime = self.simulated_connections()
+                with patch.object(provider_routes, 'asyncio', py310), \
+                     patch('openai.AsyncOpenAI', return_value=text) as text_factory, \
+                     patch('omni_realtime_client.OmniRealtimeSession', return_value=realtime) as realtime_factory:
+                    response = self.client.post('/api/account/model/test', headers=self.headers[name])
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.headers['cache-control'], 'no-store')
+                self.assertNotIn(key, response.text)
+                self.assertEqual(text_factory.call_args.kwargs['api_key'], key)
+                self.assertEqual(realtime_factory.call_args.kwargs['api_key'], key)
+                text.chat.completions.create.assert_awaited_once()
+                realtime.ensure_connected.assert_awaited_once()
+                realtime.close.assert_awaited_once()
+
+    def test_connection_failure_does_not_echo_provider_secrets_and_closes_realtime(self):
+        key = 'sk-simulated-private-alice'
+        self.app.state.provider_settings.save(self.users['alice'].id, key)
+        for phase in ('text', 'realtime'):
+            with self.subTest(phase=phase):
+                text, realtime = self.simulated_connections()
+                target = text.chat.completions.create if phase == 'text' else realtime.ensure_connected
+                target.side_effect = ValueError('untrusted provider output ' + key)
+                with patch('openai.AsyncOpenAI', return_value=text), \
+                     patch('omni_realtime_client.OmniRealtimeSession', return_value=realtime):
+                    response = self.client.post('/api/account/model/test', headers=self.headers['alice'])
+                self.assertEqual(response.status_code, 400)
+                self.assertNotIn(key, response.text)
+                self.assertNotIn('untrusted provider output', response.text)
+                if phase == 'realtime':
+                    realtime.close.assert_awaited_once()
+                else:
+                    realtime.close.assert_not_awaited()
+
+    def test_connection_timeout_and_request_cancellation_release_realtime(self):
+        self.app.state.provider_settings.save(self.users['alice'].id, 'sk-simulated-private-alice')
+
+        async def run(cancel):
+            entered = asyncio.Event()
+            text, realtime = self.simulated_connections()
+            async def wait_forever():
+                entered.set()
+                await asyncio.Event().wait()
+            realtime.ensure_connected.side_effect = wait_forever
+            async def short_wait(awaitable, timeout):
+                return await asyncio.wait_for(awaitable, timeout=.02 if timeout == 20 else timeout)
+            surface = SimpleNamespace(Lock=asyncio.Lock, get_running_loop=asyncio.get_running_loop,
+                                      wait_for=asyncio.wait_for if cancel else short_wait)
+            with patch.object(provider_routes, 'asyncio', surface), \
+                 patch('openai.AsyncOpenAI', return_value=text), \
+                 patch('omni_realtime_client.OmniRealtimeSession', return_value=realtime):
+                request = SimpleNamespace(app=self.app)
+                task = asyncio.create_task(provider_routes.test(request, Response(), self.users['alice']))
+                await asyncio.wait_for(entered.wait(), timeout=2)
+                if cancel:
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+                else:
+                    with self.assertRaises(provider_routes.HTTPException) as result:
+                        await task
+                    self.assertEqual(result.exception.status_code, 400)
+                realtime.close.assert_awaited_once()
+                self.assertFalse(provider_routes.lock_for(self.app, self.users['alice'].id).locked())
+
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                asyncio.run(run(cancel))
 
     def test_model_client_receives_explicit_key_in_executor(self):
         import omni_client

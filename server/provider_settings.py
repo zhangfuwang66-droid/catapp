@@ -130,6 +130,9 @@ class ModelCredentials:
     def key(self, user_id):
         # 账号模式绝不回落到平台 Key，包括后台任务。
         if self.account_mode:
+            with self.store.connect() as db:
+                if not db.execute('SELECT 1 FROM auth_users WHERE id=? AND disabled=0',(user_id,)).fetchone():
+                    raise MissingProviderKey()
             return self.store.get(user_id)
         key = self.local_key()
         if not key:

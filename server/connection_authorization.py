@@ -102,6 +102,10 @@ class ConnectionAuthorizer:
         leases = [lease for lease in self.leases if lease.authorization.device_id == device_id]
         await asyncio.gather(*(self._stop(lease, code=code, reason=reason) for lease in leases))
 
+    async def revoke_user(self, user_id: str):
+        leases = [lease for lease in self.leases if lease.authorization.user_id == user_id]
+        await asyncio.gather(*(self._stop(lease) for lease in leases))
+
     async def close(self):
         await asyncio.gather(*(self._stop(lease) for lease in list(self.leases)))
 

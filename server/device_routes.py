@@ -77,6 +77,7 @@ class LoanRequest(ConfirmDevice):
 async def transition(request, device_id, mutation, *args):
     registry = request.app.state.devices
     async with registry.locked(device_id):
+        await require_session_write(request)
         result = await run_blocking(mutation, device_id, *args)
         await request.app.state.connections.revoke_device(device_id, code=4403, reason="设备使用权已变更，请重新选择设备")
         await registry.retire_locked(device_id)
@@ -115,6 +116,7 @@ async def borrow(payload: PairRequest, request: Request, user: User = Depends(re
             # 同样消耗限流，避免无效码绕过次数限制。
             return await run_blocking(identities.claim_loan,payload.code,user.id,client_key=request.client.host if request.client else 'unknown')
         async with request.app.state.devices.locked(device_id):
+            await require_session_write(request)
             device = await run_blocking(identities.claim_loan, payload.code, user.id,
                                        client_key=request.client.host if request.client else 'unknown')
             await run_blocking(request.app.state.memory_retention.ensure_policy,user.id,device['id'],'temporary')

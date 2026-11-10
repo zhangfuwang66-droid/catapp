@@ -560,6 +560,10 @@ class MemoryManager:
         return message_id
 
     async def summarize_now(self, conversation_id: int) -> bool:
+        enabled = getattr(self, 'user_enabled', None)
+        owner = await run_blocking(self.store.conversation_owner, conversation_id) if enabled else None
+        if enabled and (not owner or not await run_blocking(enabled, owner['user_id'])):
+            return False
         if conversation_id in self._summarizing:
             return False
         self._summarizing.add(conversation_id)
@@ -573,6 +577,8 @@ class MemoryManager:
                     return summarized
                 through_message_id = int(pending[-1]["id"])
                 result = await self.summarize(pending)
+                if enabled and not await run_blocking(enabled, owner['user_id']):
+                    return summarized
                 if not isinstance(result, SummaryResult):
                     raise TypeError("总结回调必须返回 SummaryResult")
                 if not result.summary.strip() and not result.memories and not result.open_topics:
@@ -585,6 +591,20 @@ class MemoryManager:
         finally:
             self._summarizing.discard(conversation_id)
             self._active_summaries.pop(conversation_id, None)
+
+    async def cancel_user_tasks(self, user_id: str):
+        tasks = set()
+        for conversation_id in set(self._summary_tasks) | set(self._active_summaries):
+            owner = await run_blocking(self.store.conversation_owner,conversation_id)
+            if owner and owner['user_id'] == user_id:
+                for mapping in (self._summary_tasks,self._active_summaries):
+                    task = mapping.pop(conversation_id,None)
+                    if task is not None:
+                        tasks.add(task)
+        tasks.discard(asyncio.current_task())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks,return_exceptions=True)
 
     async def clear_owner(self, user_id: str, device_id: str):
         """调用方先结束设备会话，取消总结后删除；旧回调不能恢复已删除的会话。"""

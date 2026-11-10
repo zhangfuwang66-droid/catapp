@@ -39,6 +39,8 @@ async def settings(request: Request, response: Response, user: User = Depends(re
 
 async def change(request, user_id, key=None):
     async with lock_for(request.app, user_id):
+        # 排队期间可能被管理员撤销会话；shield 不能让旧请求在停用后写回。
+        await require_session_write(request)
         store = request.app.state.provider_settings
         status = await run_blocking(store.delete, user_id) if key is None else await run_blocking(store.save, user_id, key)
         await retire_user_models(request.app, user_id)

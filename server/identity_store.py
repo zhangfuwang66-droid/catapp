@@ -303,6 +303,10 @@ class IdentityStore(DeviceSharing):
             connection.execute("UPDATE auth_sessions SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL",
                                (self.clock(), token_digest(token)))
 
+    def user_enabled(self, user_id: str) -> bool:
+        with self._transaction() as connection:
+            return bool(connection.execute("SELECT 1 FROM auth_users WHERE id=? AND disabled=0", (user_id,)).fetchone())
+
     def register_device(self, device_id: str, display_name: str) -> DeviceCredential:
         validate_device_id(device_id)
         display_name = display_name.strip()
@@ -347,7 +351,13 @@ class IdentityStore(DeviceSharing):
                 WHERE d.id=? AND c.token_hash=? AND c.revoked_at IS NULL AND d.revoked_at IS NULL""",
                 (device_id, token_digest(token)),
             ).fetchone()
-            return self.decorate_device(connection, row) if row else None
+            if row is None:
+                return None
+            device = self.decorate_device(connection, row)
+            if device['active_user_id'] and not connection.execute(
+                    "SELECT 1 FROM auth_users WHERE id=? AND disabled=0", (device['active_user_id'],)).fetchone():
+                return None
+            return device
 
     def list_devices(self, user_id: Optional[str] = None) -> list[dict]:
         query = "SELECT id, display_name, owner_user_id, created_at, bound_at, revoked_at FROM devices"

@@ -52,6 +52,17 @@ class KnowledgeService:
         self._task = None
         self.providers = None
         self.profiler = profiler
+        self._active_user_id = None
+
+    async def cancel_user_tasks(self, user_id):
+        # 单队列只中断目标账号正在处理的任务；原文保留，可由原有重试接口重建。
+        if self._task and self._active_user_id == user_id:
+            self._task.cancel()
+            await asyncio.gather(self._task,return_exceptions=True)
+            with self.store.connection(write=True) as db:
+                db.execute("UPDATE knowledge_documents SET status='failed',error_code='admin_cancelled',job_token=NULL WHERE user_id=? AND status='processing'",(user_id,))
+            self._active_user_id = None
+            self._task = asyncio.create_task(self._worker(),name='knowledge-indexer')
 
     async def document_profile(self, user_id, filename, text):
         fallback = local_profile(filename, text)
@@ -112,6 +123,11 @@ class KnowledgeService:
                     except asyncio.TimeoutError:
                         pass
                     continue
+                self._active_user_id = job['user_id']
+                enabled = getattr(self,'user_enabled',None)
+                if enabled and not await run_blocking(enabled,job['user_id']):
+                    await run_blocking(self.store.finish,job,[],error='account_disabled')
+                    continue
                 try:
                     text = await run_blocking(self.parser, job["filename"], job.pop("original"))
                     chunks = split_text(text)
@@ -154,6 +170,8 @@ class KnowledgeService:
                         await asyncio.sleep(2)
                         await run_blocking(self.store.recover_jobs)
                 await asyncio.sleep(1)
+            finally:
+                self._active_user_id = None
 
     async def chat_search(self, user_id, query, *, previous=None):
         profiles = await run_blocking(self.store.profiles, user_id)

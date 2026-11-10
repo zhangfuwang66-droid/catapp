@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 import asyncio
 import sqlite3
+import time
 from pathlib import Path
 from async_helpers import run_blocking
 from typing import Any, Dict, Optional
@@ -45,6 +46,9 @@ from account_memory_routes import router as account_memory_router
 from memory_retention import MemoryRetention
 from speech_settings import SpeechSettings, SpeechService
 from speech_routes import router as speech_router
+from admin_store import AdminStore
+from admin_routes import router as admin_router
+from admin_operations import AccountOperations, AccountOperationsMiddleware
 
 router = APIRouter()
 
@@ -305,6 +309,9 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     storage = RuntimeStorage(Path(RECORDS_DIR), storage_settings)
     access = access if access is not None else AccessSettings.from_environment()
     identities = IdentityStore(manager.store.path)
+    admins = AdminStore(identities)
+    if access.mode == "accounts":
+        manager.user_enabled = identities.user_enabled
     retention = MemoryRetention(manager.store.path)
     manager.store.retention_enabled = True
     knowledge = knowledge_service if knowledge_service is not None else KnowledgeService(KnowledgeStore(manager.store.path))
@@ -312,6 +319,8 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     import device_runtime
     providers = ModelCredentials(provider_settings, account_mode=access.mode == "accounts", local_key=lambda: device_runtime.API_KEY)
     knowledge.providers = providers
+    if access.mode == "accounts":
+        knowledge.user_enabled = identities.user_enabled
     speech = SpeechService(SpeechSettings(manager.store.path),providers,knowledge=knowledge)
     if summarizer is summarize_memory_messages:
         async def account_summarizer(messages):
@@ -388,6 +397,10 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.state.devices = devices
     application.state.access = access
     application.state.identities = identities
+    application.state.admin_store = admins
+    application.state.admin_started_at = time.monotonic()
+    application.state.admin_mutation_lock = asyncio.Lock()
+    application.state.account_operations = AccountOperations()
     application.state.connections = connections
     application.state.database_backups = backups
     application.state.runtime_storage = storage
@@ -406,7 +419,10 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.include_router(provider_router)
     application.include_router(account_memory_router)
     application.include_router(speech_router)
+    application.include_router(admin_router)
     application.mount("/web", StaticFiles(directory=str(WEB_ROOT)), name="web")
+    if access.mode == 'accounts':
+        application.add_middleware(AccountOperationsMiddleware, identities=identities, operations=application.state.account_operations)
     application.add_middleware(LocalAccessMiddleware, settings=access)
     return application
 

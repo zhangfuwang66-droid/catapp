@@ -39,6 +39,8 @@ class DeviceSharing:
             if row is None:
                 return None
             result = self.decorate_device(db, row, user_id)
+            if not db.execute('SELECT 1 FROM auth_users WHERE id=? AND disabled=0',(user_id,)).fetchone():
+                return None
             return result if result['active_user_id'] == user_id else None
 
     def list_accessible_devices(self, user_id):

@@ -77,6 +77,7 @@ class AdminAcceptanceTests(unittest.TestCase):
                 response = self.request("GET", path, actor="owner")
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertEqual(response.headers.get("cache-control"), "no-store")
+        self.admin_cli("grant", "alice")
         self.admin_cli("revoke", "owner")
         for path in paths:
             self.assertEqual(self.request("GET", path, actor="owner").status_code, 403)
@@ -132,6 +133,25 @@ class AdminAcceptanceTests(unittest.TestCase):
         response = self.request("GET", "/api/admin/users?q=%27%20OR%201%3D1--", actor="owner")
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["total"], 0)
+
+    def test_voice_pause_and_unbind_preserve_hardware_and_history(self):
+        self.admin_cli("grant", "owner")
+        secret = "historical-private-memory-marker"
+        conversation = self.app.state.memory_manager.store.create_conversation(self.users["alice"].id, "cat-alice")
+        self.app.state.memory_manager.store.append_message(conversation, "user", secret)
+        path = "/api/admin/devices/cat-alice/voice"
+        self.assertEqual(self.request("POST", path, actor="owner", json={"paused": True, "confirm_device_id": "wrong"}).status_code, 409)
+        response = self.request("POST", path, actor="owner", json={"paused": True, "confirm_device_id": "cat-alice"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(self.identities.voice_preference(self.users["alice"].id, "cat-alice"))
+        self.assertTrue(self.request("GET", "/api/devices/cat-alice/voice", actor="alice").json()["paused"])
+        response = self.request("POST", "/api/admin/devices/cat-alice/unbind", actor="owner",
+                                json={"confirm_device_id": "cat-alice"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.request("GET", "/api/devices/cat-alice/voice", actor="alice").status_code, 404)
+        self.assertTrue(self.request("GET", "/api/devices/cat-alice/binding", headers=self.device_headers).json()["bound"] is False)
+        self.assertIn(secret, self.request("GET", "/api/account/memories/cat-alice", actor="alice").text)
+        self.assertTrue(inspect_database(self.database)["ok"])
 
 
 if __name__ == "__main__":

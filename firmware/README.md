@@ -41,6 +41,8 @@ arduino-cli compile --fqbn 'esp32:esp32:esp32s3:FlashSize=8M,PSRAM=opi,Partition
 
 设备类型测试可用原生 C++ 编译器分别运行 `firmware/tests/device_profile_test.cpp`（默认猫）和带 `-DCYBERMIAO_DEVICE_DEER=1` 的鹿版本。USB 模拟测试包含跨类型凭证拒绝，设置页浏览器测试覆盖两种品牌与鹿的保存回执。
 
+2026 年 11 月 10 日，一台 8MB Flash / 8MB OPI PSRAM 的 ESP32-S3 小鹿完成了主程序升级。烧录前核验完整 Flash 备份，写入后校验新程序以及保留的启动、分区、NVS 和文件系统区域。设备随后自动连接原 Wi-Fi，挂载原有 4 组共 160 帧表情；USB 诊断确认摄像头持续采集，摄像头、I2S 和任务创建未报告初始化错误，用户确认屏幕显示正常、舵机无异常。本次尚未登记小鹿的云端身份，也未验收实际收音、扬声器听感、云端画面或模型对话；初始化成功不能替代这些实测。
+
 ## 设备身份与网络
 
 主草图中的 `DeviceConfig` 与 `DeviceProvisioning` 提供芯片派生的稳定编号、独立 NVS 身份、服务器协议/主机/端口配置、旧 Wi-Fi 配置兼容，以及 USB 状态查询和凭证配发。工具和模拟串口测试位于 `tools/`、`tests/`，操作说明见 [USB 配置说明](tools/README.md)。

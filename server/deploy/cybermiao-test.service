@@ -13,7 +13,6 @@ WorkingDirectory=/opt/cybermiao-test/app/server
 StateDirectory=cybermiao-test
 StateDirectoryMode=0700
 UMask=0077
-LoadCredential=dashscope_api_key:/etc/cybermiao-test/api_key
 Environment=CYBERMIAO_DATA_DIR=/var/lib/cybermiao-test
 Environment=CYBERMIAO_CLOUD_TEST_PORT=8081
 Environment=QWEN_REALTIME_MODEL=qwen3.8-omni-flash-realtime

@@ -31,13 +31,12 @@ df -h /opt /var/lib
 
 ## 推荐目录和权限
 
-下面的命令需要 root 权限。示例使用 `/opt/cybermiao-test/app` 保存代码，`/opt/cybermiao-test/venv` 保存虚拟环境，`/var/lib/cybermiao-test` 保存数据库、日志、录制目录和自动备份。API Key 写入 `/etc/cybermiao-test/api_key`，权限为 `root:root 0600`，不会进入仓库、命令行参数或日志。
+下面的命令需要 root 权限。示例使用 `/opt/cybermiao-test/app` 保存代码，`/opt/cybermiao-test/venv` 保存虚拟环境，`/var/lib/cybermiao-test` 保存数据库、日志、录制目录和自动备份。账号模式无需共用 API Key，用户绑定后在控制台保存自己的 Key。密文进入数据库，独立主密钥默认保存为数据目录下的 `provider.key`，两者都要私密备份。
 
 ```bash
 useradd --system --home /opt/cybermiao-test --shell /usr/sbin/nologin cybermiao-test
-install -d -o root -g root -m 0755 /opt/cybermiao-test /opt/cybermiao-test/app /etc/cybermiao-test
+install -d -o root -g root -m 0755 /opt/cybermiao-test /opt/cybermiao-test/app
 install -d -o cybermiao-test -g cybermiao-test -m 0700 /var/lib/cybermiao-test
-install -o root -g root -m 0600 /path/to/api_key /etc/cybermiao-test/api_key
 ```
 
 ## 上传和安装
@@ -102,20 +101,11 @@ sudo -u cybermiao-test env LD_LIBRARY_PATH=/opt/cybermiao-test/native/root/usr/l
 
 仅在全部哈希校验成功后解包。服务文件通过 `LD_LIBRARY_PATH` 使用上述目录，并将 Matplotlib 缓存放在独立数据目录。该验证覆盖导入和基本图片编解码，未验证 GPU、显示窗口或实际摄像头。
 
-## 安全录入 API Key
+## 账号独立 API Key
 
-在服务器 root 终端交互录入 Key；输入时不会回显，也不会进入命令历史：
+服务可以在没有共用 Key 的情况下启动。用户登录并绑定小猫后，在控制台「模型设置」填写自己的百炼 Key。网页只返回掩码，不把 Key 写入设备；文本、实时语音、视觉、情绪、资料索引和记忆总结都按账号获取凭证。没有 Key 的账号仍可绑定和管理已有数据，不能使用 AI 对话。
 
-```bash
-umask 077
-read -r -s -p 'DashScope API Key: ' key
-printf '\n'
-printf '%s' "$key" > /etc/cybermiao-test/api_key
-chmod 0600 /etc/cybermiao-test/api_key
-unset key
-```
-
-不要把 Key 放到命令参数、服务文件、Git 或聊天中。systemd 使用 `LoadCredential` 在启动时向服务交付该文件。
+不要把 Key 放到命令参数、服务文件、Git 或聊天中。`provider.key` 遗失会导致已有密文无法解密，备份数据库时必须单独保管对应主密钥，详见[账号模型设置](../../docs/账号模型设置.md)。旧部署可能仍使用 `LoadCredential` 交付平台 Key，当前账号模式不会回落到该 Key；本模板不再要求创建该文件。
 
 ## 初始化独立数据库和账号
 
@@ -133,7 +123,7 @@ chmod 0600 /var/lib/cybermiao-test/provision/cat-test-001.secret.json
 
 ## 安装服务和回环验收
 
-先把本目录的 `cybermiao-test.service` 上传到 `/etc/systemd/system/`，确认 API Key 文件已就位，再执行：
+先把本目录的 `cybermiao-test.service` 上传到 `/etc/systemd/system/`，再执行：
 
 ```bash
 install -o root -g root -m 0644 /path/to/cybermiao-test.service /etc/systemd/system/cybermiao-test.service

@@ -5,6 +5,7 @@
 #include <cJSON.h>
 #include "DeviceConfig.h"
 #include "DeviceLink.h"
+#include "SetupSession.h"
 
 // 只在受密码保护的设备 AP 接口提供设置，不向普通局域网暴露配对码。
 class DeviceSetup {
@@ -14,6 +15,7 @@ class DeviceSetup {
   void poll();
   void closeAutomatic();
   bool active() const { return active_; }
+  bool holdsNetwork() const;
   bool shouldReboot() const;
 
  private:
@@ -33,6 +35,7 @@ class DeviceSetup {
   bool initialized_ = false;
   bool active_ = false;
   bool manual_ = false;
-  bool rebootPending_ = false;
-  uint32_t rebootAt_ = 0;
+  SetupSession session_;
+  bool stationPaused_ = false;
+  String saveRequestId_;
 };

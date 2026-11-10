@@ -2694,7 +2694,10 @@ bool playConfigPrompt() {
   initI2SOut(24000);  // config_prompt.pcm 是 24kHz
 
   const float gain = static_cast<float>(speakerVolumePercent) / 100.0f;
+  bool completed = true;
   while (true) {
+    // 配网播报期间也服务手机请求，不能等整段语音结束才响应页面。
+    setupPortal.poll();
     int avail = file.available();
     if (avail <= 0) break;
     size_t toRead = static_cast<size_t>(avail) < sizeof(inBuf) ? static_cast<size_t>(avail) : sizeof(inBuf);
@@ -2706,19 +2709,24 @@ bool playConfigPrompt() {
     mono16_to_stereo32_msb(reinterpret_cast<int16_t*>(inBuf), sampleCount, outLR, gain);
     size_t totalBytes = sampleCount * 2 * sizeof(int32_t);
     size_t offset = 0;
+    uint32_t lastProgress = millis();
     while (offset < totalBytes) {
       size_t wrote = i2sOut.write(reinterpret_cast<uint8_t*>(outLR) + offset, totalBytes - offset);
       if (wrote == 0) {
+        setupPortal.poll();
+        if (millis() - lastProgress >= 1000) { completed = false; break; }
         vTaskDelay(pdMS_TO_TICKS(1));
       } else {
         offset += wrote;
+        lastProgress = millis();
       }
     }
+    if (!completed) break;
   }
   file.close();
 
   initI2SOut(TTS_RATE);  // 恢复默认采样率
-  return true;
+  return completed;
 }
 
 void startApConfigMode(bool manual) {
@@ -2734,6 +2742,7 @@ void connectWiFi() {
   if (!cfgSsid.length() || !cfgServerHost.length()) { startApConfigMode(false); return; }
   WiFi.mode(setupPortal.active() ? WIFI_AP_STA : WIFI_STA);
   WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
   lastWiFiRetryMs = millis();
   lastWiFiStatus = WiFi.status();
   LOGLN("[WIFI] connecting with saved configuration");
@@ -2758,7 +2767,8 @@ void maintainWiFi() {
     return;
   }
   if (millis() - bootStartMs >= AP_CONFIG_TIMEOUT_MS) startApConfigMode(false);
-  // AP+STA 共存，手机停在设置页时仍能恢复 Wi-Fi 并查询云端配对结果。
+  if (setupPortal.holdsNetwork()) return;
+  // 没有手机正在设置时恢复重连；已连接的 STA 仍可查询云端配对结果。
   if (cfgSsid.length() && cfgServerHost.length() && millis() - lastWiFiRetryMs >= WIFI_RETRY_INTERVAL_MS) {
     WiFi.disconnect(false, false);
     connectWiFi();

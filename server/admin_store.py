@@ -141,7 +141,8 @@ class AdminStore:
                                   (device['active_user_id'], device['id'])).fetchone()
                 device['voice_paused'] = bool(pref and pref[0]) if device['active_user_id'] else None
                 device['revoked'] = device.pop('revoked_at') is not None
-                device['device_type'] = 'cat' if device['id'].startswith('cat-') else 'unknown'
+                prefix, separator, _ = device['id'].partition('-')
+                device['device_type'] = prefix if separator and prefix in ('cat','deer') else 'unknown'
                 result.append(device)
             if pagination is not None:
                 pagination['items'] = result

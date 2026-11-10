@@ -7,7 +7,7 @@
 - `GET /users?q=&status=all|enabled|disabled&page=1&page_size=20` → `{items:[{id,username,created_at,disabled,is_admin,device_count,key_configured}],total,page,page_size}`。
 - `POST /users/{id}/status`，JSON `{disabled:true|false,confirm_username:"目标账号"}` → `{ok:true}`；禁止停用自己或最后一名启用管理员。
 - `POST /users/{id}/revoke-sessions`，JSON `{confirm_username:"目标账号"}` → `{ok:true}`；撤销全部网页登录，清理相关连接和运行任务，禁止对自己执行。
-- `GET /devices?q=&status=all|bound|unbound|online|offline&page=1&page_size=20` → `{items:[{id,display_name,device_type,owner_user_id,owner_username,active_user_id,active_username,loan_active,loan_pending,loan_expires_at,revoked,created_at,audio_online,camera_online,online,voice_paused}],total,page,page_size}`。device_type 为 cat 或 unknown（鹿尚未接入）；未绑定时 voice_paused=null；读接口绝不创建运行时。
+- `GET /devices?q=&status=all|bound|unbound|online|offline&page=1&page_size=20` → `{items:[{id,display_name,device_type,owner_user_id,owner_username,active_user_id,active_username,loan_active,loan_pending,loan_expires_at,revoked,created_at,audio_online,camera_online,online,voice_paused}],total,page,page_size}`。device_type 根据登记编号的 `cat-`、`deer-` 前缀分别返回 cat、deer，其他编号返回 unknown，不根据显示名称猜测；未绑定时 voice_paused=null；读接口绝不创建运行时。
 - `POST /devices/{id}/voice`，JSON `{paused:true|false,confirm_device_id:"目标ID"}` → `{ok:true,paused}`；恢复可能触发模型连接，UI 必须说明并确认。
 - `POST /devices/{id}/unbind`，JSON `{confirm_device_id:"目标ID"}` → `{ok:true}`；保留硬件凭证、Wi-Fi 和记忆。
 - `GET /storage` → `{documents:{count,bytes,statuses:{状态:数量},chunks},memory:{conversations,messages,summaries,memories,content_bytes,archives,archive_bytes,archived_messages,policies:{模式:数量}},retention:{...}}`；只含聚合元数据，不返回私有正文或文件名。

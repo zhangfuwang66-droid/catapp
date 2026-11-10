@@ -1,7 +1,8 @@
 """Black-box admin acceptance checks with an isolated database and simulated users."""
 
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -134,6 +135,27 @@ class AdminAcceptanceTests(unittest.TestCase):
         response = self.request("GET", "/api/admin/users?q=%27%20OR%201%3D1--", actor="owner")
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["total"], 0)
+
+    def test_device_response_has_only_contract_fields(self):
+        self.admin_cli("grant", "owner")
+        response = self.request("GET", "/api/admin/devices", actor="owner")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(set(response.json()["items"][0]), {
+            "id", "display_name", "device_type", "owner_user_id", "owner_username",
+            "active_user_id", "active_username", "loan_active", "loan_pending",
+            "loan_expires_at", "revoked", "created_at", "audio_online",
+            "camera_online", "online", "voice_paused",
+        })
+
+    def test_inspect_rejects_missing_admin_role_table(self):
+        self.admin_cli("grant", "owner")
+        damaged = Path(self.temp.name) / "damaged.sqlite3"
+        backup_database(self.database, damaged)
+        with closing(sqlite3.connect(damaged)) as db:
+            db.execute("DROP TABLE admin_roles")
+            db.commit()
+        with self.assertRaises(ValueError):
+            inspect_database(damaged)
 
     def test_voice_pause_and_unbind_preserve_hardware_and_history(self):
         self.admin_cli("grant", "owner")

@@ -56,7 +56,7 @@ class WebPageTests(unittest.TestCase):
             console = client.get("/")
             self.assertIn('"mode": "local"', console.text)
             self.assertNotIn("__CYBERMIAO_", console.text)
-            for resource in ("portal.css", "portal.js", "console_access.js"):
+            for resource in ("portal.css", "portal.js", "console_access.js", "console_controls.js", "console_ui.css"):
                 response = client.get("/web/" + resource)
                 self.assertEqual(response.status_code, 200)
                 self.assertIn("no-store", response.headers["cache-control"])

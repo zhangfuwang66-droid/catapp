@@ -16,7 +16,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root{
       --bg-0:#07080c;
@@ -137,59 +137,6 @@ INDEX_HTML = r"""<!DOCTYPE html>
     .pill.rec .dot::after{border-color:rgba(255,77,109,.4);animation:ripple 1.4s ease-out infinite}
     @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.25);opacity:.7}}
     @keyframes ripple{0%{transform:scale(1);opacity:.9}100%{transform:scale(2.2);opacity:0}}
-    /* ===== Hero ===== */
-    .hero{padding:44px 28px 20px;position:relative}
-    .hero-inner{max-width:1380px;margin:0 auto}
-    .eyebrow{
-      display:inline-flex;align-items:center;gap:10px;
-      padding:5px 12px 5px 5px;border-radius:999px;
-      background:rgba(255,255,255,.03);border:1px solid var(--border);
-      font-size:12px;color:var(--fg-soft);margin-bottom:18px;
-    }
-    .eyebrow .badge{
-      padding:3px 8px;border-radius:999px;font-weight:600;font-size:11px;
-      background:var(--accent-grad);color:#fff;letter-spacing:.03em;
-    }
-    h1.display{margin-bottom:14px;line-height:1.2;padding-bottom:6px}
-    h1.display .zh{
-      display:block;
-      font-family:var(--sans);
-      font-weight:800;
-      font-size:clamp(40px,5vw,68px);
-      letter-spacing:-.01em;
-      line-height:1.18;
-      padding:2px 0 4px;
-    }
-    h1.display .zh em{
-      font-style:normal;font-weight:800;
-      background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent;
-      margin-left:4px;
-    }
-    h1.display .en{
-      display:block;margin-top:4px;
-      font-family:var(--serif);font-style:italic;font-weight:600;
-      font-size:clamp(18px,1.8vw,24px);
-      letter-spacing:.01em;line-height:1.35;
-      background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent;
-      padding:2px 0 4px;
-    }
-    .lede{max-width:720px;color:var(--fg-soft);font-size:15.5px;line-height:1.65}
-    .hero-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:32px}
-    .stat{
-      padding:18px 18px 16px;border-radius:14px;
-      background:var(--surface);border:1px solid var(--border);
-      backdrop-filter:blur(14px);
-      position:relative;overflow:hidden;
-      transition:all .3s ease;
-    }
-    .stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent-grad);opacity:.4;transition:opacity .3s}
-    .stat:hover{transform:translateY(-2px);border-color:var(--border-strong)}
-    .stat:hover::before{opacity:1}
-    .stat .label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--fg-dim);margin-bottom:8px}
-    .stat .val{font-family:var(--mono);font-size:26px;font-weight:500;letter-spacing:-.01em}
-    .stat .trend{font-size:12px;color:var(--fg-dim);margin-top:4px}
-    .stat .trend b{color:var(--fg);font-weight:500}
-    @media (max-width:780px){ .hero-stats{grid-template-columns:repeat(2,1fr)} }
     /* ===== Layout ===== */
     .section{padding:14px 28px 44px}
     .shell{max-width:1380px;margin:0 auto}
@@ -305,8 +252,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       background:rgba(255,255,255,.08);border:1px solid rgba(255,196,86,.35);color:#ffe3a3;
     }
     /* 开启极速模式时把其它控制面板做一点点暗化，提醒用户 */
-    body.perf-on .card:not(#vision){opacity:.42;filter:saturate(.7);pointer-events:none;transition:opacity .2s ease}
-    body.perf-on .hero{opacity:.55;transition:opacity .2s ease}
+    body.perf-on #translate,body.perf-on #record{opacity:.65;transition:opacity .2s ease}
     .icon-btn{
       width:34px;height:34px;border-radius:9px;
       display:inline-flex;align-items:center;justify-content:center;
@@ -641,6 +587,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     .footer .dots span{width:6px;height:6px;border-radius:50%;background:var(--fg-muted)}
     .footer .dots span.on{background:var(--good);box-shadow:0 0 6px var(--good)}
   </style>
+  <link rel="stylesheet" href="/web/console_ui.css">
 </head>
 <body class="__CYBERMIAO_BODY_CLASS__">
 <div id="consoleAccount" class="console-account" hidden><a href="/">← 我的设备</a><a href="/knowledge">我的资料库</a><span id="consoleAccountName"></span><button id="consoleLogout" class="btn sm" onclick="logoutConsole()">退出登录</button></div>
@@ -681,22 +628,18 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div class="brand-logo"></div>
       <div class="brand-name">Meow <em>/ 赛博小喵</em></div>
     </div>
-    <div class="nav-links">
-      <a href="#vision" class="active">画面</a>
-      <a href="#dialog">对话</a>
-      <a href="#translate">同传</a>
+    <div class="nav-links" aria-label="功能导航">
+      <a href="#dialog" class="active" aria-current="page">对话</a>
+      <a href="#vision">画面</a>
       <a href="#record">记录</a>
-      <a href="#hardware">硬件</a>
+      <a href="#translate">同传</a>
+      <a href="#hardware">设置</a>
       <a href="/knowledge">资料库 ↗</a>
     </div>
     <div class="nav-sep"></div>
     <div class="nav-actions">
-      <span id="camStatus" class="pill off"><span class="dot"></span><span>画面未连</span></span>
       <span id="uiStatus" class="pill off"><span class="dot"></span><span>控制未连</span></span>
-      <span id="recStatus" class="pill"><span class="dot"></span><span>未在记录</span></span>
-      <button id="perfBtn" class="btn sm perf" onclick="togglePerformanceMode()" title="开启后将关闭对话/翻译/手势/记录/TFT屏，把所有网络和算力让给摄像头">
-        <svg><use href="#i-bolt"/></svg><span id="perfBtnText">极速画面</span>
-      </button>
+      <a href="#dialog" id="voiceOverview" class="pill"><span class="dot"></span><span>正在同步语音状态…</span></a>
     </div>
   </nav>
 
@@ -706,102 +649,89 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <span>
       <b>极速画面模式已开启</b> —— 对话 / 同传 / 手势 / 记录 / TFT 屏推送均已暂停，所有带宽与算力用于摄像头画面。
     </span>
-    <button class="btn sm" style="margin-left:auto" onclick="setPerformanceMode(false)">
+    <button class="btn sm" data-performance-control style="margin-left:auto" onclick="setPerformanceMode(false)">
       <svg><use href="#i-close"/></svg>退出极速模式
     </button>
   </div>
 
-  <section class="hero">
-    <div class="hero-inner">
-      <div class="eyebrow"><span class="badge">NEW</span><span>记录分析 · 由大模型逐帧描述你的活动</span></div>
-      <h1 class="display"><span class="zh">赛博<em>小喵</em></span><span class="en">Cyber Miao</span></h1>
-      <p class="lede">小喵是一台桌面 ESP32 小猫机器人：实时图像、全双工语音、手势追随、表情舵机，并内置 Qwen 系列多模态模型的记录与事后分析能力。</p>
-      <div class="hero-stats">
-        <div class="stat">
-          <div class="label">Records</div>
-          <div class="val" id="heroCount">0</div>
-          <div class="trend">已记录条目 · <b id="heroInterval">10</b>s 一张</div>
-        </div>
-        <div class="stat">
-          <div class="label">Session</div>
-          <div class="val" id="heroSession" style="font-size:15px">—</div>
-          <div class="trend">当前会话 id</div>
-        </div>
-        <div class="stat">
-          <div class="label">Status</div>
-          <div class="val" id="heroStatus" style="font-size:17px">待命</div>
-          <div class="trend">记录 / 分析 / 待命</div>
-        </div>
-        <div class="stat">
-          <div class="label">Model</div>
-          <div class="val" style="font-size:15px">Qwen-VL · Qwen-Plus</div>
-          <div class="trend">视觉描述 & 活动分析</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <section class="section">
     <div class="shell">
+      <header class="workspace-head">
+        <div><div class="workspace-kicker">CYBER MIAO / 设备工作台</div><h1 id="workspaceTitle">语音与对话</h1><p id="workspaceDescription">和小猫说说话，也可以用文字发起对话。</p></div>
+        <span class="standalone-note"><span class="dot"></span><span id="runModeNote">服务在线即可使用 · 无需一直开着网页</span></span>
+      </header>
       <div class="grid-main">
-        <!-- Left column -->
-        <div class="stack">
-          <div class="card" id="vision">
+          <div class="card workspace-panel" id="vision" hidden>
             <div class="card-head">
               <div class="tag"><svg><use href="#i-cam"/></svg></div>
               <div>
                 <div class="title">实时画面</div>
-                <div class="subtitle">ESP32 Camera · JPEG 实时画面</div>
+                <div class="subtitle">按需打开网页预览，不影响小猫语音</div>
               </div>
               <div class="side">
-                <button class="btn sm ghost" onclick="disconnectCamera()"><svg><use href="#i-close"/></svg>断开</button>
-                <button class="btn sm primary" onclick="connectCamera()"><svg><use href="#i-play"/></svg>连接画面</button>
+                <span id="camStatus" class="pill"><span class="dot"></span><span>预览未开</span></span>
+                <button id="closeCameraBtn" class="btn sm ghost" onclick="disconnectCamera()" disabled><svg><use href="#i-close"/></svg>关闭预览</button>
+                <button id="openCameraBtn" class="btn sm primary" onclick="connectCamera()"><svg><use href="#i-play"/></svg><span id="openCameraText">打开预览</span></button>
               </div>
             </div>
             <div class="card-body">
               <div class="vision-frame">
                 <canvas id="videoCanvas" width="320" height="240"></canvas>
                 <div class="vision-scan"></div>
+                <div id="cameraEmpty" class="camera-empty"><svg><use href="#i-cam"/></svg><strong id="cameraEmptyTitle">画面预览未打开</strong><span id="cameraEmptyText">打开预览只影响这个网页，小猫仍在正常运行。</span></div>
                 <div class="vision-overlay">
-                  <span class="chip live">LIVE</span>
+                  <span id="cameraLive" class="chip live" hidden>实时画面</span>
                   <span class="chip" id="visionTimer">—</span>
                 </div>
               </div>
+              <div class="vision-tools"><div><strong>需要更流畅的画面？</strong><p>极速画面会暂停语音、同传与记录。结束后请退出此模式。</p></div><button id="perfBtn" data-performance-control class="btn sm perf" onclick="togglePerformanceMode()"><svg><use href="#i-bolt"/></svg><span id="perfBtnText">极速画面</span></button></div>
+              <p id="performanceFeedback" class="action-feedback" role="status" aria-live="polite" hidden></p>
             </div>
           </div>
 
-          <div class="card" id="dialog">
+          <div class="card workspace-panel" id="dialog">
             <div class="card-head">
               <div class="tag"><svg><use href="#i-chat"/></svg></div>
               <div>
-                <div class="title">语音 & 对话</div>
-                <div class="subtitle">Qwen3.8-Omni-Flash · 实时双工</div>
+                <div class="title">和小猫聊聊</div>
+                <div class="subtitle">语音对话 · 文字发送 · 资料库问答</div>
               </div>
-              <div class="side">
-                <span class="subtitle" id="voiceState" role="status">语音状态待同步</span>
-                <button id="pauseVoiceBtn" class="btn sm ghost" onclick="setVoicePaused(true)" disabled><svg><use href="#i-close"/></svg>暂停语音</button>
-                <button id="resumeVoiceBtn" class="btn sm primary" onclick="setVoicePaused(false)" disabled><svg><use href="#i-mic"/></svg>恢复语音</button>
-                <button class="btn sm ghost" onclick="connectUI()">重连控制</button>
-              </div>
+              <span class="side subtle-label">关闭网页后仍可对话</span>
             </div>
-            <div class="card-body">
+            <div class="card-body conversation-layout">
+              <div class="conversation-main">
               <div class="chat">
                 <div class="chat-body" id="chatBox">
                   <div class="chat-partial" id="partialText">等待语音或文本输入…</div>
                 </div>
               </div>
-              <div class="section-title">快速发送</div>
+              <label class="section-title input-label" for="promptText">发一句话</label>
               <div class="input-group" style="margin-bottom:10px">
                 <svg class="leading"><use href="#i-chat"/></svg>
                 <input id="promptText" class="input" type="text" placeholder="输入一句话，让小猫直接回复">
                 <button class="btn primary" onclick="sendPrompt()"><svg><use href="#i-send"/></svg>发送</button>
               </div>
-              <textarea id="repeatText" class="textarea" placeholder="想让小猫原封不动复述的文字…"></textarea>
-              <div class="btn-row" style="margin-top:10px"><button class="btn" onclick="sendRepeat()"><svg><use href="#i-play"/></svg>复述一次</button></div>
+              <p id="messageFeedback" class="action-feedback" role="status" aria-live="polite" hidden></p>
+              <details class="tool-details" id="repeatTools"><summary>文字复述工具<span>让小猫照着念</span></summary><label class="sr-only" for="repeatText">需要复述的文字</label><textarea id="repeatText" class="textarea" placeholder="想让小猫原封不动复述的文字…"></textarea><div class="btn-row" style="margin-top:10px"><button class="btn" onclick="sendRepeat()"><svg><use href="#i-play"/></svg>复述一次</button></div></details>
+              </div>
+              <aside class="conversation-side">
+                <div id="voiceControls" class="voice-controls" aria-busy="false">
+                  <div class="section-title">小猫语音</div>
+                  <div class="voice-state-line"><span class="voice-indicator"></span><strong id="voiceState" role="status">正在同步语音状态…</strong></div>
+                  <p id="voiceDetail" class="voice-detail">正在向服务器读取状态。</p>
+                  <div class="voice-actions"><button id="pauseVoiceBtn" class="btn danger" onclick="setVoicePaused(true)" disabled><svg><use href="#i-stop"/></svg><span id="pauseVoiceText">暂停语音</span></button><button id="resumeVoiceBtn" class="btn primary" onclick="setVoicePaused(false)" disabled><svg><use href="#i-mic"/></svg><span id="resumeVoiceText">恢复语音</span></button></div>
+                  <p id="voiceFeedback" class="action-feedback" role="status" aria-live="polite" hidden></p>
+                  <button id="refreshVoiceBtn" class="text-button" onclick="refreshVoiceState(true)">刷新状态</button>
+                </div>
+                <div class="companion-note"><svg><use href="#i-info"/></svg><p>想让小猫安静下来，请点“暂停语音”。关闭网页不会停止实体对话。</p></div>
+                <a class="resource-link" href="/knowledge"><svg><use href="#i-search"/></svg><span>我的资料库<small>上传资料，让小猫带着知识回答</small></span><span>↗</span></a>
+                <a class="resource-link" data-accounts-only href="/"><svg><use href="#i-timeline"/></svg><span>设备与记忆<small>查看绑定设备及聊天记忆</small></span><span>↗</span></a>
+                <details class="tool-details control-tools"><summary>连接与使用说明</summary><p id="controlHint" class="hint">正在连接网页控制通道…</p><button id="reconnectBtn" class="btn sm" onclick="connectUI()">重连网页控制</button><p class="hint">“重连网页控制”只连接这个网页。暂停可跨网页刷新、设备重连保持；云端服务重启后会恢复默认语音状态。</p></details>
+              </aside>
             </div>
           </div>
 
-          <div class="card tr-card" id="translate">
+          <div class="card tr-card workspace-panel" id="translate" hidden>
             <div class="card-head">
               <div class="tag"><svg><use href="#i-translate"/></svg></div>
               <div>
@@ -835,17 +765,14 @@ INDEX_HTML = r"""<!DOCTYPE html>
               </div>
             </div>
           </div>
-        </div>
-
-        <!-- Right column: records -->
-        <div class="stack">
-          <div class="card" id="record">
+          <div class="card workspace-panel" id="record" hidden>
             <div class="card-head">
               <div class="tag"><svg><use href="#i-timeline"/></svg></div>
               <div>
                 <div class="title">记录分析</div>
                 <div class="subtitle">Observe · Narrate · Analyze</div>
               </div>
+              <div class="side"><span id="recStatus" class="pill"><span class="dot"></span><span>未在记录</span></span></div>
             </div>
             <div class="rec-panel">
               <div class="rec-hero">
@@ -870,9 +797,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
                   <svg class="leading"><use href="#i-search"/></svg>
                   <input id="askInput" class="input" type="text" placeholder="问我刚刚做了什么？">
                 </div>
-                <button class="btn primary" onclick="askRecord()"><svg><use href="#i-bot"/></svg>问问</button>
-                <button class="btn" onclick="runAnalysis()"><svg><use href="#i-sparkles"/></svg>智能分析</button>
+                <button id="recordAskBtn" class="btn primary" onclick="askRecord()"><svg><use href="#i-bot"/></svg>问问</button>
+                <button id="recordAnalyzeBtn" class="btn" onclick="runAnalysis()"><svg><use href="#i-sparkles"/></svg>智能分析</button>
               </div>
+              <p id="recordFeedback" class="action-feedback" role="status" aria-live="polite" hidden></p>
               <div id="timeline" class="timeline">
                 <div class="empty">
                   <svg><use href="#i-empty"/></svg>
@@ -885,16 +813,16 @@ INDEX_HTML = r"""<!DOCTYPE html>
                 <h3><span class="num">01</span>时间轴 · Gantt</h3>
                 <div id="ganttWrap" class="gantt"></div>
                 <h3><span class="num">02</span>分类占比 · Bar</h3>
+                <p id="chartUnavailable" class="hint" hidden>图表组件暂未加载，仍可查看总结、时间轴和下方活动明细。</p>
                 <div class="chart-wrap"><canvas id="categoryChart"></canvas></div>
                 <h3><span class="num">03</span>活动明细 · Table</h3>
                 <div style="overflow-x:auto"><table class="table" id="activityTable"><thead><tr><th>时段</th><th>标题</th><th>分类</th><th>时长</th><th>细节</th></tr></thead><tbody></tbody></table></div>
               </div>
             </div>
           </div>
-        </div>
       </div>
 
-      <div class="grid-controls" id="hardware">
+      <div class="grid-controls workspace-panel" id="hardware" hidden>
         <div class="card">
           <div class="card-head">
             <div class="tag"><svg><use href="#i-servo"/></svg></div>
@@ -904,7 +832,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
             </div>
           </div>
           <div class="card-body">
-            <div class="section-title">四路 PWM 舵机测试</div>
+            <details id="rawServoTools" class="tool-details"><summary>原始舵机调试<span>仅限装配校准</span></summary>
             <div class="slider-row"><label>CH0 / Servo1</label><input id="rawServo0" type="range" min="0" max="180" value="90" oninput="updateRawServo(0,this.value)"><span class="val" id="rawServo0Val">90</span></div>
             <div class="slider-row"><label>CH1 / Servo2</label><input id="rawServo1" type="range" min="0" max="180" value="90" oninput="updateRawServo(1,this.value)"><span class="val" id="rawServo1Val">90</span></div>
             <div class="slider-row"><label>CH2 / Servo3</label><input id="rawServo2" type="range" min="0" max="180" value="90" oninput="updateRawServo(2,this.value)"><span class="val" id="rawServo2Val">90</span></div>
@@ -915,6 +843,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
               <button class="btn sm" onclick="disableRawPwmTest()"><svg><use href="#i-stop"/></svg>退出测试</button>
             </div>
             <div class="hint">这里走最基础的 <code>50Hz PWM + 0-180°</code> 原始控制，不做头部限位、耳朵镜像，也不走表情动作队列，专门单测四个 <code>MG90S</code>。</div>
+            </details>
             <div class="section-title">姿态</div>
             <div class="slider-row"><label>俯仰 CH0</label><input id="pitch" type="range" min="70" max="96" value="90" oninput="updateServo('pitch',0,this.value)"><span class="val" id="pitchVal">90</span></div>
             <div class="slider-row"><label>左右 CH3</label><input id="yaw" type="range" min="50" max="130" value="90" oninput="updateServo('yaw',3,this.value)"><span class="val" id="yawVal">90</span></div>
@@ -981,12 +910,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
       </div>
 
       <footer class="footer">
-        <div class="copy">meow://console · build live</div>
+        <div class="copy">Cyber Miao · 小喵控制台</div>
         <div class="dots">
           <span id="footerCam"></span>
           <span id="footerUi"></span>
           <span id="footerRec"></span>
-          <span>v2.1</span>
+          <small>联网相伴，随时见面</small>
         </div>
       </footer>
     </div>
@@ -998,13 +927,17 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <img id="lightboxImg" alt="">
 </div>
 
-<div id="toasts" class="toasts"></div>
+<div id="toasts" class="toasts" aria-live="polite" aria-relevant="additions"></div>
 
 <script src="/web/console_access.js"></script>
+<script src="/web/console_controls.js"></script>
 <script>
 let wsViewer = null;
 let wsUi = null;
 let recordingOn = false;
+let recordControlBusy = false;
+let recordAskBusy = false;
+let analysisRequestBusy = false;
 let entriesCache = [];
 let categoryChart = null;
 let lastFrameAt = 0;
@@ -1037,10 +970,6 @@ const recToggleBtn = document.getElementById('recToggleBtn');
 const recToggleText = document.getElementById('recToggleText');
 const recToggleIcon = document.getElementById('recToggleIcon');
 const recCountEl = document.getElementById('recCount');
-const heroCount = document.getElementById('heroCount');
-const heroSession = document.getElementById('heroSession');
-const heroStatus = document.getElementById('heroStatus');
-const heroInterval = document.getElementById('heroInterval');
 const recSessionEl = document.getElementById('recSession');
 const recStateEl = document.getElementById('recState');
 const recIntervalEl = document.getElementById('recInterval');
@@ -1075,12 +1004,14 @@ function toast(kind, text){
   el.innerHTML = '<svg class="ic" style="width:16px;height:16px"><use href="#'+ic+'"/></svg><div class="body"></div>';
   el.querySelector('.body').textContent = text;
   toastsEl.appendChild(el);
-  setTimeout(()=>{ el.style.transition='all .3s ease'; el.style.opacity='0'; el.style.transform='translateX(20px)'; }, 2600);
-  setTimeout(()=>el.remove(), 3000);
+  const duration = kind === 'error' ? 7500 : 4500;
+  while(toastsEl.children.length > 3) toastsEl.firstElementChild.remove();
+  setTimeout(()=>{ el.style.transition='all .3s ease'; el.style.opacity='0'; el.style.transform='translateX(20px)'; }, duration - 300);
+  setTimeout(()=>el.remove(), duration);
 }
 
 function startLocalTtsAudio(src){
-  if(!consoleReady) return;
+  if(!consoleReady || voiceState?.paused || performanceModeActive) return;
   stopLocalTtsAudio();
   localTtsAudio = new Audio(consoleMediaUrl(src || devicePath('/stream.wav?local=' + Date.now())));
   localTtsAudio.autoplay = true;
@@ -1119,11 +1050,12 @@ function connectCamera(){
   disconnectCamera();
   const socket = new WebSocket(consoleSocketUrl('viewer'));
   wsViewer = socket;
+  setCameraState('connecting');
   const epoch = consoleEpoch;
   socket.binaryType = 'arraybuffer';
-  socket.onopen = () => { if(wsViewer === socket) setConn(camStatus, footerCam, true, '画面已连'); };
-  socket.onclose = (event) => { if(wsViewer === socket){ setConn(camStatus, footerCam, false, '画面未连'); consoleSocketClosed(event); } };
-  socket.onerror = () => { if(wsViewer === socket) setConn(camStatus, footerCam, false, '画面错误'); };
+  socket.onopen = () => { if(wsViewer === socket) setCameraState('waiting'); };
+  socket.onclose = (event) => { if(wsViewer === socket){ setCameraState('error'); consoleSocketClosed(event); } };
+  socket.onerror = () => { if(wsViewer === socket) setCameraState('error'); };
   socket.onmessage = (e) => {
     if(wsViewer !== socket || epoch !== consoleEpoch) return;
     if(!(e.data instanceof ArrayBuffer)) return;
@@ -1136,6 +1068,7 @@ function connectCamera(){
       ctx.drawImage(img,0,0,canvas.width,canvas.height);
       URL.revokeObjectURL(url);
       lastFrameAt = Date.now();
+      if(cameraState !== 'live') setCameraState('live');
     };
     img.onerror = () => URL.revokeObjectURL(url);
     img.src = url;
@@ -1145,13 +1078,14 @@ function disconnectCamera(){
   const socket = wsViewer; wsViewer = null;
   if(socket) socket.close();
   ctx.clearRect(0,0,canvas.width,canvas.height); lastFrameAt = 0;
-  setConn(camStatus, footerCam, false, '画面未连');
+  setCameraState('idle');
 }
 
 setInterval(()=>{
   if(!lastFrameAt) { visionTimer.textContent = '—'; return; }
   const secs = Math.floor((Date.now()-lastFrameAt)/1000);
-  visionTimer.textContent = secs < 2 ? 'LIVE' : (secs + 's ago');
+  visionTimer.textContent = secs < 2 ? '刚刚更新' : (secs + ' 秒前更新');
+  if(secs >= 5 && cameraState === 'live') setCameraState('waiting');
 }, 500);
 
 /* ---- UI WS ---- */
@@ -1162,42 +1096,24 @@ function connectUI(){
   chatBox.querySelectorAll('.chat-line').forEach(row => row.remove()); partialText.textContent = '';
   const socket = new WebSocket(consoleSocketUrl('ui'));
   wsUi = socket;
-  socket.onopen = () => { if(wsUi === socket) setConn(uiStatus, footerUi, true, '控制已连'); };
-  socket.onclose = (event) => { if(wsUi === socket){ setConn(uiStatus, footerUi, false, '控制未连'); consoleSocketClosed(event); } };
-  socket.onerror = () => { if(wsUi === socket) setConn(uiStatus, footerUi, false, '控制错误'); };
+  setUiConnectionState('connecting');
+  refreshVoiceState();
+  socket.onopen = () => { if(wsUi === socket) setUiConnectionState('open'); };
+  socket.onclose = (event) => {
+    if(wsUi !== socket) return;
+    setUiConnectionState('closed'); consoleSocketClosed(event);
+    clearTimeout(uiReconnectTimer);
+    if(consoleReady && !consoleLeaving) uiReconnectTimer = setTimeout(() => {
+      if(consoleReady && wsUi === socket) connectUI();
+    }, 4000);
+  };
+  socket.onerror = () => { if(wsUi === socket) setUiConnectionState('closed'); };
   socket.onmessage = (e) => { if(wsUi === socket && consoleReady) handleUiMessage(e.data); };
 }
-function disconnectUI(){ const socket = wsUi; wsUi = null; if(socket) socket.close(); setConn(uiStatus, footerUi, false, '控制未连'); }
-
-let voiceState = null;
-let voiceControlBusy = false;
-function applyVoiceState(state){
-  if(state && voiceState && state.revision < voiceState.revision) return;
-  voiceState = state || null;
-  const paused = !!(voiceState && voiceState.paused);
-  document.getElementById('pauseVoiceBtn').disabled = !consoleReady || !voiceState || paused || voiceControlBusy;
-  document.getElementById('resumeVoiceBtn').disabled = !consoleReady || !voiceState || (!paused && voiceState.active) || voiceControlBusy;
-  document.getElementById('voiceState').textContent = !voiceState ? '语音状态待同步' :
-    paused ? (voiceState.connected ? '语音已暂停' : '设备离线 · 已设置暂停') :
-    voiceState.performance_mode ? '极速画面中 · 语音暂停' :
-    !voiceState.connected ? '设备离线' : voiceState.active ? '语音已连接' : '语音未就绪';
-}
-async function setVoicePaused(paused){
-  if(!consoleReady || voiceControlBusy) return;
-  const epoch = consoleEpoch;
-  voiceControlBusy = true; applyVoiceState(voiceState);
-  try {
-    const response = await deviceFetch('/voice', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({paused})});
-    const state = await response.json();
-    if(epoch !== consoleEpoch) return;
-    applyVoiceState(state);
-    if(paused){ stopLocalTtsAudio(); toast('success','已暂停小猫收音和播放'); }
-    else toast('success', state.performance_mode ? '已取消手动暂停，退出极速画面后恢复' : state.active ? '语音已恢复' : '已取消暂停，等待设备连接');
-  } catch(error) {
-    if(epoch === consoleEpoch) toast('error',error.message || '语音控制失败，请重试');
-  } finally {
-    if(epoch === consoleEpoch){ voiceControlBusy = false; applyVoiceState(voiceState); }
-  }
+function disconnectUI(){
+  clearTimeout(uiReconnectTimer); uiReconnectTimer = null;
+  const socket = wsUi; wsUi = null; if(socket) socket.close();
+  setUiConnectionState('closed');
 }
 
 function handleUiMessage(data){
@@ -1266,19 +1182,7 @@ function applyPerformanceMode(state){
   if(btnText){ btnText.textContent = active ? '关闭极速' : '极速画面'; }
   if(banner){ banner.classList.toggle('on', active); }
   document.body.classList.toggle('perf-on', active);
-}
-function setPerformanceMode(on){
-  const msg = 'PERFMODE:' + (on ? 'ON' : 'OFF');
-  if(wsUi && wsUi.readyState === 1){
-    wsUi.send(msg);
-  } else {
-    // 没连上控制 WS 时，通过 HTTP 兜底切换
-    deviceFetch('/performance_mode?active=' + (on?1:0), {method:'POST'})
-      .then(r=>r.json()).then(j=>applyPerformanceMode(j))
-      .catch(()=>toast('error','切换失败，请先连接控制 WS'));
-  }
-  if(on) toast('info','极速画面模式开启，其它功能暂停');
-  else   toast('success','已退出极速画面模式');
+  renderPerformanceControl();
 }
 function togglePerformanceMode(){
   setPerformanceMode(!performanceModeActive);
@@ -1311,13 +1215,25 @@ function sendRaw(message){
 }
 function sendPrompt(){
   const text = document.getElementById('promptText').value.trim();
-  if(!text) return;
-  if(sendRaw('PROMPT:' + text)) document.getElementById('promptText').value = '';
+  if(!text){ feedback('messageFeedback','error','先输入一句话，再点发送。'); document.getElementById('promptText').focus(); return; }
+  if(!canSendVoiceText()) return;
+  if(sendRaw('PROMPT:' + text)){
+    document.getElementById('promptText').value = '';
+    feedback('messageFeedback','info','文字已提交至控制通道，等待小猫回复…');
+  } else feedback('messageFeedback','error','文字未发送，请等待网页控制连接或手动重连。');
 }
 function sendRepeat(){
   const text = document.getElementById('repeatText').value.trim();
-  if(!text) return;
-  sendRaw('REPEAT:' + text);
+  if(!text){ feedback('messageFeedback','error','请先填写要复述的文字。'); document.getElementById('repeatText').focus(); return; }
+  if(!canSendVoiceText()) return;
+  if(sendRaw('REPEAT:' + text)) feedback('messageFeedback','info','复述指令已提交至控制通道。');
+  else feedback('messageFeedback','error','复述未发送，请先重连网页控制。');
+}
+function canSendVoiceText(){
+  const message = voiceControlBusy ? '正在切换语音状态，请稍等。' : voiceState?.paused ? '语音已暂停，请先恢复语音。' :
+    performanceModeActive ? '请先退出极速画面，再发送对话。' : voiceState && !voiceState.connected ? '小猫当前离线，请先让它联网。' : '';
+  if(message){ feedback('messageFeedback','error',message); return false; }
+  return true;
 }
 
 /* ---- servo / hardware ---- */
@@ -1329,14 +1245,10 @@ function setRawServoSlider(channel, value){
   document.getElementById('rawServo' + safeChannel + 'Val').textContent = safe;
 }
 function enableRawPwmTest(){
-  rawPwmTestMode = true;
-  sendRaw('PWMTEST:ON');
-  toast('info', '已进入四路 PWM 原始测试模式');
+  if(sendRaw('PWMTEST:ON')){ rawPwmTestMode = true; toast('info', '原始测试指令已发送'); }
 }
 function disableRawPwmTest(){
-  rawPwmTestMode = false;
-  sendRaw('PWMTEST:OFF');
-  toast('success', '已退出四路 PWM 原始测试模式');
+  if(sendRaw('PWMTEST:OFF')){ rawPwmTestMode = false; toast('info', '退出测试指令已发送'); }
 }
 function centerRawPwmServos(){
   if(!rawPwmTestMode){
@@ -1387,32 +1299,42 @@ function updateScreenBrightness(value){
 }
 
 /* ---- recording ---- */
-function toggleRecording(){
+async function toggleRecording(){
+  if(recordControlBusy || !consoleReady) return;
+  if(performanceModeActive){ feedback('recordFeedback','error','请先退出极速画面，再开启记录。'); return; }
+  const epoch = consoleEpoch;
   const url = recordingOn ? '/record/stop' : '/record/start';
-  recToggleBtn.disabled = true;
-  deviceFetch(url, {method:'POST'})
-    .then(r=>r.json())
-    .then(data=>{
-      if(data && data.state){ applyRecordState(data.state); }
-      toast('success', recordingOn ? '已开始记录' : '已停止记录');
-    })
-    .catch(err=>toast('error','切换失败：' + err))
-    .finally(()=>{ recToggleBtn.disabled = false; });
+  recordControlBusy = true; renderRecordControl();
+  feedback('recordFeedback','pending','正在切换记录状态…');
+  try {
+    const data = await deviceJson(url, {method:'POST', timeoutMs:12000});
+    if(epoch !== consoleEpoch) return;
+    if(!data.state) throw new Error('未收到记录状态');
+    applyRecordState(data.state);
+    feedback('recordFeedback','success',recordingOn ? '已开始记录。' : '已停止记录。');
+  } catch(error) {
+    if(epoch !== consoleEpoch) return;
+    feedback('recordFeedback','error',error.message + '，请核对当前记录状态。');
+    fetchInitialRecordState();
+  } finally {
+    if(epoch === consoleEpoch){ recordControlBusy = false; renderRecordControl(); }
+  }
+}
+function renderRecordControl(){
+  recToggleBtn.disabled = recordControlBusy;
+  recToggleBtn.classList.toggle('is-loading',recordControlBusy);
+  recToggleText.textContent = recordControlBusy ? '正在切换…' : recordingOn ? '停止记录' : '开始记录';
 }
 
 function applyRecordState(state){
   recordingOn = !!state.active;
-  recToggleText.textContent = recordingOn ? '停止记录' : '开始记录';
+  renderRecordControl();
   recToggleIcon.innerHTML = recordingOn ? '<use href="#i-stop"/>' : '<use href="#i-play"/>';
   recToggleBtn.classList.toggle('on', recordingOn);
   recSessionEl.textContent = state.session_id || '—';
-  heroSession.textContent = state.session_id || '—';
   recCountEl.textContent = state.count || 0;
-  heroCount.textContent = state.count || 0;
   recIntervalEl.textContent = Math.round(state.interval_sec || 10);
-  heroInterval.textContent = Math.round(state.interval_sec || 10);
   recStateEl.textContent = state.analysis_in_flight ? '分析中' : (recordingOn ? '记录中' : '待命');
-  heroStatus.textContent = state.analysis_in_flight ? '分析中' : (recordingOn ? '记录中' : '待命');
   setRecordPill(recordingOn, state.count || 0);
 }
 
@@ -1461,47 +1383,51 @@ function handleRecordEvent(evt){
   } else if(evt.kind === 'entry'){
     entriesCache.push(evt.payload);
     recCountEl.textContent = entriesCache.length;
-    heroCount.textContent = entriesCache.length;
     setRecordPill(recordingOn, entriesCache.length);
     renderTimeline();
   } else if(evt.kind === 'analysis_started'){
-    recStateEl.textContent = '分析中'; heroStatus.textContent='分析中';
+    recStateEl.textContent = '分析中';
     toast('info','AI 正在分析记录…');
   } else if(evt.kind === 'analysis_result'){
     recStateEl.textContent = recordingOn ? '记录中' : '待命';
-    heroStatus.textContent = recordingOn ? '记录中' : '待命';
     renderAnalysis(evt.payload || {});
     toast('success','分析完成');
   }
 }
 
-function askRecord(){
+async function askRecord(){
+  if(recordAskBusy || !consoleReady) return;
   const q = askInput.value.trim();
-  if(!q) return;
-  addMessage('[记录问] ' + q, 'rec');
-  askInput.value = '';
-  deviceFetch('/record/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question:q})})
-    .then(r=>r.json())
-    .then(data=>{ if(data && data.answer) addMessage('[记录答复] ' + data.answer, 'rec'); })
-    .catch(err=>addMessage('[记录答复] 提问失败：' + err, 'rec'));
+  if(!q){ feedback('recordFeedback','error','请先输入想问的内容。'); askInput.focus(); return; }
+  const epoch = consoleEpoch;
+  const button = document.getElementById('recordAskBtn');
+  recordAskBusy = true; button.disabled = true; button.classList.add('is-loading');
+  feedback('recordFeedback','pending','正在根据记录生成回答…');
+  try {
+    const data = await deviceJson('/record/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({question:q}), timeoutMs:45000});
+    if(epoch !== consoleEpoch) return;
+    feedback('recordFeedback','success',data.answer || '本次没有生成回答。'); askInput.value = '';
+  } catch(error) { if(epoch === consoleEpoch) feedback('recordFeedback','error',error.message); }
+  finally { if(epoch === consoleEpoch){ recordAskBusy = false; button.disabled = false; button.classList.remove('is-loading'); } }
 }
 
-function runAnalysis(){
+async function runAnalysis(){
+  if(analysisRequestBusy || !consoleReady) return;
   if(!entriesCache.length){ toast('error','还没有记录可供分析'); return; }
+  const epoch = consoleEpoch;
+  const button = document.getElementById('recordAnalyzeBtn');
+  analysisRequestBusy = true; button.disabled = true; button.classList.add('is-loading');
   recStateEl.textContent = '分析中';
-  heroStatus.textContent = '分析中';
-  deviceFetch('/record/analyze', {method:'POST'})
-    .then(r=>r.json())
-    .then(data=>{
-      recStateEl.textContent = recordingOn ? '记录中' : '待命';
-      heroStatus.textContent = recordingOn ? '记录中' : '待命';
-      if(data && data.result) renderAnalysis(data.result);
-    })
-    .catch(err=>{
-      recStateEl.textContent = recordingOn ? '记录中' : '待命';
-      heroStatus.textContent = recordingOn ? '记录中' : '待命';
-      toast('error','分析失败：' + err);
-    });
+  feedback('recordFeedback','pending','正在分析记录，结果会显示在下方…');
+  try {
+    const data = await deviceJson('/record/analyze', {method:'POST', timeoutMs:60000});
+    if(epoch !== consoleEpoch) return;
+    if(data.result) renderAnalysis(data.result);
+    feedback('recordFeedback','success','分析完成，请查看下方结果。');
+  } catch(error) { if(epoch === consoleEpoch) feedback('recordFeedback','error',error.message); }
+  finally {
+    if(epoch === consoleEpoch){ analysisRequestBusy = false; button.disabled = false; button.classList.remove('is-loading'); fetchInitialRecordState(); }
+  }
 }
 
 function minutesToMs(str){
@@ -1549,8 +1475,12 @@ function renderAnalysis(result){
   const cats = Array.isArray(result.categories) ? result.categories : [];
   const ctx2 = document.getElementById('categoryChart').getContext('2d');
   if(categoryChart){ categoryChart.destroy(); categoryChart = null; }
-  Chart.defaults.font.family = "'Inter',sans-serif";
-  categoryChart = new Chart(ctx2, {
+  const hasChart = typeof Chart !== 'undefined';
+  document.getElementById('chartUnavailable').hidden = hasChart;
+  document.getElementById('categoryChart').parentElement.hidden = !hasChart;
+  if(hasChart){
+    Chart.defaults.font.family = "'Inter',sans-serif";
+    categoryChart = new Chart(ctx2, {
     type:'bar',
     data:{
       labels: cats.map(c=>c.name||''),
@@ -1575,7 +1505,8 @@ function renderAnalysis(result){
         y:{beginAtZero:true, ticks:{color:'#8a93a7',font:{size:11}},grid:{color:'rgba(255,255,255,.04)'}}
       }
     }
-  });
+    });
+  }
 
   const tbody = document.querySelector('#activityTable tbody');
   tbody.innerHTML = '';
@@ -1618,10 +1549,11 @@ function renderTranslatePairs(){
 }
 
 function startTranslate(){
-  sendRaw('TRANSLATE_START:' + (selectedTranslatePair || 'zh-en'));
+  if(!canSendVoiceText()){ toast('error','请先确认小猫在线，恢复语音并退出极速画面。'); return; }
+  if(sendRaw('TRANSLATE_START:' + (selectedTranslatePair || 'zh-en'))) toast('info','同传指令已提交，请等待右上角状态更新。');
 }
 function stopTranslate(){
-  sendRaw('TRANSLATE_STOP');
+  if(sendRaw('TRANSLATE_STOP')) toast('info','停止同传指令已提交，请等待状态更新。');
 }
 
 function applyTranslationState(state){
@@ -1664,23 +1596,16 @@ function applyTranslationState(state){
 }
 
 function fetchInitialRecordState(){
-  deviceFetch('/record/state').then(r=>r.json()).then(data=>{
+  deviceJson('/record/state').then(data=>{
     if(data && data.state){ applyRecordState(data.state); }
     if(data && Array.isArray(data.entries)){ entriesCache = data.entries; renderTimeline(); }
   }).catch(()=>{});
 }
 
-/* ---- nav active link ---- */
-document.querySelectorAll('.nav-links a').forEach(a=>{
-  a.addEventListener('click', ()=>{
-    document.querySelectorAll('.nav-links a').forEach(x=>x.classList.remove('active'));
-    a.classList.add('active');
-  });
-});
-
 renderTranslatePairs();
 applyTranslationState({active:false, pair:selectedTranslatePair, current:'', source:'', finalized:false});
 
+initializeConsoleControls();
 initializeConsole();
 </script>
 </body>

@@ -27,21 +27,45 @@ function consoleMediaUrl(source) {
   return url.href;
 }
 
-async function deviceFetch(path, options={}) {
+async function deviceRequest(path, options={}, json=false) {
   if(!consoleReady) throw new Error('请先登录并连接设备');
   const epoch = consoleEpoch;
+  const {timeoutMs=10000, signal, ...requestOptions} = options;
   const headers = new Headers(options.headers || {});
   if(accountConsole && options.method && !['GET','HEAD'].includes(options.method.toUpperCase()))
     headers.set('X-CSRF-Token', consoleCsrf);
-  const response = await fetch(devicePath(path), {...options, headers, credentials:'same-origin', cache:'no-store', signal:consoleAbort.signal});
-  if(epoch !== consoleEpoch) throw new Error('设备连接已结束');
-  if(!response.ok) {
-    const result = await response.json().catch(() => ({}));
-    if(accountConsole && (response.status === 401 || response.status === 404)) leaveConsole();
-    throw new Error(typeof result.detail === 'string' ? result.detail : '请求失败，请稍后重试');
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const sources = [consoleAbort.signal, signal].filter(Boolean);
+  sources.forEach(source => {
+    if(source.aborted) abort();
+    else source.addEventListener('abort', abort, {once:true});
+  });
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; abort(); }, timeoutMs);
+  try {
+    const response = await fetch(devicePath(path), {...requestOptions, headers, credentials:'same-origin', cache:'no-store', signal:controller.signal});
+    if(epoch !== consoleEpoch) throw new Error('设备连接已结束');
+    if(!response.ok) {
+      if(accountConsole && (response.status === 401 || response.status === 404)) leaveConsole();
+      const result = await response.json().catch(() => ({}));
+      throw new Error(typeof result.detail === 'string' ? result.detail : '请求失败（' + response.status + '），请稍后重试');
+    }
+    const result = json ? await response.json() : response;
+    if(epoch !== consoleEpoch) throw new Error('设备连接已结束');
+    return result;
+  } catch(error) {
+    if(timedOut) throw new Error('请求超时，服务器可能仍在处理，请刷新状态确认');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    sources.forEach(source => source.removeEventListener('abort', abort));
   }
-  return response;
 }
+
+function deviceFetch(path, options={}) { return deviceRequest(path, options); }
+// JSON 请求的超时与账号校验也覆盖响应体读取，避免按钮一直停在处理中。
+function deviceJson(path, options={}) { return deviceRequest(path, options, true); }
 
 function clearConsoleData() {
   consoleReady = false; consoleEpoch++; consoleAbort.abort();
@@ -51,8 +75,8 @@ function clearConsoleData() {
   if(viewer) { viewer.onmessage = null; viewer.onclose = null; viewer.close(); }
   if(ui) { ui.onmessage = null; ui.onclose = null; ui.close(); }
   stopLocalTtsAudio();
-  voiceControlBusy = false; applyVoiceState(null);
-  ctx.clearRect(0,0,canvas.width,canvas.height); lastFrameAt = 0;
+  resetConsoleControls(); applyVoiceState(null);
+  ctx.clearRect(0,0,canvas.width,canvas.height); lastFrameAt = 0; setCameraState('idle');
   chatBox.querySelectorAll('.chat-line').forEach(row => row.remove()); partialText.textContent = '';
   entriesCache = []; renderTimeline();
   document.getElementById('lightbox').classList.remove('on');

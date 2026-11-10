@@ -9,6 +9,8 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
+from starlette.applications import Starlette
+from starlette.routing import Mount
 
 from access_control import AccessSettings, SESSION_COOKIE
 from admin_store import AdminStore
@@ -108,6 +110,54 @@ class AdminAuthorizationBoundaryTests(unittest.TestCase):
         self.client.cookies.set(SESSION_COOKIE, session.token)
         self.assertEqual(self.client.get("/admin").status_code, 403)
         self.assertEqual(self.client.get("/web/admin/index.html").status_code, 403)
+
+    def test_public_static_mount_cannot_resolve_admin_files(self):
+        # Exercise the filesystem boundary directly, independently of route matching.
+        public_files = next(route.app for route in self.app.routes if getattr(route, "path", None) == "/web")
+        with TestClient(Starlette(routes=[Mount("/web", app=public_files)])) as client:
+            for asset in ("index.html", "admin.js", "admin.css"):
+                with self.subTest(asset=asset):
+                    self.assertEqual(client.get("/web/admin/" + asset).status_code, 404)
+            self.assertEqual(client.get("/web/portal.css").status_code, 200)
+
+    def test_admin_static_windows_aliases_never_use_public_mount(self):
+        aliases = (
+            "/web/ADMIN/index.html", "/web/admin%5cindex.html",
+            "/web/Admin/admin.js", "/web/ADMIN/admin.css",
+            "/web/ADMIN/INDEX.HTML", "/web/admin./index.html",
+            "/web/%41DMIN/index.html", "/web/%61dmin%5cadmin.js",
+        )
+        member_session = self.ids.login(self.member.username, "fictional-password-123",
+                                        client_key="fictional-local")
+        admin_session = self.ids.login(self.admin.username, "fictional-password-123",
+                                       client_key="fictional-local")
+        for actor, token in (("anonymous", None), ("member", member_session.token),
+                             ("admin", admin_session.token)):
+            headers = {"Cookie": f"{SESSION_COOKIE}={token}"} if token else {}
+            for path in aliases:
+                with self.subTest(actor=actor, path=path):
+                    self.assertEqual(self.client.get(path, headers=headers).status_code, 404)
+        for token, expected in ((None, 401), (member_session.token, 403), (admin_session.token, 200)):
+            headers = {"Cookie": f"{SESSION_COOKIE}={token}"} if token else {}
+            for path in ("/web/admin/index.html", "/web/admin/admin.js", "/web/admin/admin.css"):
+                with self.subTest(path=path, expected=expected):
+                    response = self.client.get(path, headers=headers)
+                    self.assertEqual(response.status_code, expected)
+                    self.assertEqual(response.headers.get("cache-control"), "no-store")
+
+    def test_local_mode_blocks_admin_aliases_and_keeps_user_assets(self):
+        app = server_app.create_app(
+            store=MemoryStore(Path(self.temp.name) / "local.sqlite3"), summarizer=summarize,
+            access=AccessSettings("local"),
+        )
+        with TestClient(app, client=("127.0.0.1", 12345)) as client:
+            for path in ("/web/ADMIN/index.html", "/web/admin%5cindex.html",
+                         "/web/Admin/admin.js", "/web/admin/index.html"):
+                with self.subTest(path=path):
+                    self.assertEqual(client.get(path).status_code, 404)
+            for path in ("/", "/web/portal.css", "/web/portal.js", "/web/console_access.js"):
+                with self.subTest(path=path):
+                    self.assertEqual(client.get(path).status_code, 200)
 
     def test_member_cannot_impersonate_admin_or_use_device_credential(self):
         session = self.ids.login(self.member.username, "fictional-password-123", client_key="fictional-local")

@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
@@ -27,6 +26,7 @@ from device_runtime import (
 )
 from device_registry import DeviceRegistry
 from web_pages import WEB_ROOT, console_html, portal_html
+from web_static import PublicWebStaticFiles
 from memory_store import MemoryManager, MemoryStore
 from database_backups import BackupSettings, DatabaseBackups
 from runtime_storage import RuntimeStorage, StorageSettings
@@ -457,7 +457,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.include_router(account_memory_router)
     application.include_router(speech_router)
     application.include_router(admin_router)
-    application.mount("/web", StaticFiles(directory=str(WEB_ROOT)), name="web")
+    application.mount("/web", PublicWebStaticFiles(WEB_ROOT), name="web")
     if access.mode == 'accounts':
         application.add_middleware(AccountOperationsMiddleware, identities=identities, operations=application.state.account_operations)
     application.add_middleware(LocalAccessMiddleware, settings=access)

@@ -112,6 +112,7 @@ async function main() {
       assert.equal(await page.locator('#advanced').getAttribute('open'), null);
       assert.equal(await page.isHidden('#pairCard'), true);
       assert.equal(await page.inputValue('#password'), '');
+      assert(await page.locator('#password').evaluate(input => parseFloat(getComputedStyle(input).fontSize) >= 16), 'iPhone 输入框字号应避免触发自动放大');
       await page.screenshot({path:path.join(output,'device-setup-mobile.png'),fullPage:true});
       await page.click('#choose');
       await text(page,'#scanStatus','正在查找');
@@ -161,6 +162,14 @@ async function main() {
       await page.click('#save'); await text(page,'#resultTitle','已保存');
       const form = f.writes.find(item => item.path === '/configure').form;
       assert.equal(form.get('ssid'),'Guest'); assert.equal(form.get('password'),''); assert.equal(form.get('keep_password'),'0');
+      await f.close();
+    }
+    // 已保存的开放网络再次提交设置时，不要求虚构密码。
+    {
+      const f = await fixture({state:{wifi_ssid:'Saved Guest',password_saved:false}}); await f.ready();
+      assert.equal(await f.page.isDisabled('#password'),true);
+      await f.page.click('#save'); await text(f.page,'#resultTitle','已保存');
+      assert.equal(f.writes.find(item => item.path === '/configure').form.get('password'),'');
       await f.close();
     }
     // 扫描错误、空结果和重试；弹层关闭后仍能手动输入并保存。

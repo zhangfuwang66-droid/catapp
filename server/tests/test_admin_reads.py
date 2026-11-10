@@ -1,11 +1,14 @@
 """后台只读接口回归：临时身份库，不连接设备或模型。"""
 
+from contextlib import contextmanager
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketState
 
 from access_control import AccessSettings, SESSION_COOKIE
 from memory_store import MemoryStore, SummaryResult
@@ -39,11 +42,11 @@ class AdminReadFixture(unittest.TestCase):
         self.addCleanup(self.client.close)
         self.client.cookies.set(SESSION_COOKIE, grant.token)
 
-    def register(self, device_id, *, bound=True, name='读取测试设备'):
+    def register(self, device_id, *, bound=True, name='读取测试设备', owner=None):
         credential = self.ids.register_device(device_id, name)
         if bound:
             pairing = self.ids.request_pairing(device_id, credential.token)
-            self.ids.claim_pairing(pairing.code, self.owner.id, client_key=device_id)
+            self.ids.claim_pairing(pairing.code, (owner or self.owner).id, client_key=device_id)
         return device_id
 
     def lend(self, device_id, *, claim=True):
@@ -71,6 +74,27 @@ class AdminReadFixture(unittest.TestCase):
                     self.ids.revoke_device(device_id)
                 expected[device_id] = (kind, state)
         return expected
+
+    @contextmanager
+    def trace_queries(self):
+        statements = []
+        transaction = self.ids._transaction
+
+        @contextmanager
+        def traced(**kwargs):
+            with transaction(**kwargs) as db:
+                db.set_trace_callback(statements.append)
+                yield db
+
+        with patch.object(self.ids, '_transaction', traced):
+            yield statements
+
+    def runtime(self, device_id, *, user=None, audio=False, camera=None, closed=False):
+        return SimpleNamespace(device_id=device_id, user_id=(user or self.owner).id,
+                               _closed=closed, voice_paused=True,
+                               esp32_audio_connected=lambda: audio,
+                               esp32_camera_ws=(SimpleNamespace(client_state=camera)
+                                                if camera is not None else None))
 
 
 class AdminDeviceMetadataTests(AdminReadFixture):
@@ -152,6 +176,109 @@ class AdminDeviceMetadataTests(AdminReadFixture):
             self.get('devices', status='online')
             self.get('devices', status='offline')
         self.assertEqual(registry.devices, {})
+
+
+class AdminOverviewTests(AdminReadFixture):
+    def test_offline_fleet_needs_no_per_device_metadata_queries(self):
+        for index in range(25):
+            self.register(f'deer-offline-{index}', bound=False)
+        with patch.object(self.ids, 'decorate_device', wraps=self.ids.decorate_device) as decorate:
+            result = self.get('overview')
+        self.assertEqual(result['devices'], {'total': 25, 'bound': 0, 'online': 0})
+        self.assertEqual(decorate.call_count, 0)
+
+    def test_overview_only_decorates_registered_runtime_candidates(self):
+        for index in range(25):
+            self.register(f'other-offline-{index}', bound=False)
+        audio = self.register('cat-audio')
+        idle = self.register('deer-idle')
+        registry = self.app.state.devices
+        runtimes = {audio: self.runtime(audio, audio=True), idle: self.runtime(idle),
+                    'cat-not-registered': self.runtime('cat-not-registered', audio=True)}
+        with patch.dict(registry.devices, runtimes), \
+                patch.object(registry, 'get', side_effect=AssertionError('read creates runtime')), \
+                patch.object(self.ids, 'decorate_device', wraps=self.ids.decorate_device) as decorate:
+            result = self.get('overview')
+        self.assertEqual(result['devices'], {'total': 27, 'bound': 2, 'online': 1})
+        self.assertEqual({call.args[1]['id'] for call in decorate.call_args_list}, {audio, idle})
+        self.assertEqual(decorate.call_count, 2)
+
+    def test_runtime_identity_revocation_and_socket_states_gate_online(self):
+        disabled = self.ids.create_user('read-disabled', 'temporary-password')
+        runtimes = {}
+        for device_id, options in (
+            ('cat-audio', {'audio': True}),
+            ('deer-camera', {'camera': WebSocketState.CONNECTED}),
+            ('other-ui-only', {}),
+            ('deer-camera-disconnected', {'camera': WebSocketState.DISCONNECTED}),
+            ('cat-camera-connecting', {'camera': WebSocketState.CONNECTING}),
+            ('other-wrong-user', {'user': self.guest, 'audio': True}),
+            ('cat-closed', {'audio': True, 'closed': True}),
+            ('deer-revoked', {'audio': True}),
+            ('other-disabled', {'user': disabled, 'audio': True}),
+            ('cat-unbound', {'audio': True}),
+            ('deer-loan', {'user': self.guest, 'audio': True}),
+            ('other-expired-loan', {'user': self.guest, 'audio': True}),
+        ):
+            self.register(device_id, bound=device_id != 'cat-unbound',
+                          owner=disabled if device_id == 'other-disabled' else None)
+            if device_id == 'deer-revoked':
+                self.ids.revoke_device(device_id)
+            if device_id == 'other-disabled':
+                self.store.change_user(self.admin.id, disabled.id, disabled=True)
+            if device_id == 'deer-loan':
+                self.lend(device_id)
+            if device_id == 'other-expired-loan':
+                self.now -= 7200
+                self.lend(device_id)
+                self.now += 7200
+            runtimes[device_id] = self.runtime(device_id, **options)
+        runtimes['cat-not-registered'] = self.runtime('cat-not-registered', audio=True)
+        online = {'cat-audio', 'deer-camera', 'deer-loan'}
+        with patch.dict(self.app.state.devices.devices, runtimes):
+            self.assertEqual(self.get('overview')['devices']['online'], len(online))
+            rows = self.get('devices', page_size=100)['items']
+            self.assertEqual({row['id'] for row in rows if row['online']}, online)
+            self.assertEqual({row['id'] for row in rows if row['camera_online']}, {'deer-camera'})
+            first = self.get('devices', status='online', page_size=2)
+            second = self.get('devices', status='online', page=2, page_size=2)
+            self.assertEqual(first['total'], len(online))
+            self.assertEqual([row['id'] for row in first['items'] + second['items']], sorted(online))
+            offline = self.get('devices', status='offline', page_size=100)
+            self.assertEqual(offline['total'], 9)
+            self.assertEqual({row['id'] for row in offline['items']}, set(runtimes) - online - {'cat-not-registered'})
+
+    def test_overview_storage_bytes_match_detail_without_detail_aggregates(self):
+        device_id = self.register('deer-storage')
+        memory = self.app.state.memory_manager.store
+        conversation = memory.create_conversation(self.owner.id, device_id)
+        message = memory.append_message(conversation, 'user', '模拟归档原文' * 1000)
+        memory.save_summary(conversation, message, '模拟摘要', memories=['模拟事实'])
+        with self.ids._transaction(write=True) as db:
+            db.execute("UPDATE conversations SET last_activity_at='2000-01-01T00:00:00+00:00'")
+        retention = self.app.state.memory_retention
+        retention.clock = lambda: self.now
+        retention.set_mode(self.owner.id, device_id, 'temporary')
+        retention.clock = lambda: self.now + 31 * 86400
+        self.assertEqual(retention.archive(self.owner.id, device_id), 1)
+        memory.append_message(conversation, 'user', '新消息🙂')
+        document = '隔离资料🙂'.encode('utf-8')
+        self.app.state.knowledge.store.add_document(self.owner.id, 'fixture.txt', document)
+        detail = self.get('storage')
+        with self.trace_queries() as statements:
+            response = self.client.get('/api/admin/overview')
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()['storage']
+        self.assertEqual(result['knowledge_bytes'], len(document))
+        self.assertEqual(result['memory_content_bytes'], len('新消息🙂模拟摘要模拟事实'.encode('utf-8')))
+        self.assertEqual(result['archive_bytes'], detail['memory']['archive_bytes'])
+        self.assertGreater(result['archive_bytes'], 0)
+        self.assertEqual(result['knowledge_bytes'], detail['documents']['bytes'])
+        self.assertEqual(result['memory_content_bytes'], detail['memory']['content_bytes'])
+        self.assertFalse(any('GROUP BY' in statement.upper() for statement in statements))
+        self.assertFalse(any('COUNT(*) FROM messages' in statement for statement in statements))
+        for private in ('新消息', '模拟摘要', '模拟事实', 'fixture.txt'):
+            self.assertNotIn(private, response.text)
 
 
 if __name__ == '__main__':

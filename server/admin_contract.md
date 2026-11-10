@@ -3,7 +3,7 @@
 全部接口位于 `/api/admin`，只在 accounts 模式开放，复用登录 Cookie；每个请求实时核验显式管理员授权。写请求须携带同源 Origin 和 X-CSRF-Token。错误使用 `{detail: 中文说明}`，401 未登录、403 无权限或 CSRF、409 状态冲突、422 参数错误。时间为 Unix 秒；容量为字节。所有响应 no-store。
 
 - `GET /session` → `{user:{id,username},csrf_token}`。
-- `GET /overview` → `{users:{total,enabled,disabled,admins},devices:{total,bound,online},uptime_seconds,storage:{database_bytes,wal_bytes,knowledge_bytes,memory_content_bytes,archive_bytes},backups:{...},model_billing:null}`。online 仅统计本进程可核实音频/摄像头连接。
+- `GET /overview` → `{users:{total,enabled,disabled,admins},devices:{total,bound,online},uptime_seconds,storage:{database_bytes,wal_bytes,knowledge_bytes,memory_content_bytes,archive_bytes},backups:{...},model_billing:null}`。online 仅统计本进程已有运行时中、仍获当前使用者授权且处于 CONNECTED 状态的音频/摄像头连接；概览只核验这些候选设备并聚合所需容量，不逐条装饰离线设备或计算资料/记忆的完整分组统计。
 - `GET /users?q=&status=all|enabled|disabled&page=1&page_size=20` → `{items:[{id,username,created_at,disabled,is_admin,device_count,key_configured}],total,page,page_size}`。
 - `POST /users/{id}/status`，JSON `{disabled:true|false,confirm_username:"目标账号"}` → `{ok:true}`；禁止停用自己或最后一名启用管理员。
 - `POST /users/{id}/revoke-sessions`，JSON `{confirm_username:"目标账号"}` → `{ok:true}`；撤销全部网页登录，清理相关连接和运行任务，禁止对自己执行。

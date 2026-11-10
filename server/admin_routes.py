@@ -10,6 +10,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, StrictBool
 from starlette.requests import HTTPConnection
+from starlette.websockets import WebSocketState
 
 from access_control import require_session, require_session_write, SESSION_COOKIE
 from async_helpers import run_blocking
@@ -53,7 +54,8 @@ def decorate_runtime(app, devices):
         valid = bool(runtime and not runtime._closed and runtime.user_id == device['active_user_id']
                      and device['active_user_enabled'] and not device['revoked'])
         device['audio_online'] = bool(valid and runtime.esp32_audio_connected())
-        device['camera_online'] = bool(valid and runtime.esp32_camera_ws is not None)
+        device['camera_online'] = bool(valid and runtime.esp32_camera_ws
+                                       and runtime.esp32_camera_ws.client_state == WebSocketState.CONNECTED)
         device['online'] = device['audio_online'] or device['camera_online']
         if valid:
             device['voice_paused'] = bool(runtime.voice_paused)
@@ -61,24 +63,30 @@ def decorate_runtime(app, devices):
     return devices
 
 
+async def online_device_ids(app):
+    candidates = tuple(app.state.devices.devices)
+    if not candidates:
+        return ()
+    devices = await run_blocking(app.state.admin_store.devices,device_ids=candidates)
+    return tuple(device['id'] for device in decorate_runtime(app,devices) if device['online'])
+
+
 @router.get('/overview')
 async def overview(request: Request):
     store = request.app.state.admin_store
     result = await run_blocking(store.counts)
-    devices = decorate_runtime(request.app,await run_blocking(store.devices))
-    storage = await run_blocking(store.storage)
+    online_ids = await online_device_ids(request.app)
+    storage = await run_blocking(store.storage_bytes)
     def file_size(path):
         try:
             return path.stat().st_size
         except FileNotFoundError:
             return 0
-    result['devices']['online'] = sum(d['online'] for d in devices)
+    result['devices']['online'] = len(online_ids)
     result.update(uptime_seconds=max(0,time.monotonic()-request.app.state.admin_started_at),
                   storage={'database_bytes':await run_blocking(file_size,store.path),
                            'wal_bytes':await run_blocking(file_size,Path(str(store.path)+'-wal')),
-                           'knowledge_bytes':storage['documents']['bytes'],
-                           'memory_content_bytes':storage['memory']['content_bytes'],
-                           'archive_bytes':storage['memory']['archive_bytes']},
+                           **storage},
                   backups=backup_status(request.app),model_billing=None)
     return result
 
@@ -97,8 +105,7 @@ async def devices(request: Request,q: str = Query('',max_length=80),
     store = request.app.state.admin_store
     online_ids = ()
     if status in ('online','offline'):
-        candidates = await run_blocking(store.devices,device_ids=tuple(request.app.state.devices.devices))
-        online_ids = tuple(d['id'] for d in decorate_runtime(request.app,candidates) if d['online'])
+        online_ids = await online_device_ids(request.app)
     result = await run_blocking(store.devices,q,status=status,page=page,page_size=page_size,online_ids=online_ids)
     decorate_runtime(request.app,result['items'])
     return result

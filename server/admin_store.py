@@ -149,15 +149,28 @@ class AdminStore:
                 return pagination
             return result
 
+    @staticmethod
+    def _storage_bytes(db):
+        return dict(db.execute("""SELECT
+            (SELECT COALESCE(SUM(size_bytes),0) FROM knowledge_documents) AS knowledge_bytes,
+            (SELECT COALESCE(SUM(length(CAST(content AS BLOB))),0) FROM messages)
+              + (SELECT COALESCE(SUM(length(CAST(summary AS BLOB))),0) FROM conversation_summaries)
+              + (SELECT COALESCE(SUM(length(CAST(content AS BLOB))),0) FROM memories) AS memory_content_bytes,
+            (SELECT COALESCE(SUM(length(payload)),0) FROM memory_message_archives) AS archive_bytes""").fetchone())
+
+    def storage_bytes(self):
+        """概览只需容量，不扫描分组状态、分块及消息数量。"""
+        with self.identities._transaction() as db:
+            return self._storage_bytes(db)
+
     def storage(self):
         with self.identities._transaction() as db:
             count = lambda table: db.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0]
-            size = lambda table,column: db.execute('SELECT COALESCE(SUM(length(CAST('+column+' AS BLOB))),0) FROM '+table).fetchone()[0]
-            memory_bytes = sum(size(t,c) for t,c in (('messages','content'),('conversation_summaries','summary'),('memories','content')))
-            documents = {'count':count('knowledge_documents'), 'bytes':db.execute('SELECT COALESCE(SUM(size_bytes),0) FROM knowledge_documents').fetchone()[0],
+            sizes = self._storage_bytes(db)
+            documents = {'count':count('knowledge_documents'), 'bytes':sizes['knowledge_bytes'],
                          'statuses':dict(db.execute('SELECT status,COUNT(*) FROM knowledge_documents GROUP BY status')), 'chunks':count('knowledge_chunks')}
             memory = {key:count(table) for key,table in (('conversations','conversations'),('messages','messages'),('summaries','conversation_summaries'),('memories','memories'),('archives','memory_message_archives'))}
-            memory.update(content_bytes=memory_bytes,archive_bytes=size('memory_message_archives','payload'),
+            memory.update(content_bytes=sizes['memory_content_bytes'],archive_bytes=sizes['archive_bytes'],
                           archived_messages=db.execute('SELECT COALESCE(SUM(message_count),0) FROM memory_message_archives').fetchone()[0],
                           policies=dict(db.execute('SELECT mode,COUNT(*) FROM memory_policies GROUP BY mode')))
         return {'documents':documents,'memory':memory,'retention':{'temporary_archive_after_days':30,'automatic_deletion':False,'default_mode':'long_term'}}

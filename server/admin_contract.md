@@ -1,6 +1,8 @@
 # 管理后台接口（第一版）
 
-全部接口位于 `/api/admin`，只在 accounts 模式开放，复用登录 Cookie；每个请求实时核验显式管理员授权。写请求须携带同源 Origin 和 X-CSRF-Token。错误使用 `{detail: 中文说明}`，401 未登录、403 无权限或 CSRF、409 状态冲突、422 参数错误。管理员数据查询或概览文件统计失败时返回 503 和中文稍后重试提示，不回显异常原文或路径，不将查询失败伪装为零值或部分概览；WAL 文件正常缺失时容量为零。时间为 Unix 秒；容量为字节。所有响应 no-store。
+业务接口位于 `/api/admin`，只在 accounts 模式开放，复用登录 Cookie；每个请求实时核验显式管理员授权。写请求须携带同源 Origin 和 X-CSRF-Token。错误使用 `{detail: 中文说明}`，401 未登录、403 无权限或 CSRF、409 状态冲突、422 参数错误。管理员数据查询或概览文件统计失败时返回 503 和中文稍后重试提示，不回显异常原文或路径，不将查询失败伪装为零值或部分概览；WAL 文件正常缺失时容量为零。时间为 Unix 秒；容量为字节。所有响应 no-store。
+
+独立认证入口详见 `admin_auth_contract.md`：`POST /api/admin/auth/login` 无需既有会话，但要求同源 Origin，并在签发事务内核验启用的显式管理员角色；`POST /api/admin/auth/logout` 要求有效会话、Origin 和 CSRF，角色已撤销也可退出。二者不接受任何跳转参数，登录前页面固定为 `/admin/login`，成功固定前往 `/admin`。
 
 - `GET /session` → `{user:{id,username},csrf_token}`。
 - `GET /overview` → `{users:{total,enabled,disabled,admins},devices:{total,bound,online},uptime_seconds,storage:{database_bytes,wal_bytes,knowledge_bytes,memory_content_bytes,archive_bytes},backups:{...},model_billing:null}`。online 仅统计本进程已有运行时中、仍获当前使用者授权且处于 CONNECTED 状态的音频/摄像头连接；概览只核验这些候选设备并聚合所需容量，不逐条装饰离线设备或计算资料/记忆的完整分组统计。
@@ -24,7 +26,7 @@
 
 `perform` 通过 `run_blocking` 调用业务存储；在同一个 `BEGIN IMMEDIATE` 写事务内先调用 `admin_store.require_writer(db,actor.id,session_token)`，再复核目标当前状态与初始快照，最后执行变更。HTTP 必须传原请求 Cookie 中的 `SESSION_COOKIE`，不得用新登录或仅角色检查替代。事务成功返回后立即设置 `progress['committed']=True`，再等待连接、运行时及任务清理。返回白名单字段，审计只用固定动作和目标编号。会话失效映射 401、角色撤销映射 403、`ValueError` 映射脱敏 409；HTTP 状态异常由统一入口保留，审计故障统一返回脱敏 503。`begin_action` / `change_user` 的省略 session_token 兼容入口只供可信 CLI 或内部调用，不供网页使用，也不提供网页管理员提权。
 
-管理资源仅通过受管理员权限保护的 `/admin` 和 `/web/admin/{index.html|admin.js|admin.css}` 提供。公共静态挂载在文件系统路径解析后排除整个后台目录；大小写、反斜杠等非规范别名返回 404，本地模式也不提供后台资源。
+管理资源通过受管理员权限保护的 `/admin` 和 `/web/admin/{index.html|admin.js|admin.css}` 提供。accounts 模式额外允许匿名访问 `/admin/login`，并仅按原始路径精确公开 `/web/admin/login.css` 与 `/web/admin/login.js`；不公开登录 HTML 文件或整个后台目录。公共静态挂载在文件系统路径解析后排除整个后台目录；大小写、编码、反斜杠等非规范别名返回 404，本地模式也不提供后台资源。
 
 分页 page>=1，page_size 为 1～100，q 最长 80。请求超出末页（包括超大页码）返回空 items，保留筛选后的真实 total 和原请求页码。管理员授权/撤销仅通过服务端 `python server/admin_cli.py --database /绝对路径/memory.sqlite3 grant|revoke|list --username 账号`；不提供网页提权接口。禁止撤销最后启用管理员；回退程序可保留新增 admin 表，不改变原身份表版本。
 

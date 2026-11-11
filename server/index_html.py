@@ -590,7 +590,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <link rel="stylesheet" href="/web/console_ui.css">
 </head>
 <body class="__CYBERMIAO_BODY_CLASS__">
-<div id="consoleAccount" class="console-account" hidden><a href="/">← 我的设备</a><a href="/knowledge">我的资料库</a><button class="btn sm" onclick="openModelSettings()">模型设置</button><span id="consoleAccountName"></span><button id="consoleLogout" class="btn sm" onclick="logoutConsole()">退出登录</button></div>
+<div id="consoleAccount" class="console-account" hidden><a href="/">← 我的设备</a><a href="/knowledge">我的资料库</a><a id="consoleAdminEntry" href="/admin" hidden>管理后台</a><button class="btn sm" onclick="openModelSettings()">模型设置</button><span id="consoleAccountName"></span><button id="consoleLogout" class="btn sm" onclick="logoutConsole()">退出登录</button></div>
 <p id="consoleAccessError" class="access-error" role="alert" hidden></p>
 <!-- SVG icon sprite -->
 <svg width="0" height="0" style="position:absolute">

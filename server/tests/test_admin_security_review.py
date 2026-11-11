@@ -104,7 +104,7 @@ class AdminAuthorizationBoundaryTests(unittest.TestCase):
     def test_admin_html_cannot_be_loaded_through_static_mount(self):
         response = self.client.get("/admin", follow_redirects=False)
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers['location'], '/?notice=login')
+        self.assertEqual(response.headers['location'], '/admin/login')
         self.assertIn(self.client.get("/web/admin/index.html").status_code, (401, 403))
         session = self.ids.login(self.member.username, "fictional-password-123", client_key="fictional-local")
         self.client.cookies.set(SESSION_COOKIE, session.token)

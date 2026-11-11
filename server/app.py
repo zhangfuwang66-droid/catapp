@@ -36,6 +36,7 @@ from identity_store import IdentityStore
 from access_control import AccessSettings, LocalAccessMiddleware, authorize_runtime, require_session
 from connection_authorization import ConnectionAuthorizer, AuthorizedStreamingResponse
 from auth_routes import router as auth_router
+from admin_auth import router as admin_auth_router
 from device_routes import router as devices_router
 from knowledge_store import KnowledgeStore
 from knowledge_service import KnowledgeService
@@ -53,7 +54,7 @@ from admin_dashboard import router as admin_dashboard_router
 from admin_maintenance import router as admin_maintenance_router
 from admin_accounts import router as admin_accounts_router
 from admin_operations import AccountOperations, AccountOperationsMiddleware
-from admin_pages import admin_html
+from admin_pages import ADMIN_CSP, admin_html
 from admin_routes import require_admin
 
 router = APIRouter()
@@ -126,18 +127,23 @@ async def admin_page(request: Request):
         await require_admin(request)
     except HTTPException as exc:
         if exc.status_code == 401:
-            return RedirectResponse("/?notice=login", status_code=303, headers={"Cache-Control": "no-store"})
+            return RedirectResponse("/admin/login", status_code=303, headers={"Cache-Control": "no-store"})
         raise
     return HTMLResponse(admin_html(), headers={"Cache-Control": "no-store",
-        "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"})
+        "Content-Security-Policy": ADMIN_CSP})
 
 
 @router.get("/web/admin/{asset:path}")
 async def admin_asset(asset: str, request: Request):
     # 在公共静态挂载前截住后台目录，避免绕过页面入口。
-    await require_admin(request)
-    if asset not in {"index.html", "admin.js", "admin.css"}:
+    if asset not in {'index.html', 'admin.js', 'admin.css', 'login.css', 'login.js'}:
         raise HTTPException(404, "资源不存在")
+    if asset in {'login.css', 'login.js'}:
+        if (request.app.state.access.mode != 'accounts'
+                or request.scope.get('raw_path') != ('/web/admin/' + asset).encode('ascii')):
+            raise HTTPException(404, "资源不存在")
+        return FileResponse(WEB_ROOT / 'admin' / asset, headers={'Cache-Control': 'no-store'})
+    await require_admin(request)
     if asset == "index.html":
         return await admin_page(request)
     return FileResponse(WEB_ROOT / "admin" / asset, headers={"Cache-Control": "no-store"})
@@ -455,6 +461,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.state.default_device_id = MEMORY_DEVICE_ID
     application.include_router(router)
     application.include_router(auth_router)
+    application.include_router(admin_auth_router)
     application.include_router(devices_router)
     application.include_router(knowledge_router)
     application.include_router(provider_router)

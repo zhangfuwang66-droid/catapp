@@ -52,6 +52,7 @@ function resetPrivateView() {
   $('deviceCount').textContent = '0'; $('sideCount').textContent = '0'; $('onlineCount').textContent = '0';
   $('clearDetails').open = false; $('clearBtn').disabled = true; $('revokeBtn').disabled = true;
   $('accountBar').hidden = true; $('devicesView').hidden = true;
+  $('adminEntry').hidden = true;
   $('notice').hidden = true; clearTimeout(noticeTimer);
 }
 
@@ -64,6 +65,7 @@ function showLogin(message='') {
 async function adoptSession(grant) {
   resetPrivateView();
   state.user = grant.user; state.csrf = grant.csrf_token;
+  $('adminEntry').hidden = grant.is_admin !== true;
   $('username').textContent = grant.user.username;
   $('avatar').textContent = grant.user.username.slice(0,1).toUpperCase();
   $('loginView').hidden = true; $('loading').hidden = true; $('topNote').hidden = true;
@@ -263,6 +265,7 @@ setInterval(async () => {
   try {
     const grant = await api('/api/auth/session');
     if(grant.user.id !== state.user?.id) { await adoptSession(grant); return; }
+    $('adminEntry').hidden = grant.is_admin !== true;
     state.csrf = grant.csrf_token; await refreshDevices();
   } catch(error) { report('pageError', error); }
 }, 10000);

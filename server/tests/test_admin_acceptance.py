@@ -76,7 +76,7 @@ class AdminAcceptanceTests(unittest.TestCase):
                     response = self.request("GET", path, headers=headers)
                     if path == '/admin' and actor in ('anonymous','device'):
                         self.assertEqual(response.status_code,303)
-                        self.assertEqual(response.headers['location'],'/?notice=login')
+                        self.assertEqual(response.headers['location'],'/admin/login')
                     else:
                         self.assertIn(response.status_code, (401, 403))
         self.admin_cli("grant", "owner")

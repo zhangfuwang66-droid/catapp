@@ -34,6 +34,7 @@ async def login(payload: LoginRequest, request: Request, response: Response):
         raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": str(exc.retry_after)}) from None
     if grant is None:
         raise HTTPException(status_code=401, detail="账号或密码错误")
+    is_admin = await run_blocking(request.app.state.admin_store.is_admin, grant.user.id)
     previous = request.cookies.get(SESSION_COOKIE)
     if previous:
         await run_blocking(request.app.state.identities.revoke_session, previous)
@@ -41,13 +42,14 @@ async def login(payload: LoginRequest, request: Request, response: Response):
     response.set_cookie(SESSION_COOKIE, grant.token, max_age=7 * 86400, httponly=True,
                         secure=request.url.scheme == "https", samesite="strict", path="/")
     response.headers["Cache-Control"] = "no-store"
-    return {"ok": True, "user": asdict(grant.user), "csrf_token": csrf_for_session(grant.token)}
+    return {"ok": True, "user": asdict(grant.user), "csrf_token": csrf_for_session(grant.token), "is_admin": is_admin}
 
 
 @router.get("/session")
 async def session(request: Request, response: Response, user: User = Depends(require_session)):
     response.headers["Cache-Control"] = "no-store"
-    return {"ok": True, "user": asdict(user), "csrf_token": csrf_for_session(request.cookies[SESSION_COOKIE])}
+    is_admin = await run_blocking(request.app.state.admin_store.is_admin, user.id)
+    return {"ok": True, "user": asdict(user), "csrf_token": csrf_for_session(request.cookies[SESSION_COOKIE]), "is_admin": is_admin}
 
 
 @router.post("/logout")

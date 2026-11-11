@@ -246,7 +246,8 @@ class IdentityStore(DeviceSharing):
             # 仅保存短期计数，不让未知账号或客户端不断累积限流记录。
             connection.execute("DELETE FROM auth_rate_limits WHERE window_start < ?", (now - 86400,))
 
-    def login(self, username: str, password: str, *, client_key: str, ttl: float = 7 * 86400) -> Optional[SessionGrant]:
+    def login(self, username: str, password: str, *, client_key: str, ttl: float = 7 * 86400,
+              authorize: Optional[Callable[[sqlite3.Connection, str], bool]] = None) -> Optional[SessionGrant]:
         try:
             normalized = self.normalize_username(username)
         except ValueError:
@@ -280,6 +281,9 @@ class IdentityStore(DeviceSharing):
             current = connection.execute("SELECT username, disabled, password_hash FROM auth_users WHERE id=?", (row["id"],)).fetchone()
             # 密码校验期间可能由管理员改名；旧账号名不能在改名后补发有效会话。
             if current is None or current["disabled"] or current["username"] != row["username"] or current["password_hash"] != password_hash:
+                return None
+            # 管理登录必须先在签发事务中确认显式角色；拒绝时不创建或清理任何会话。
+            if authorize is not None and not authorize(connection, row["id"]):
                 return None
             if replacement != password_hash:
                 connection.execute("UPDATE auth_users SET password_hash=? WHERE id=?", (replacement, row["id"]))

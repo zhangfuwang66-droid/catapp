@@ -40,6 +40,7 @@
           <button class="primary wide" id="loginBtn" type="submit">登录我的小喵 <svg><use href="#arrow"/></svg></button>
         </form>
         <p class="login-help">请使用管理员为你创建的账号。<br>忘记密码时，请联系管理员重设。</p>
+        <p class="login-help"><a href="/admin/login">管理员登录 ↗</a></p>
       </div>
     </section>
 
@@ -47,6 +48,7 @@
       <aside class="sidebar"><div class="side-label">我的空间</div><div class="side-item active"><svg><use href="#cat"/></svg>我的小喵<span id="sideCount">0</span></div><a class="side-item" href="/knowledge">▤　我的资料库</a><div class="side-tip"><span>一点小提醒</span><p>同一只小喵的聊天记忆属于绑定它的主人账号。</p></div></aside>
       <div class="workspace-main">
         <div class="page-heading"><div><p class="eyebrow">MY COMPANIONS</p><h1>我的小喵<span class="count" id="deviceCount">0</span></h1><p class="muted">你的陪伴伙伴，都在这里。</p></div><button class="primary" id="addDeviceBtn" type="button"><svg><use href="#plus"/></svg>添加小喵</button></div>
+        <a class="side-item" id="adminEntry" href="/admin" hidden>管理后台 ↗</a>
         <div class="summary-strip"><span><i class="live-dot"></i><strong id="onlineCount">0</strong> 台在线</span><span>每台小喵独立保存聊天记忆</span><a href="/knowledge" class="quiet">我的资料库 ↗</a><button class="quiet" id="refreshBtn" type="button">刷新状态 ↻</button></div>
         <p id="pageError" class="form-error" role="alert"></p>
         <div id="deviceGrid" class="device-grid"></div>

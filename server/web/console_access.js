@@ -100,6 +100,7 @@ function clearConsoleData() {
   applyRecordState({}); applyPerformanceMode({}); applyVisionScreenState({}); applyTranslationState({});
   toastsEl.replaceChildren();
   document.getElementById('consoleAccountName').textContent = '';
+  document.getElementById('consoleAdminEntry').hidden = true;
   setConn(camStatus, footerCam, false, '画面未连'); setConn(uiStatus, footerUi, false, '控制未连');
   if(accountConsole) document.body.classList.add('auth-pending');
 }
@@ -137,6 +138,7 @@ async function verifyConsoleSession() {
     const device = result.devices.find(item => item.id === CONSOLE_CONTEXT.device_id && item.revoked_at == null && item.control_allowed !== false);
     if(!device) { leaveConsole(); return; }
     consoleCsrf = grant.csrf_token; consoleUserId = grant.user.id;
+    document.getElementById('consoleAdminEntry').hidden = grant.is_admin !== true;
     document.getElementById('consoleAccountName').textContent = grant.user.username + ' · ' + device.display_name;
     if(!consoleReady) {
       consoleReady = true; document.body.classList.remove('auth-pending');

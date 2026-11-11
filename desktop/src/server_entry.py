@@ -67,7 +67,8 @@ def run_server(stop_event, events, options, data_dir):
         server = uvicorn.Server(uvicorn.Config(
             app, host=options["host"], port=options["port"], log_config=None,
             access_log=False, loop="asyncio", http="h11", ws="websockets-sansio",
-            timeout_graceful_shutdown=5,
+            timeout_graceful_shutdown=5, proxy_headers=False,
+            ws_max_size=1024 * 1024, ws_max_queue=8,
         ))
 
         def monitor_parent():

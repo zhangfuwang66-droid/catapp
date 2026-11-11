@@ -95,7 +95,7 @@ class ServerTests(unittest.TestCase):
             self.assertGreater(len(response.read()), 1000)
         self.assertTrue((self.data_dir / "records").is_dir())
         from websockets.sync.client import connect
-        with connect(f"ws://127.0.0.1:{self.port}/ws/viewer", proxy=None) as viewer:
+        with connect(f"ws://127.0.0.1:{self.port}/ws/viewer", origin=f"http://127.0.0.1:{self.port}", proxy=None) as viewer:
             self.manager.stop_server()
             self.wait_for(lambda: self.manager.process is None, timeout=20)
         self.assertTrue(NetworkUtils.is_port_available(self.port))

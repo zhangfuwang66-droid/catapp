@@ -163,7 +163,7 @@ async def serve(application, listener, directory):
     server = uvicorn.Server(uvicorn.Config(
         application, host=HOST, port=port, loop="asyncio", http="h11",
         proxy_headers=False, access_log=False, log_level="warning",
-        timeout_graceful_shutdown=5,
+        timeout_graceful_shutdown=5, ws_max_size=1024 * 1024, ws_max_queue=8,
     ))
 
     async def ready():

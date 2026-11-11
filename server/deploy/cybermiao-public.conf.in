@@ -1,0 +1,39 @@
+# /etc/systemd/system/cybermiao-test.service.d/30-public-edge.conf
+# Requires the existing cybermiao-test.service and systemd >= 247.
+[Service]
+ExecStart=
+ExecStart=/opt/cybermiao-test/venv/bin/python /opt/cybermiao-test/app/server/cloud_public_entry.py
+Environment=CYBERMIAO_PUBLIC_URL=@@PUBLIC_URL@@
+Environment=CYBERMIAO_CLOUD_TEST_PORT=8081
+# Keep existing credential/secret-key settings. Do not reset EnvironmentFile or LoadCredential.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+ReadWritePaths=/var/lib/cybermiao-test
+UMask=0077
+LimitNOFILE=4096
+TasksMax=256
+LogNamespace=cybermiao
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=200
+# Capacity examples only: measure imports, model clients, document subprocesses and camera load first.
+# MemoryHigh=1536M
+# MemoryMax=2G
+# CPUQuota=200%
+# Avoid MemoryDenyWriteExecute and untested syscall filters for NumPy/OpenCV/MediaPipe.

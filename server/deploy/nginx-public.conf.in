@@ -1,0 +1,156 @@
+# Include exactly once inside http {} of a dedicated Nginx instance.
+# Direct Internet peer only: no real_ip_header, PROXY protocol or additional proxy hops.
+# Domain AND IPv4 work without SNI. Unknown HTTP Host is rejected after TLS.
+map $http_host $cybermiao_host_ok {
+    default 0;
+@@HOST_ENTRIES@@
+}
+map $http_host $cybermiao_http_host_ok {
+    default 0;
+    "@@HOST@@" 1;
+    "@@HOST@@:80" 1;
+}
+map $http_upgrade $cybermiao_connection {
+    default upgrade;
+    '' close;
+}
+map $uri $cybermiao_route {
+    default web;
+    ~^/api/(admin/)?auth/ auth;
+    /api/knowledge/documents upload;
+    ~^/ws/devices/ websocket;
+    ~^/api/ api;
+}
+# Preserve an upstream strict admin CSP; supply a fallback for proxy/application errors.
+map $upstream_http_content_security_policy $cybermiao_csp {
+    '' "frame-ancestors 'none'; object-src 'none'; base-uri 'self'";
+    default $upstream_http_content_security_policy;
+}
+log_format cybermiao_metadata escape=json
+    '{"time":"$time_iso8601","peer":"$remote_addr","route":"$cybermiao_route",'
+    '"status":$status,"bytes":$body_bytes_sent,"seconds":$request_time}';
+
+limit_conn_zone $server_name zone=cybermiao_http:1m;
+limit_conn_zone $server_name zone=cybermiao_ws:1m;
+limit_conn_zone $binary_remote_addr zone=cybermiao_peer:10m;
+limit_conn_zone $binary_remote_addr zone=cybermiao_upload:10m;
+limit_req_zone $binary_remote_addr zone=cybermiao_login:10m rate=5r/m;
+limit_req_zone $binary_remote_addr zone=cybermiao_api:10m rate=20r/s;
+limit_req_zone $binary_remote_addr zone=cybermiao_handshake:10m rate=5r/s;
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name @@HOST@@;
+    access_log /var/log/nginx/cybermiao-access.log cybermiao_metadata;
+    error_log /dev/null crit;
+    client_header_timeout 10s;
+    client_max_body_size 64k;
+    if ($cybermiao_http_host_ok = 0) { return 421; }
+    @@ACME_LOCATION@@
+    # Constant origin prevents Host-based redirects. Port 80 may remain firewalled.
+    location / { return 308 @@PUBLIC_URL@@$request_uri; }
+}
+
+server {
+    listen @@PORT@@ ssl default_server;
+    listen [::]:@@PORT@@ ssl default_server;
+    server_name @@HOST@@;
+    ssl_certificate @@CERT@@;
+    ssl_certificate_key @@KEY@@;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:cybermiao_tls:10m;
+    ssl_session_timeout 10m;
+    ssl_session_tickets off;
+    server_tokens off;
+
+    access_log /var/log/nginx/cybermiao-access.log cybermiao_metadata;
+    # Error logs can contain raw request lines. Metadata log_format cannot redact them.
+    error_log /dev/null crit;
+    if ($cybermiao_host_ok = 0) { return 421; }
+
+    client_header_buffer_size 2k;
+    large_client_header_buffers 4 8k;
+    client_header_timeout 10s;
+    client_body_timeout 10s;
+    client_max_body_size 64k;
+    client_body_buffer_size 16k;
+    keepalive_timeout 15s;
+    keepalive_requests 1000;
+    send_timeout 30s;
+    reset_timedout_connection on;
+    limit_conn_status 503;
+    limit_req_status 429;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host "@@AUTHORITY@@";
+    proxy_set_header X-Forwarded-Proto https;
+    # REPLACE incoming values. Never use $proxy_add_x_forwarded_for here.
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header Forwarded "";
+    proxy_set_header X-Forwarded-Host "";
+    proxy_set_header X-Forwarded-Port "";
+    proxy_set_header X-Forwarded-Prefix "";
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $cybermiao_connection;
+    proxy_connect_timeout 3s;
+    proxy_send_timeout 65s;
+    proxy_read_timeout 300s;
+    proxy_next_upstream off;
+    # Pass body chunks immediately so the application's 10s/60s TOTAL timers apply.
+    proxy_request_buffering off;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_hide_header Content-Security-Policy;
+    proxy_hide_header X-Content-Type-Options;
+    proxy_hide_header X-Frame-Options;
+    proxy_hide_header Referrer-Policy;
+    proxy_hide_header Permissions-Policy;
+    proxy_hide_header Strict-Transport-Security;
+    proxy_hide_header Cache-Control;
+    add_header Content-Security-Policy $cybermiao_csp always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+    add_header Permissions-Policy "camera=(self), microphone=(self), geolocation=(), payment=()" always;
+    add_header Strict-Transport-Security "max-age=86400" always;
+    add_header Cache-Control no-store always;
+
+    # No alias/root for application source, credentials, backups or runtime files.
+    location ~ (^|/)\. { return 404; }
+    location ~* \.(?:sqlite3?(?:-[a-z]+)?|db|pem|key|ini|lock|bak)$ { return 404; }
+    location ~ ^/(?:docs|redoc|openapi\.json)(?:/|$) { return 404; }
+    location ~ ^/(?:ws_ui|ws_audio|ws/camera|ws/viewer|servo|servo_raw|servo_raw_mode|screen_mode|performance_mode|voice|camera_setting|tft_setting|record|stream\.wav|repeat\.wav)(?:/|$) { return 404; }
+    location = /api/memory { return 404; }
+
+    location ~ ^/api/(?:admin/)?auth/login$ {
+        limit_req zone=cybermiao_login burst=5 nodelay;
+        limit_conn cybermiao_http 64;
+        limit_conn cybermiao_peer 96;
+        proxy_pass http://127.0.0.1:8081;
+    }
+    location = /api/knowledge/documents {
+        if ($request_method != POST) { return 405; }
+        client_max_body_size 20m;
+        client_body_timeout 60s;
+        limit_req zone=cybermiao_api burst=40 nodelay;
+        limit_conn cybermiao_http 64;
+        limit_conn cybermiao_peer 96;
+        limit_conn cybermiao_upload 2;
+        proxy_pass http://127.0.0.1:8081;
+    }
+    location ~ "^/ws/devices/[A-Za-z0-9][A-Za-z0-9_-]{0,63}/(?:audio|camera|ui|viewer)$" {
+        # Handshake rate only; application/Uvicorn enforce message limits after upgrade.
+        limit_req zone=cybermiao_handshake burst=10 nodelay;
+        limit_conn cybermiao_ws 128;
+        limit_conn cybermiao_peer 96;
+        proxy_pass http://127.0.0.1:8081;
+    }
+    location / {
+        limit_req zone=cybermiao_api burst=40 nodelay;
+        limit_conn cybermiao_http 64;
+        limit_conn cybermiao_peer 96;
+        proxy_pass http://127.0.0.1:8081;
+    }
+}

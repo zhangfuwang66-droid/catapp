@@ -101,6 +101,13 @@ const colors=page => page.evaluate(() => {
     assert.match(await page.locator('#detailDialog').evaluate(el => getComputedStyle(el).transitionProperty),/opacity/);
     await page.waitForTimeout(230);
     await page.screenshot({path:path.join(output,'polish-detail-drawer.png'),fullPage:true});
+    await page.evaluate(() => {
+      document.getElementById('detailClose').click();
+      document.querySelectorAll('#devicesBody .name-button')[1].click();
+    });
+    await page.locator('#detailTitle').getByText('离线小鹿',{exact:true}).waitFor();
+    await page.locator('#detailContent').getByText('设备 ID',{exact:true}).waitFor();
+    assert.doesNotMatch(await page.locator('#detailContent').innerText(),/cat-history/,'迅速重开抽屉不混入旧设备详情');
     await page.click('#detailClose'); await page.locator('#detailDialog').waitFor({state:'hidden'});
 
     // 定时器被后台节流时从performance.now重新取差值，而非seconds++。
@@ -160,8 +167,11 @@ const colors=page => page.evaluate(() => {
       assert.equal(request.headers['x-csrf-token'],'fixture-csrf'); assert.equal(request.headers.origin,url);
     }
     await page.goto(url+'/admin'); await ready(page);
-    state.fail={path:'/api/admin/dashboard',status:403}; await page.click('#refreshButton');
+    await nav(page,'设备');
+    state.fail={path:'/api/admin/devices/cat-history',status:403};
+    await page.locator('#devicesBody tr').filter({hasText:'cat-history'}).getByRole('button',{name:'详情',exact:true}).click();
     await page.locator('#gateLogout').waitFor();
+    assert.equal(await page.locator('#detailDialog').isVisible(),false,'撤权立即隐藏抽屉，不等待退场动画');
     await page.click('#gateLogout'); await page.waitForURL('**/admin/login?notice=logout');
     assert.equal(logoutReceived.length,3,'撤权后仍能退出有效会话');
     await page.goto(url+'/admin'); await ready(page);

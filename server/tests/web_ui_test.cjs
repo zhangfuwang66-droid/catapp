@@ -250,6 +250,18 @@ async function main() {
     await localPage.goto(info.local_url);
     await localPage.waitForFunction(() => document.getElementById('uiStatus').textContent.includes('控制已连'));
     assert.equal(await localPage.locator('#consoleAccount').isVisible(),false);
+    const localWrite=localPage.waitForRequest(request => new URL(request.url()).pathname === '/voice' && request.method() === 'POST');
+    await localPage.click('#pauseVoiceBtn');
+    const writeHeaders=await (await localWrite).allHeaders();
+    assert.equal(writeHeaders['x-cybermiao-request'],'1','本地写请求带固定同源自定义头');
+    assert.equal(writeHeaders.origin,info.local_url,'浏览器自动发送匹配的Origin');
+    assert.equal(writeHeaders['x-csrf-token'],undefined,'本地模式不借用账号会话');
+    await localPage.waitForFunction(() => document.getElementById('voiceState').textContent.includes('已设置暂停'));
+    const localRead=localPage.waitForRequest(request => new URL(request.url()).pathname === '/screen_mode');
+    await localPage.evaluate(() => deviceJson('/screen_mode'));
+    const readRequest=await localRead;
+    assert.equal(readRequest.method(),'GET','屏幕模式查询保持只读GET');
+    assert.equal((await readRequest.allHeaders())['x-cybermiao-request'],undefined,'只读查询不使用写请求兼容头');
     const secureUrl = vm.runInNewContext(fs.readFileSync(path.join(root,'web/console_access.js'),'utf8') + '\nconsoleSocketUrl("ui")', {
       CONSOLE_CONTEXT:{mode:'accounts',device_id:'cat-alice'}, location:{protocol:'https:',origin:'https://cat.example'}, AbortController, URL,
     });

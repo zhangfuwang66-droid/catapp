@@ -34,6 +34,8 @@ async function deviceRequest(path, options={}, json=false) {
   const headers = new Headers(options.headers || {});
   if(accountConsole && options.method && !['GET','HEAD'].includes(options.method.toUpperCase()))
     headers.set('X-CSRF-Token', consoleCsrf);
+  if(!accountConsole && options.method && !['GET','HEAD','OPTIONS'].includes(options.method.toUpperCase()))
+    headers.set('X-CyberMiao-Request','1');
   const controller = new AbortController();
   const abort = () => controller.abort();
   const sources = [consoleAbort.signal, signal].filter(Boolean);

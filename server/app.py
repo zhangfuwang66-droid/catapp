@@ -34,6 +34,7 @@ from runtime_logging import log_event
 from tools.memory_database import check_database_ready
 from identity_store import IdentityStore
 from access_control import AccessSettings, LocalAccessMiddleware, authorize_runtime, require_session
+from network_security import NetworkLimits, NetworkSecurityMiddleware
 from connection_authorization import ConnectionAuthorizer, AuthorizedStreamingResponse
 from auth_routes import router as auth_router
 from admin_auth import router as admin_auth_router
@@ -231,26 +232,33 @@ async def ws_viewer(ws: WebSocket, runtime: DeviceRuntime = Depends(get_device_r
     await run_authorized_websocket(ws, lambda: runtime.serve_client(ws, runtime.ws_viewer))
 
 
-@router.get("/servo")
+@router.post("/servo")
 @router.post("/api/devices/{device_id}/servo")
 async def servo_control(ch: int=0, angle: int=90, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.servo_control(ch=ch, angle=angle)
 
 
-@router.get("/servo_raw")
+@router.post("/servo_raw")
 @router.post("/api/devices/{device_id}/servo_raw")
 async def servo_raw_control(ch: int=0, angle: int=90, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.servo_raw_control(ch=ch, angle=angle)
 
 
-@router.get("/servo_raw_mode")
+@router.post("/servo_raw_mode")
 @router.post("/api/devices/{device_id}/servo_raw_mode")
 async def servo_raw_mode_control(active: int=1, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.servo_raw_mode_control(active=active)
 
 
 @router.get("/screen_mode")
-async def screen_mode_control(mode: Optional[int]=None, runtime: DeviceRuntime = Depends(get_device_runtime)):
+async def screen_mode_control(request: Request, runtime: DeviceRuntime = Depends(get_device_runtime)):
+    if 'mode' in request.query_params:
+        raise HTTPException(405, '修改屏幕模式请使用 POST', headers={'Allow': 'POST'})
+    return await runtime.screen_mode_control()
+
+
+@router.post("/screen_mode")
+async def legacy_screen_mode_set(mode: int, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.screen_mode_control(mode=mode)
 
 
@@ -293,7 +301,7 @@ async def voice_control(payload: VoiceControlRequest, request: Request, runtime:
         return await finish_before_cancel(runtime.set_voice_paused(payload.paused))
 
 
-@router.get("/camera_setting")
+@router.post("/camera_setting")
 @router.post("/api/devices/{device_id}/camera_setting")
 async def camera_setting(param: str='', value: int=0, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.camera_setting(param=param, value=value)
@@ -335,7 +343,7 @@ async def record_image(session_id: str, filename: str, runtime: DeviceRuntime = 
     return await runtime.record_image(session_id=session_id, filename=filename)
 
 
-@router.get("/tft_setting")
+@router.post("/tft_setting")
 @router.post("/api/devices/{device_id}/tft_setting")
 async def tft_setting(param: str='', value: int=0, runtime: DeviceRuntime = Depends(get_device_runtime)):
     return await runtime.tft_setting(param=param, value=value)
@@ -347,7 +355,8 @@ def get_index_html():
 
 def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memory_messages,
                access: Optional[AccessSettings] = None, backup_settings: Optional[BackupSettings] = None,
-               storage_settings: Optional[StorageSettings] = None, knowledge_service=None) -> FastAPI:
+               storage_settings: Optional[StorageSettings] = None, knowledge_service=None,
+               network_limits: Optional[NetworkLimits] = None) -> FastAPI:
     manager = MemoryManager(
         store if store is not None else MemoryStore(MEMORY_DB_PATH),
         summarizer, idle_seconds=MEMORY_IDLE_SECONDS, poll_seconds=MEMORY_POLL_SECONDS,
@@ -434,7 +443,10 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
                         finally:
                             await knowledge.close()
 
-    application = FastAPI(lifespan=lifespan)
+    application = FastAPI(lifespan=lifespan,
+                          docs_url=None if access.mode == 'accounts' else '/docs',
+                          redoc_url=None if access.mode == 'accounts' else '/redoc',
+                          openapi_url=None if access.mode == 'accounts' else '/openapi.json')
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(request, exc):
@@ -476,6 +488,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     if access.mode == 'accounts':
         application.add_middleware(AccountOperationsMiddleware, identities=identities, operations=application.state.account_operations)
     application.add_middleware(LocalAccessMiddleware, settings=access)
+    application.add_middleware(NetworkSecurityMiddleware, settings=access, limits=network_limits)
     return application
 
 
@@ -488,4 +501,5 @@ if __name__ == "__main__":
     from runtime_logging import configure_logging
     from runtime_paths import DATA_ROOT
     configure_logging(DATA_ROOT / "logs")
-    uvicorn.run(app, host="0.0.0.0", port=8081, log_config=None, log_level="info", access_log=False)
+    uvicorn.run(app, host="0.0.0.0", port=8081, log_config=None, log_level="info", access_log=False,
+                ws_max_size=1024 * 1024, ws_max_queue=8, proxy_headers=False)

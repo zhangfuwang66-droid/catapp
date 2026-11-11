@@ -59,7 +59,7 @@ def run_server(prepare, *, proxy_headers=False):
 
     uvicorn.run(app, host="127.0.0.1", port=port, workers=1, log_config=None,
                 log_level="info", access_log=False, proxy_headers=proxy_headers,
-                forwarded_allow_ips="127.0.0.1")
+                forwarded_allow_ips="127.0.0.1", ws_max_size=1024 * 1024, ws_max_queue=8)
     return 0
 
 

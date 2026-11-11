@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from pathlib import Path
+import sqlite3
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -279,6 +280,82 @@ class AdminOverviewTests(AdminReadFixture):
         self.assertFalse(any('COUNT(*) FROM messages' in statement for statement in statements))
         for private in ('新消息', '模拟摘要', '模拟事实', 'fixture.txt'):
             self.assertNotIn(private, response.text)
+
+
+class AdminReadBoundaryTests(AdminReadFixture):
+    def test_huge_pages_return_empty_items_and_real_total(self):
+        self.register('deer-page-boundary')
+        for path in ('users', 'devices', 'audit'):
+            total = self.get(path)['total']
+            self.assertGreater(total, 0)
+            for page in (2 ** 63, 10 ** 100):
+                with self.subTest(path=path, page=page):
+                    result = self.get(path, page=page, page_size=100)
+                    self.assertEqual(result, {'items': [], 'total': total,
+                                              'page': page, 'page_size': 100})
+
+    def test_filtered_huge_page_does_not_decorate_devices(self):
+        self.mixed_devices()
+        for status, total in (('all', 4), ('unbound', 1), ('offline', 4)):
+            with self.subTest(status=status), \
+                    patch.object(self.ids, 'decorate_device', wraps=self.ids.decorate_device) as decorate:
+                result = self.get('devices', q='deer-read', status=status, page=2 ** 63)
+                self.assertEqual(result['total'], total)
+                self.assertEqual(result['items'], [])
+                self.assertEqual(decorate.call_count, 0)
+
+    def assert_read_unavailable(self, response):
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.headers.get('cache-control'), 'no-store')
+        self.assertIn('稍后重试', response.json()['detail'])
+        self.assertNotIn('private-database-location', response.text)
+
+    def test_database_read_failures_return_retryable_private_json(self):
+        for path, method in (('overview', 'counts'), ('users', 'users'), ('devices', 'devices'),
+                             ('storage', 'storage'), ('audit', 'audit')):
+            with self.subTest(path=path), patch.object(
+                    self.store, method, side_effect=sqlite3.OperationalError('private-database-location')):
+                self.assert_read_unavailable(self.client.get('/api/admin/' + path))
+
+    def test_runtime_candidate_read_failures_do_not_report_zero_online(self):
+        device_id = self.register('deer-candidate-failure')
+        with patch.dict(self.app.state.devices.devices, {device_id: self.runtime(device_id, audio=True)}), \
+                patch.object(self.store, 'devices', side_effect=sqlite3.OperationalError('private-database-location')):
+            for path in ('overview', 'devices?status=online', 'devices?status=offline'):
+                with self.subTest(path=path):
+                    self.assert_read_unavailable(self.client.get('/api/admin/' + path))
+
+    def test_capacity_failure_does_not_return_partial_overview(self):
+        with patch.object(self.store, 'storage_bytes',
+                          side_effect=sqlite3.DatabaseError('private-database-location')):
+            self.assert_read_unavailable(self.client.get('/api/admin/overview'))
+
+    def test_unreadable_database_stat_returns_retryable_json(self):
+        stat = Path.stat
+
+        def inaccessible(path, *args, **kwargs):
+            if path == self.path:
+                raise PermissionError('private-database-location')
+            return stat(path, *args, **kwargs)
+
+        with patch.object(Path, 'stat', inaccessible):
+            self.assert_read_unavailable(self.client.get('/api/admin/overview'))
+
+    def test_missing_database_is_unavailable_but_missing_wal_is_zero(self):
+        stat = Path.stat
+        for missing in (self.path, Path(str(self.path) + '-wal')):
+            def absent(path, *args, **kwargs):
+                if path == missing:
+                    raise FileNotFoundError('private-database-location')
+                return stat(path, *args, **kwargs)
+
+            with self.subTest(missing=missing.name), patch.object(Path, 'stat', absent):
+                response = self.client.get('/api/admin/overview')
+                if missing == self.path:
+                    self.assert_read_unavailable(response)
+                else:
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json()['storage']['wal_bytes'], 0)
 
 
 if __name__ == '__main__':

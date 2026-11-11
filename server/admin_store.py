@@ -92,7 +92,9 @@ class AdminStore:
     @staticmethod
     def _page(db, query, args, page, page_size):
         total = db.execute('SELECT COUNT(*) FROM (' + query + ')', args).fetchone()[0]
-        rows = db.execute(query + ' LIMIT ? OFFSET ?', (*args,page_size,(page-1)*page_size)).fetchall()
+        offset = (page-1)*page_size
+        # 末页之后无需查询，也不将可能超出 SQLite 整数范围的偏移量绑定到 SQL。
+        rows = [] if offset >= total else db.execute(query + ' LIMIT ? OFFSET ?', (*args,page_size,offset)).fetchall()
         return {'items':[dict(r) for r in rows], 'total':total,'page':page,'page_size':page_size}
 
     def users(self, q, status, page, page_size):

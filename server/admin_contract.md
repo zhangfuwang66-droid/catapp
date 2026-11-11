@@ -1,6 +1,6 @@
 # 管理后台接口（第一版）
 
-全部接口位于 `/api/admin`，只在 accounts 模式开放，复用登录 Cookie；每个请求实时核验显式管理员授权。写请求须携带同源 Origin 和 X-CSRF-Token。错误使用 `{detail: 中文说明}`，401 未登录、403 无权限或 CSRF、409 状态冲突、422 参数错误。时间为 Unix 秒；容量为字节。所有响应 no-store。
+全部接口位于 `/api/admin`，只在 accounts 模式开放，复用登录 Cookie；每个请求实时核验显式管理员授权。写请求须携带同源 Origin 和 X-CSRF-Token。错误使用 `{detail: 中文说明}`，401 未登录、403 无权限或 CSRF、409 状态冲突、422 参数错误。管理员数据查询或概览文件统计失败时返回 503 和中文稍后重试提示，不回显异常原文或路径，不将查询失败伪装为零值或部分概览；WAL 文件正常缺失时容量为零。时间为 Unix 秒；容量为字节。所有响应 no-store。
 
 - `GET /session` → `{user:{id,username},csrf_token}`。
 - `GET /overview` → `{users:{total,enabled,disabled,admins},devices:{total,bound,online},uptime_seconds,storage:{database_bytes,wal_bytes,knowledge_bytes,memory_content_bytes,archive_bytes},backups:{...},model_billing:null}`。online 仅统计本进程已有运行时中、仍获当前使用者授权且处于 CONNECTED 状态的音频/摄像头连接；概览只核验这些候选设备并聚合所需容量，不逐条装饰离线设备或计算资料/记忆的完整分组统计。
@@ -18,7 +18,7 @@
 
 管理资源仅通过受管理员权限保护的 `/admin` 和 `/web/admin/{index.html|admin.js|admin.css}` 提供。公共静态挂载在文件系统路径解析后排除整个后台目录；大小写、反斜杠等非规范别名返回 404，本地模式也不提供后台资源。
 
-分页 page>=1，page_size 为 1～100，q 最长 80。管理员授权/撤销仅通过服务端 `python server/admin_cli.py --database /绝对路径/memory.sqlite3 grant|revoke|list --username 账号`；不提供网页提权接口。禁止撤销最后启用管理员；回退程序可保留新增 admin 表，不改变原身份表版本。
+分页 page>=1，page_size 为 1～100，q 最长 80。请求超出末页（包括超大页码）返回空 items，保留筛选后的真实 total 和原请求页码。管理员授权/撤销仅通过服务端 `python server/admin_cli.py --database /绝对路径/memory.sqlite3 grant|revoke|list --username 账号`；不提供网页提权接口。禁止撤销最后启用管理员；回退程序可保留新增 admin 表，不改变原身份表版本。
 
 用户停用或撤销网页登录会终止相关设备运行时和旧任务，当前使用者的语音偏好设为暂停，防止硬件自动重连恢复声音；启用账号不会恢复旧网页登录。后台取消的在处理资料任务保留原文并标记 failed，可由原用户在资料接口重试。停用账号的模型访问及后续后台任务受账号状态限制。容量为聚合逻辑正文/原始资料/压缩归档字节数，数据库磁盘占用单独展示。
 

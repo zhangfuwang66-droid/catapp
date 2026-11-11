@@ -4,6 +4,7 @@ import asyncio
 from contextlib import AsyncExitStack
 from dataclasses import asdict
 from pathlib import Path
+import sqlite3
 import time
 from typing import Literal
 
@@ -63,29 +64,38 @@ def decorate_runtime(app, devices):
     return devices
 
 
+async def read_metadata(function, *args, **kwargs):
+    try:
+        return await run_blocking(function,*args,**kwargs)
+    except (sqlite3.Error,OSError):
+        raise HTTPException(503,'后台数据暂时无法读取，请稍后重试') from None
+
+
 async def online_device_ids(app):
     candidates = tuple(app.state.devices.devices)
     if not candidates:
         return ()
-    devices = await run_blocking(app.state.admin_store.devices,device_ids=candidates)
+    devices = await read_metadata(app.state.admin_store.devices,device_ids=candidates)
     return tuple(device['id'] for device in decorate_runtime(app,devices) if device['online'])
 
 
 @router.get('/overview')
 async def overview(request: Request):
     store = request.app.state.admin_store
-    result = await run_blocking(store.counts)
+    result = await read_metadata(store.counts)
     online_ids = await online_device_ids(request.app)
-    storage = await run_blocking(store.storage_bytes)
-    def file_size(path):
+    storage = await read_metadata(store.storage_bytes)
+    def file_size(path, *, missing_ok=False):
         try:
             return path.stat().st_size
         except FileNotFoundError:
-            return 0
+            if missing_ok:
+                return 0
+            raise
     result['devices']['online'] = len(online_ids)
     result.update(uptime_seconds=max(0,time.monotonic()-request.app.state.admin_started_at),
-                  storage={'database_bytes':await run_blocking(file_size,store.path),
-                           'wal_bytes':await run_blocking(file_size,Path(str(store.path)+'-wal')),
+                  storage={'database_bytes':await read_metadata(file_size,store.path),
+                           'wal_bytes':await read_metadata(file_size,Path(str(store.path)+'-wal'),missing_ok=True),
                            **storage},
                   backups=backup_status(request.app),model_billing=None)
     return result
@@ -95,7 +105,7 @@ async def overview(request: Request):
 async def users(request: Request, q: str = Query('',max_length=80),
                 status: Literal['all','enabled','disabled'] = 'all',
                 page: int = Query(1,ge=1), page_size: int = Query(20,ge=1,le=100)):
-    return await run_blocking(request.app.state.admin_store.users,q,status,page,page_size)
+    return await read_metadata(request.app.state.admin_store.users,q,status,page,page_size)
 
 
 @router.get('/devices')
@@ -106,14 +116,14 @@ async def devices(request: Request,q: str = Query('',max_length=80),
     online_ids = ()
     if status in ('online','offline'):
         online_ids = await online_device_ids(request.app)
-    result = await run_blocking(store.devices,q,status=status,page=page,page_size=page_size,online_ids=online_ids)
+    result = await read_metadata(store.devices,q,status=status,page=page,page_size=page_size,online_ids=online_ids)
     decorate_runtime(request.app,result['items'])
     return result
 
 
 @router.get('/storage')
 async def storage(request: Request):
-    return await run_blocking(request.app.state.admin_store.storage)
+    return await read_metadata(request.app.state.admin_store.storage)
 
 
 @router.get('/backups')
@@ -123,7 +133,7 @@ async def backups(request: Request):
 
 @router.get('/audit')
 async def audit(request: Request,q: str = Query('',max_length=80),page: int = Query(1,ge=1),page_size: int = Query(20,ge=1,le=100)):
-    return await run_blocking(request.app.state.admin_store.audit,q,page,page_size)
+    return await read_metadata(request.app.state.admin_store.audit,q,page,page_size)
 
 
 class ConfirmUser(BaseModel):

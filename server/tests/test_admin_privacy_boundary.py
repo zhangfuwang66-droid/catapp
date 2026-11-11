@@ -309,6 +309,12 @@ class AdminPrivacyBoundaryTests(unittest.TestCase):
             self.assert_private(response)
 
     def test_protected_static_resources_and_aliases_cannot_expose_private_data(self):
+        # Only these exact login assets are public; the console remains protected.
+        for actor in (None, "owner", "admin"):
+            for asset in ("login.css", "login.js"):
+                response = self.request("GET", "/web/admin/" + asset, actor=actor)
+                self.assertEqual(response.status_code, 200, response.text[:200])
+                self.assert_private(response)
         for actor, expected in ((None, 401), ("owner", 403), ("admin", 200)):
             for asset in ("index.html", "admin.js", "admin.css"):
                 response = self.request("GET", "/web/admin/" + asset, actor=actor)
@@ -317,7 +323,8 @@ class AdminPrivacyBoundaryTests(unittest.TestCase):
         for actor in (None, "owner", "admin"):
             for path in ("/web/ADMIN/index.html", "/web/admin%5cindex.html", "/web/admin./admin.js",
                          "/web/ADMIN/admin.css", "/web/admin/../../" + self.database.name,
-                         "/web/admin/login.html", "/records/" + self.device_id + "/private.jpg"):
+                         "/web/admin/login.html", "/web/ADMIN/login.js", "/web/admin%5clogin.css",
+                         "/records/" + self.device_id + "/private.jpg"):
                 response = self.request("GET", path, actor=actor)
                 self.assertIn(response.status_code, (401, 403, 404), response.text[:200])
                 self.assert_private(response)

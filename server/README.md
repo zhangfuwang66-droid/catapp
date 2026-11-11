@@ -54,6 +54,16 @@ python server/tools/probe_models.py --checks realtime summary --realtime-model q
 
 在已安装服务器依赖的 Python 环境中，可从仓库根目录运行 `python -X utf8 server/tools/preview_admin.py --port 8082` 查看隔离预览。它只监听本机，输出模拟账号，退出后清理临时数据，不连接模型或实体设备。详见[本地预览与验收](deploy/admin-console-local.md)、[部署与回退](deploy/admin-console-rollout.md)及[接口契约](admin_contract.md)。源码能力与已发布 exe、云端实际部署版本分别验收。
 
+## 网络访问边界
+
+账号模式配置 `CYBERMIAO_PUBLIC_URL` 后，HTTP 和 WebSocket 都只接受该站点的主机及端口；同机健康探针另有精确的只读例外。公网入口仅监听回环地址，由同机反向代理终止 HTTPS；只有该代理可以提供客户端地址和协议。桌面及直接运行的本地入口不信任转发头。账号模式不公开 `/docs`、`/redoc` 或 `/openapi.json`。
+
+本地模式面向受信任的私有局域网，访问者可以控制设备及查看本地数据，不适合直接映射到公网。浏览器控制连接须来自同一站点；本地写请求须有匹配的 `Origin`，或由非浏览器客户端携带 `X-CyberMiao-Request: 1`。错误的来源不会因添加此头而获准。此固定头用于阻止跨站浏览器请求，不是账号或设备凭证。账号模式仍要求会话、同源和 CSRF；硬件音频、摄像头使用设备 Bearer 凭证，不要求浏览器 `Origin`。
+
+旧的 `/servo`、`/servo_raw`、`/servo_raw_mode`、`/camera_setting` 和 `/tft_setting` 写操作改为 `POST`；`GET /screen_mode` 仅查询，改变模式使用 `POST /screen_mode?mode=...`。本地自动化脚本应更新请求方法并添加上述校验头。网页控制台已适配。
+
+应用限制请求头、普通请求体、上传和各音视频通道的消息大小，并限制活跃 HTTP、WebSocket 及密码验证数量。过载会拒绝新请求并释放已结束连接的容量；登录限流由普通登录和管理登录共用。具体默认值见 `network_security.py` 的 `NetworkLimits`，限额按应用实例生效。此类应用防护不能替代云安全组、反向代理限制、依赖维护和上游流量防护；生产运行仍采用单 worker。
+
 ## 运行日志与录制空间
 
 直接运行 `app.py` 会在运行数据目录的 `logs/CyberMiao.log` 写入轮转日志：单文件上限约 2 MiB，保留 5 个历史文件。云端入口使用同一日志配置；桌面入口继续沿用桌面程序的轮转日志。普通运行日志只记录事件、长度和错误类型，聊天正文和摘要保存在数据库，API Key、Bearer 凭证及上游可能回显的请求内容不写入普通日志。Linux 新建及轮转后的日志只允许属主读写；Windows 的访问权限由用户数据目录 ACL 决定。

@@ -168,7 +168,9 @@ async def serve(application, listener, directory):
                               "role": "管理员" if name in ACCOUNTS[:2] else "普通用户"} for name in ACCOUNTS],
                 "features": {"dashboard": "/api/admin/dashboard" in routes,
                              "device_crud": any("rotate-credential" in path for path in routes),
-                             "account_crud": any("reset-password" in path for path in routes)},
+                             "account_crud": any(getattr(route, 'path', '') == '/api/admin/users'
+                                                 and 'POST' in getattr(route, 'methods', ())
+                                                 for route in application.routes)},
                 "models": "仅本地模拟摘要与固定向量，设备运行时及真实模型访问已阻止",
                 "stop": "Ctrl+C 结束服务并删除本次全部模拟数据",
             }, ensure_ascii=False), flush=True)

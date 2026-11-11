@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="same-origin">
+  <title>管理员登录 · CyberMiao</title>
+  <script src="/web/admin/login.js"></script>
+  <link rel="stylesheet" href="/web/admin/login.css">
+</head>
+<body>
+  <div class="scene" aria-hidden="true">
+    <div class="scene-halo halo-one"></div><div class="scene-halo halo-two"></div>
+    <div class="scene-orbit orbit-one"></div><div class="scene-orbit orbit-two"></div>
+    <div class="scene-grid"></div>
+    <svg class="scene-companion" viewBox="0 0 600 600" fill="none">
+      <path d="M129 374c-30-74-9-143 27-183l-9-91 91 50c41-12 85-12 124 1l92-48-10 91c40 45 57 115 25 186-28 62-99 96-171 96-74 0-143-35-169-102Z"/>
+      <path d="M213 305c10-17 29-17 40 0m91 0c10-17 29-17 40 0m-106 32 20 15 21-15m-21 15v12m-39-11c0 24 39 25 39 10 0 15 39 14 39-10M176 328l-58-7m61 28-52 10m294-31 58-7m-61 28 52 10"/>
+      <path d="m162 180 4-47 44 28m180 1 45-29-4 47"/>
+    </svg>
+    <span class="star star-one"></span><span class="star star-two"></span><span class="star star-three"></span>
+  </div>
+  <header class="login-topbar">
+    <a class="brand" href="/" aria-label="返回 CyberMiao 应用"><span class="brand-symbol">m<span>·</span></span><span>CyberMiao<small>ADMIN CONSOLE</small></span></a>
+    <button class="theme-button" id="loginTheme" type="button" aria-label="切换主题" title="切换主题">
+      <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg>
+      <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14a8.8 8.8 0 0 1-10.6-10.5A8.8 8.8 0 1 0 20.5 14Z"/></svg>
+    </button>
+  </header>
+  <main class="login-stage">
+    <div class="scene-caption" aria-hidden="true"><span class="caption-line"></span><p>每一份陪伴<br>都有序生长。</p><small>A LITTLE COMPANION.<br>A THOUGHTFUL WORLD.</small></div>
+    <section class="login-card" aria-labelledby="loginTitle">
+      <div class="card-emblem" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="m7 13-1-8 8 5h4l8-5-1 8c3 4 3 10-1 13-4 4-12 4-16 0-4-3-4-9-1-13Z"/><path d="M11 18h1m8 0h1m-7 5 2 1 2-1"/></svg><span class="emblem-dot"></span></div>
+      <p class="eyebrow">CYBERMIAO · 管理后台</p>
+      <h1 id="loginTitle">欢迎回来</h1>
+      <p class="intro">登录管理工作区，照顾好每一份连接。</p>
+      <p class="login-notice" id="loginNotice" role="status" hidden></p>
+      <form id="adminLoginForm" action="/api/admin/login" method="post">
+        <label class="field-label" for="adminUsername">管理员账号</label>
+        <div class="input-wrap">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>
+          <input id="adminUsername" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" placeholder="输入已授权的账号" required>
+        </div>
+        <label class="field-label password-label" for="adminPassword">密码</label>
+        <div class="input-wrap password-wrap">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
+          <input id="adminPassword" name="password" type="password" autocomplete="current-password" maxlength="512" placeholder="输入登录密码" aria-describedby="capsLock loginError" required>
+          <button class="password-toggle" id="passwordToggle" type="button" aria-label="显示密码" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="eye-slash" d="m3 3 18 18"/></svg></button>
+        </div>
+        <p class="caps-lock" id="capsLock" hidden>大写锁定已开启</p>
+        <div class="form-options"><span class="access-note"><span></span>仅限已授权管理员</span><button id="loginHelp" class="text-button" type="button">登录遇到问题？</button></div>
+        <p class="login-error" id="loginError" role="alert" tabindex="-1" hidden></p>
+        <button class="login-submit" id="adminLoginSubmit" type="submit"><span class="button-spinner" aria-hidden="true"></span><span id="loginSubmitLabel">进入管理后台</span><svg class="submit-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></button>
+        <p class="submit-status" id="loginStatus" role="status" aria-live="polite"></p>
+      </form>
+      <div class="privacy-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-8 4v5c0 5 8 9 8 9s8-4 8-9V7Z"/><path d="m8 12 3 3 5-6"/></svg><p>管理运行状态，守护用户隐私。<br><span>聊天、记忆与资料正文不在后台展示。</span></p></div>
+    </section>
+    <aside class="scene-badge" aria-hidden="true"><span class="badge-orbit"></span><span>小小的陪伴<br><strong>值得认真对待</strong></span></aside>
+  </main>
+  <footer class="login-footer"><a href="/"><span aria-hidden="true">←</span> 返回小喵应用</a><span>CyberMiao · 让陪伴自然发生</span></footer>
+  <dialog id="loginHelpDialog" aria-labelledby="helpTitle"><div class="help-icon" aria-hidden="true">?</div><h2 id="helpTitle">需要登录帮助？</h2><p>管理后台只向已授权的管理员开放，普通小喵账号不能直接进入。</p><p>如果忘记密码或尚未获得权限，请联系平台维护者，通过服务端管理工具处理。</p><button id="closeLoginHelp" type="button" class="login-submit">知道了</button></dialog>
+  <noscript><p class="no-script">请启用 JavaScript 后使用管理员登录。</p></noscript>
+</body>
+</html>

@@ -4,7 +4,7 @@
 
 ## 页面及精确资源
 
-- `GET /admin/login`：accounts 模式下匿名与普通账号均可打开，已有有效且启用的显式管理员会话时 303 到固定 `/admin`。不接受任意外部跳转地址。
+- `GET /admin/login`：accounts 模式下匿名与普通账号均可打开，已有有效且启用的显式管理员会话时 303 到固定 `/admin`。可选 `next` 只接受精确值 `/admin`；可选 `notice` 只接受 `expired`、`logout`。未知、重复或非法查询参数返回 422，不解码第二次，不归一化外部地址、反斜杠或路径别名。
 - `GET /web/admin/login.css`、`GET /web/admin/login.js`：accounts 模式下公开的精确资源路径。不得整体公开 admin 目录；其他后台文件继续鉴权，大小写、反斜杠、尾点等路径别名继续 404。登录 HTML 只通过 `/admin/login` 提供。
 - 未登录或会话失效访问 `/admin` 时 303 到 `/admin/login`；仍有有效普通用户会话时 403。非 accounts 模式下管理登录页、认证接口、登录资源均 404。
 - 页面使用现有管理 CSP，页面、资源与 API 均 `Cache-Control: no-store`。前端收到管理接口 401 时跳 `/admin/login?notice=expired`，退出成功跳 `/admin/login`。403 不无限自动登录重试。
@@ -12,6 +12,8 @@
 ## 登录
 
 `POST /api/admin/auth/login`，同源 Origin，JSON `{username,password}`。用户名最大 128 字符、沿用 NFKC/去首尾空白/小写规范化，密码为 1～128 字符。拒绝额外字段；参数错误不回显密码或完整输入。登录前没有 CSRF token，因此登录使用严格同源 Origin 校验。
+
+该 API 的查询参数仅支持可选 `next=/admin`；其他值、重复 next、客户端传入 redirect（查询或 JSON）均 422。`redirect` 只作为固定响应值，不从请求计算。协议相对地址、外部 URL、反斜杠、点路径、编码后仍不等于 `/admin` 的目标均拒绝。
 
 成功 **200**：`{ok:true,user:{id,username},csrf_token,redirect:"/admin"}`。仅显式授权且启用的管理员可登录；创建会话的同一写事务内再次核验密码对应身份、账号名、启用状态及管理员角色。沿用登录限流，不能通过切换两个登录入口绕过。
 

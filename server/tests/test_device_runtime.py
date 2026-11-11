@@ -235,6 +235,8 @@ class DeviceEndpointsTests(unittest.TestCase):
         self.stack.enter_context(patch.object(runtime_module, "ENABLE_ESP32_SCREEN_PUSH", False))
         self.stack.enter_context(patch.object(runtime_module, "API_KEY", "simulated-model-only"))
         self.stack.enter_context(patch.object(runtime_module, "OmniRealtimeSession", FakeRealtimeSession))
+        # 端点测试同步建立检索种子；索引 worker 的生命周期由知识库专项覆盖。
+        self.stack.enter_context(patch("knowledge_service.KnowledgeService.start", new=AsyncMock()))
         self.application = server_app.create_app(store=MemoryStore(Path(self.temp.name) / "memory.sqlite3"), summarizer=summarize)
         self.client = self.stack.enter_context(TestClient(self.application, client=("127.0.0.1", 12345)))
 

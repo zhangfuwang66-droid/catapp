@@ -1544,11 +1544,16 @@ function renderAnalysis(result){
 function renderTranslatePairs(){
   const host = document.getElementById('trPairs');
   if(!host) return;
-  host.innerHTML = '';
+  host.replaceChildren();
   translationPairs.forEach(item => {
     const el = document.createElement('div');
     el.className = 'tr-pair' + (item.pair === selectedTranslatePair ? ' active' : '');
-    el.innerHTML = '<span style="font-family:var(--mono);color:#9ec7ff">' + (item.name || item.pair) + '</span><span class="lbl">' + (item.display || '') + '</span>';
+    const name = document.createElement('span');
+    name.style.fontFamily = 'var(--mono)'; name.style.color = '#9ec7ff';
+    name.textContent = item.name || item.pair;
+    const label = document.createElement('span'); label.className = 'lbl';
+    label.textContent = item.display || '';
+    el.append(name, label);
     el.addEventListener('click', () => {
       selectedTranslatePair = item.pair;
       renderTranslatePairs();

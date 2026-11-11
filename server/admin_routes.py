@@ -157,7 +157,15 @@ class Voice(ConfirmDevice):
 
 
 async def audited(request,user,target_type,target_id,action,perform,progress=None,*,locked=None):
-    """排队可取消；锁后复核授权，已开始的合法变更和审计随所属请求完整收尾。"""
+    """管理写入统一入口；路由仍须 Depends(require_admin_write)。
+
+    locked 是零参数异步上下文管理器工厂：按目标账号→设备顺序取锁，
+    不在 perform 内重复取锁，不为操作者额外取账号锁，不自行 shield 排队。
+    本函数负责全局锁、锁后会话/角色复核及获准操作的取消收尾。
+    perform 的实际写事务仍须 require_writer(db, user.id, session_token)，
+    核对目标快照，并在事务成功返回后、首次等待清理前标记 progress['committed']。
+    返回值只含白名单数据；审计只接收目标和固定动作，不接收凭证或任意详情。
+    """
     async def run():
         store = request.app.state.admin_store
         try:

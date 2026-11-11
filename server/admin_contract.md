@@ -20,6 +20,10 @@
 
 开始审计写入未确认时返回 503，业务操作不执行；业务已完成而结果审计写入未确认时返回 503 并明确提示状态已生效，刷新核对后不要重复提交。业务操作和失败结果审计同时失败时，仅报告操作未完成及审计未确认，不声称已记录失败。
 
+新增写路由统一使用 `Depends(require_admin_write)` 和 `await audited(request,user,target_type,target_id,action,perform,progress,locked=locked)`。`locked` 是带 `@asynccontextmanager` 的零参数工厂，按目标账号→设备顺序取得本操作需要的锁；全局锁由 `audited` 提供。不得在 `perform` 中重复取得同一把锁、为操作者额外取得账号锁或自行 shield 排队，以免互锁或留下取消后的写任务。
+
+`perform` 通过 `run_blocking` 调用业务存储；在同一个 `BEGIN IMMEDIATE` 写事务内先调用 `admin_store.require_writer(db,actor.id,session_token)`，再复核目标当前状态与初始快照，最后执行变更。HTTP 必须传原请求 Cookie 中的 `SESSION_COOKIE`，不得用新登录或仅角色检查替代。事务成功返回后立即设置 `progress['committed']=True`，再等待连接、运行时及任务清理。返回白名单字段，审计只用固定动作和目标编号。会话失效映射 401、角色撤销映射 403、`ValueError` 映射脱敏 409；HTTP 状态异常由统一入口保留，审计故障统一返回脱敏 503。`begin_action` / `change_user` 的省略 session_token 兼容入口只供可信 CLI 或内部调用，不供网页使用，也不提供网页管理员提权。
+
 管理资源仅通过受管理员权限保护的 `/admin` 和 `/web/admin/{index.html|admin.js|admin.css}` 提供。公共静态挂载在文件系统路径解析后排除整个后台目录；大小写、反斜杠等非规范别名返回 404，本地模式也不提供后台资源。
 
 分页 page>=1，page_size 为 1～100，q 最长 80。请求超出末页（包括超大页码）返回空 items，保留筛选后的真实 total 和原请求页码。管理员授权/撤销仅通过服务端 `python server/admin_cli.py --database /绝对路径/memory.sqlite3 grant|revoke|list --username 账号`；不提供网页提权接口。禁止撤销最后启用管理员；回退程序可保留新增 admin 表，不改变原身份表版本。

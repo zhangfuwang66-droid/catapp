@@ -48,10 +48,15 @@ async def run_backup(payload: BackupConfirmation, request: Request, user=Depends
         await require_admin_write(request)
         await run_blocking(authorize_transaction)
 
-    async def perform():
-        created = await service.run_once(authorize=authorize)
+    def mark_committed():
         progress['committed'] = True
-        return {'ok': True, 'created': created, 'status': backup_status(request.app),
+
+    async def perform():
+        created = await service.run_locked(authorize=authorize, on_committed=mark_committed)
+        return {'ok': True, 'created': created,
                 'message': '备份已创建并校验' if created else '已有符合间隔策略的近期备份，已完成校验'}
 
-    return await audited(request, user, 'system', 'database-backups', 'check-backup', perform, progress)
+    result = await audited(request, user, 'system', 'database-backups', 'check-backup', perform, progress,
+                           locked=service.locked)
+    result['status'] = backup_status(request.app)
+    return result

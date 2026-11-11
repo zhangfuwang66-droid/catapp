@@ -181,8 +181,8 @@ async def audited(request,user,target_type,target_id,action,perform,progress=Non
             result = await perform()
         except BaseException as exc:
             if progress and progress.get('committed'):
-                # 保留 started 表示尚未完整收尾，不能将已生效的权限变更记为全失败。
-                raise HTTPException(503,'状态变更已生效，连接、任务或设备状态同步未完成；请刷新后重试，审计保留未完成状态') from None
+                # 保留 started 表示尚未完整收尾，不能将已生效的变更记为全失败。
+                raise HTTPException(503,'状态变更已生效，后续收尾未完成；请刷新后重试，审计保留未完成状态') from None
             try:
                 await run_blocking(store.finish_action,audit_id,False)
             except Exception:

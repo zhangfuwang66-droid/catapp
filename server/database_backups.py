@@ -126,7 +126,7 @@ class BackupRepository:
             if owned_target and not complete:
                 target.unlink(missing_ok=True)
 
-    def prune(self, entries):
+    def prune(self, entries, *, on_committed=None):
         removed = 0
         for _, path, receipt in entries[:-self.settings.retain]:
             # 路径来自本目录的严格命名匹配，删除前再次验证摘要、同源与符号链接。
@@ -134,6 +134,8 @@ class BackupRepository:
             if not any(candidate == path for _, candidate, _ in current):
                 continue
             path.unlink()
+            if on_committed is not None:
+                on_committed()
             receipt.unlink()
             removed += 1
         return removed
@@ -170,34 +172,46 @@ class DatabaseBackups:
             await asyncio.gather(self._task, return_exceptions=True)
             self._task = None
 
-    async def run_once(self, *, authorize=None):
+    def locked(self):
+        """供管理入口在保护已获准操作前排队；等待此锁仍可取消。"""
+        return self._lock
+
+    async def run_once(self, *, authorize=None, on_committed=None):
         if self.settings.directory is None:
             return False
-        async with self._lock:
-            # 管理请求排队期间可能已撤销；开始读写备份前复核，调度任务沿用原行为。
-            if authorize is not None:
-                await authorize()
-            try:
-                entries, skipped = await run_blocking(self.repository.verified_entries)
-                self.skipped_unverified = skipped
-                self.backup_count = len(entries)
-                self.last_success_at = entries[-1][0] if entries else None
-                if entries and time.time() - entries[-1][0] < self.settings.interval_seconds:
-                    self.pruned = await run_blocking(self.repository.prune, entries)
-                    self.backup_count -= self.pruned
-                    self.last_error_type = None
-                    return False
-                self.last_success_at = await run_blocking(self.repository.create)
-                entries, skipped = await run_blocking(self.repository.verified_entries)
-                self.pruned = await run_blocking(self.repository.prune, entries)
-                self.backup_count = len(entries) - self.pruned
-                self.skipped_unverified = skipped
+        async with self.locked():
+            return await self.run_locked(authorize=authorize, on_committed=on_committed)
+
+    async def run_locked(self, *, authorize=None, on_committed=None):
+        """调用方已持备份锁；成功创建或首次删除后立即通知，后续失败仍算未完成。"""
+        if self.settings.directory is None:
+            return False
+        # 管理请求排队期间可能已撤销；开始读写备份前复核，调度任务沿用原行为。
+        if authorize is not None:
+            await authorize()
+        try:
+            entries, skipped = await run_blocking(self.repository.verified_entries)
+            self.skipped_unverified = skipped
+            self.backup_count = len(entries)
+            self.last_success_at = entries[-1][0] if entries else None
+            if entries and time.time() - entries[-1][0] < self.settings.interval_seconds:
+                self.pruned = await run_blocking(self.repository.prune, entries, on_committed=on_committed)
+                self.backup_count -= self.pruned
                 self.last_error_type = None
-                return True
-            except Exception as exc:
-                self.last_failure_at = time.time()
-                self.last_error_type = type(exc).__name__
-                raise
+                return False
+            self.last_success_at = await run_blocking(self.repository.create)
+            if on_committed is not None:
+                on_committed()
+            entries, skipped = await run_blocking(self.repository.verified_entries)
+            self.pruned = await run_blocking(self.repository.prune, entries, on_committed=on_committed)
+            self.backup_count = len(entries) - self.pruned
+            self.skipped_unverified = skipped
+            self.last_error_type = None
+            return True
+        except Exception as exc:
+            self.last_failure_at = time.time()
+            self.last_error_type = type(exc).__name__
+            raise
 
     async def _loop(self):
         while True:

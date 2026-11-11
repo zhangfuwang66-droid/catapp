@@ -65,7 +65,7 @@ class AdminMaintenanceTests(unittest.TestCase):
         self.assertEqual(audit[0]['result'], 'success')
 
     def test_failed_check_is_private_and_audited(self):
-        with patch.object(self.service, 'run_once', side_effect=OSError('private-backup-path')):
+        with patch.object(self.service.repository, 'verified_entries', side_effect=OSError('private-backup-path')):
             response = self.client.post('/api/admin/backups/run', headers=self.headers, json={'confirm': '检查并备份'})
         self.assertEqual(response.status_code, 503, response.text)
         self.assertNotIn('private-backup-path', response.text)

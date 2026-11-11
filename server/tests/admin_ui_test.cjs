@@ -82,7 +82,7 @@ const server = http.createServer(async (req,res) => {
     assert.equal(actions.length,0,'页面加载不能触发写请求');
     const output = path.resolve(root,'../artifacts/admin-ui'); fs.mkdirSync(output,{recursive:true});
     await page.screenshot({path:path.join(output,'desktop.png'),fullPage:true});
-    await page.getByRole('button',{name:'资料与记忆',exact:true}).click();
+    await page.getByRole('button',{name:'存储概况',exact:true}).click();
     await page.locator('#storageBody tr').first().waitFor();
     assert.equal(await page.locator('#storagePending').innerText(),'5','待处理必须累加 pending 和 queued，不能互相覆盖');
     assert.equal(await page.locator('#storageProcessing').innerText(),'4','处理中应单独统计');
@@ -255,7 +255,7 @@ const server = http.createServer(async (req,res) => {
     assert.equal(await page.locator('#pageFeedback').isVisible(),false,'旧读取错误不能覆盖当前页面');
     getBehavior = null; postBehavior = null;
     audit.push({id:3,actor_username:'admin',action:'future-action',target_type:'device',target_id:device.id,result:'success',created_at:1730000000});
-    for(const view of ['资料与记忆','备份','操作审计']) await page.getByRole('button',{name:view,exact:true}).click();
+    for(const view of ['存储概况','备份','操作审计']) await page.getByRole('button',{name:view,exact:true}).click();
     await page.waitForFunction(() => document.getElementById('view-audit').hidden === false);
     await page.locator('#auditBody').getByText('未知操作（future-action）',{exact:true}).waitFor();
     const mobile = await browser.newContext({viewport:{width:390,height:844},isMobile:true,deviceScaleFactor:1});

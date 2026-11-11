@@ -56,7 +56,7 @@ async function fixtureUrl() {
     await page.fill('#confirmInput','cat-browser-test'); await page.click('#confirmSubmit');
     await page.locator('#toast').getByText('操作已完成').waitFor();
     await page.locator('#devicesBody').getByText('已暂停').waitFor();
-    await page.getByRole('button',{name:'资料与记忆',exact:true}).click();
+    await page.getByRole('button',{name:'存储概况',exact:true}).click();
     await page.locator('#storageDocuments').getByText('5',{exact:true}).waitFor();
     assert.equal(await page.locator('#storagePending').innerText(),'1');
     assert.equal(await page.locator('#storageProcessing').innerText(),'1');

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
   <title>管理后台 · CyberMiao</title>
-  <link rel="stylesheet" href="/web/admin/admin.css"><script src="/web/admin/admin.js" defer></script>
+  <script src="/web/admin/admin.js"></script><link rel="stylesheet" href="/web/admin/admin.css">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -15,12 +15,13 @@
       <button class="nav-item active" data-view="overview" data-icon="overview" type="button"><span>概览</span></button>
       <button class="nav-item" data-view="users" data-icon="users" type="button"><span>用户</span></button>
       <button class="nav-item" data-view="devices" data-icon="devices" type="button"><span>设备</span></button>
-      <button class="nav-item" data-view="storage" data-icon="storage" type="button"><span>资料与记忆</span></button>
+      <button class="nav-item" data-view="storage" data-icon="storage" type="button"><span>存储概况</span></button>
       <button class="nav-item" data-view="backups" data-icon="backups" type="button"><span>备份</span></button>
       <button class="nav-item" data-view="audit" data-icon="audit" type="button"><span>操作审计</span></button>
     </nav>
     <div class="side-note"><span data-icon="shield"></span><strong>每一次操作，都有记录</strong><p>敏感操作需明确确认，执行结果可在审计中核对。</p></div>
     <div class="side-footer"><span class="avatar">A</span><div><strong>管理员工作区</strong><small>CyberMiao Console</small></div></div>
+    <button id="logoutButton" class="logout-button" type="button" data-icon="logout" aria-describedby="logoutHint">退出后台</button><small id="logoutHint" class="logout-hint">同时退出此浏览器中的应用账号</small>
   </aside>
   <button class="nav-scrim" id="navScrim" aria-label="关闭导航" type="button" tabindex="-1" hidden></button>
   <div class="main-wrap">
@@ -32,11 +33,12 @@
     <main id="main" tabindex="-1">
       <div class="page-head"><div><p class="eyebrow">CYBERMIAO CONSOLE <span>/ 管理工作台</span></p><h1 id="pageTitle">概览</h1><p class="page-subtitle" id="pageSubtitle">账号、设备与服务状态</p></div><button class="refresh-button" id="refreshButton" type="button"><span data-icon="refresh"></span>刷新</button></div>
       <p class="feedback" id="pageFeedback" role="status" aria-live="polite" hidden></p>
+      <div class="view-loading" id="viewLoading" role="status" aria-live="polite" hidden><span class="loading-indicator" aria-hidden="true"></span><p id="loadingLabel">正在读取概览…</p><div class="loading-cards" aria-hidden="true"><i></i><i></i><i></i></div></div>
       <section class="view" id="view-overview" aria-label="概览">
         <div class="metrics" id="metrics">
           <div class="metric"><div class="metric-top"><span>用户总数</span><span class="metric-icon" data-icon="users"></span></div><strong id="metricUsers">—</strong><small id="metricUsersNote">等待数据</small></div>
           <div class="metric"><div class="metric-top"><span>设备总数</span><span class="metric-icon" data-icon="devices"></span></div><strong id="metricDevices">—</strong><small id="metricDevicesNote">等待数据</small></div>
-          <div class="metric"><div class="metric-top"><span>服务运行时长</span><span class="metric-icon" data-icon="clock"></span></div><strong id="metricUptime">—</strong><small>当前服务进程</small></div>
+          <div class="metric"><div class="metric-top"><span>服务运行时长</span><span class="metric-icon" data-icon="clock"></span></div><strong id="metricUptime">—</strong><small>当前服务进程 · 时:分:秒</small></div>
           <div class="metric"><div class="metric-top"><span>数据库占用</span><span class="metric-icon" data-icon="storage"></span></div><strong id="metricStorage">—</strong><small id="metricStorageNote">等待数据</small></div>
         </div>
         <div class="dashboard-grid">
@@ -57,11 +59,12 @@
         <div class="list-caption"><span>设备目录</span><span id="devicesCount"></span></div><div class="table-scroll"><table><thead><tr><th scope="col">设备</th><th scope="col">类型</th><th scope="col">主人 / 借用</th><th scope="col">连接</th><th scope="col">语音</th><th scope="col" class="actions-head">操作</th></tr></thead><tbody id="devicesBody"></tbody></table></div>
         <p class="empty" id="devicesEmpty" hidden>暂无设备记录</p><div class="pagination" id="devicesPagination"><span id="devicesPageInfo"></span><div><button id="devicesPrev" type="button">上一页</button><button id="devicesNext" type="button">下一页</button></div></div>
       </section>
-      <section class="view" id="view-storage" aria-label="资料与记忆" hidden>
+      <section class="view" id="view-storage" aria-label="存储概况" hidden>
+        <section class="panel info-panel privacy-note" aria-labelledby="storagePrivacyTitle"><span data-icon="shield"></span><div><h2 id="storagePrivacyTitle">只看存储概况，保护私人内容</h2><p>此页仅展示资料与记忆的数量、容量和处理状态，不提供私人资料、对话或记忆正文。</p></div></section>
         <div class="section-heading"><h2>用量概览</h2><span>仅显示元数据</span></div>
         <div class="metrics compact"><div class="metric"><span>资料数量</span><strong id="storageDocuments">—</strong><small>已入库资料</small></div><div class="metric"><span>记忆数量</span><strong id="storageMemories">—</strong><small>保留的记忆条目</small></div><div class="metric"><span>总占用</span><strong id="storageBytes">—</strong><small>资料、记忆与归档逻辑容量</small></div><div class="metric"><span>待处理 / 处理中</span><strong><span id="storagePending">—</span> / <span id="storageProcessing">—</span></strong><small>等待开始 / 正在处理</small></div></div>
         <section class="panel"><div class="panel-heading"><h2>资料处理分布</h2><span class="panel-time">当前入库状态</span></div><div id="storageDistribution" class="distribution"></div></section>
-        <div class="section-heading"><h2>处理与归档</h2><span id="storageTime">—</span></div><div class="table-scroll"><table><thead><tr><th scope="col">类型</th><th scope="col">数量</th><th scope="col">状态</th><th scope="col">更新时间</th></tr></thead><tbody id="storageBody"></tbody></table></div><p class="empty" id="storageEmpty" hidden>暂无处理或归档记录</p><p class="footnote">此处仅展示汇总数据，不提供私人资料、对话或记忆正文。</p>
+        <div class="section-heading"><h2>处理与归档统计</h2><span id="storageTime">—</span></div><div class="table-scroll"><table><thead><tr><th scope="col">类型</th><th scope="col">数量</th><th scope="col">状态</th><th scope="col">更新时间</th></tr></thead><tbody id="storageBody"></tbody></table></div><p class="empty" id="storageEmpty" hidden>暂无处理或归档统计</p><p class="footnote">数量与容量用于核对服务存储状态；此处没有私人内容的查看或下载入口。</p>
       </section>
       <section class="view" id="view-backups" aria-label="备份" hidden>
         <div class="toolbar"><p class="panel-caption">按服务端已配置策略检查、创建并校验数据库备份</p><button id="runBackup" class="primary-button" type="button"><span data-icon="backups"></span>检查并备份</button></div>

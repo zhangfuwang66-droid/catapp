@@ -1,9 +1,16 @@
 'use strict';
 
+// 在样式和页面首次绘制前恢复主题；外部脚本兼容 script-src 'self'。
+let savedTheme;
+try { savedTheme = localStorage.getItem('admin-theme'); } catch {}
+document.documentElement.dataset.theme = ['light','dark'].includes(savedTheme) ? savedTheme :
+  matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+
+function initializeAdmin() {
 const $ = id => document.getElementById(id);
 const views = {
   overview: ['概览', '账号、设备与服务状态'], users: ['用户', '账号权限与网页登录'],
-  devices: ['设备', '绑定关系与连接状态'], storage: ['资料与记忆', '用量、处理与归档元数据'],
+  devices: ['设备', '绑定关系与连接状态'], storage: ['存储概况', '数量、容量与处理状态，不展示私人正文'],
   backups: ['备份', '备份状态与异常'], audit: ['操作审计', '管理员操作记录'],
 };
 const auditActions = new Map([
@@ -22,11 +29,12 @@ const documentStatuses = new Map([
   ['queued','待处理'], ['pending','待处理'], ['processing','处理中'],
   ['ready','已就绪'], ['keyword','关键词检索可用'], ['failed','处理失败'],
 ]);
-const state = {view:'overview', csrf:'', user:null, requests:{}, serial:{}, busy:false, denied:false, unbindFollowups:new Map(),
+const state = {view:'overview', csrf:'', user:null, requests:{}, serial:{}, busy:false, denied:false, loggingOut:false, unbindFollowups:new Map(),
   pages:{users:1,devices:1,audit:1}, queries:{users:'',devices:'',audit:''},
   statuses:{users:'all',devices:'all'}};
 let toastTimer, recoveryContext;
 let detailContext, editorContext, credentialMemory;
+let uptimeAnchor, uptimeTimer;
 const iconPaths = {
   overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
   users:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M16 3a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-3.9 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0',
@@ -39,6 +47,7 @@ const iconPaths = {
   clock:'M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0 M12 7v5l3 2',
   refresh:'M20 7v5h-5 M4 17v-5h5 M6.1 7a7 7 0 0 1 11.5-1L20 9 M4 15l2.4 3A7 7 0 0 0 18 17',
   menu:'M4 6h16 M4 12h16 M4 18h16', plus:'M12 5v14 M5 12h14', close:'M6 6l12 12 M18 6 6 18',
+  logout:'M9 3H4v18h5 M9 12h12 M17 8l4 4-4 4',
 };
 function insertIcons() {
   document.querySelectorAll('[data-icon]').forEach(element => {
@@ -54,9 +63,8 @@ function applyTheme(theme) {
   $('themeToggle').setAttribute('aria-pressed',String(theme === 'dark'));
 }
 insertIcons();
-let savedTheme;
-try { savedTheme = localStorage.getItem('admin-theme'); } catch {}
-applyTheme(['light','dark'].includes(savedTheme) ? savedTheme : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+applyTheme(document.documentElement.dataset.theme);
+requestAnimationFrame(() => document.documentElement.classList.add('theme-ready'));
 $('themeToggle').addEventListener('click',() => {
   const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; applyTheme(theme);
   try { localStorage.setItem('admin-theme',theme); } catch {}
@@ -104,6 +112,31 @@ function duration(value) {
   const minutes = Math.floor(seconds % 3600 / 60);
   return days ? `${days}天${hours ? `${hours}小时` : ''}` : hours ? `${hours}小时${minutes ? `${minutes}分` : ''}` : `${minutes}分钟`;
 }
+function tickUptime() {
+  clearTimeout(uptimeTimer);
+  if(!uptimeAnchor || state.view !== 'overview' || document.hidden) return;
+  const value = uptimeAnchor.seconds + Math.max(0,performance.now() - uptimeAnchor.at) / 1000;
+  const seconds = Math.floor(value), days = Math.floor(seconds / 86400);
+  const hours = Math.floor(seconds % 86400 / 3600), minutes = Math.floor(seconds % 3600 / 60), remainder = seconds % 60;
+  const clock = [hours,minutes,remainder].map(part => String(part).padStart(2,'0')).join(':');
+  const metric = $('metricUptime');
+  metric.replaceChildren();
+  if(days) metric.append(node('span',`${days}天`,'uptime-days'));
+  metric.append(node('span',clock,'uptime-clock'));
+  metric.setAttribute('aria-label',`${days ? `${days}天` : ''}${hours}小时${minutes}分${remainder}秒`);
+  // 每次从单调时钟重新计算，后台节流或系统时间变化不会累加误差。
+  uptimeTimer = setTimeout(tickUptime,Math.max(25,1000 - (value * 1000 % 1000)));
+}
+function anchorUptime(value) {
+  clearTimeout(uptimeTimer);
+  uptimeAnchor = value != null && value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0 ?
+    {seconds:Number(value),at:performance.now()} : null;
+  if(uptimeAnchor) tickUptime();
+  else { text('metricUptime','暂无'); $('metricUptime').removeAttribute('aria-label'); }
+}
+document.addEventListener('visibilitychange',tickUptime);
+window.addEventListener('pagehide',() => clearTimeout(uptimeTimer));
+window.addEventListener('pageshow',tickUptime);
 function feedback(message='', kind='') {
   $('pageFeedback').hidden = !message;
   $('pageFeedback').className = `feedback ${kind}`;
@@ -124,14 +157,22 @@ function gate(message, denied=false) {
   $('gate').hidden = false;
   $('gate').className = denied ? 'gate denied' : 'gate';
   $('gate').replaceChildren(node('span', message));
-  if(denied) { const link = node('a', '返回我的小喵'); link.href = '/'; $('gate').append(link); }
+  if(denied) {
+    const link = node('a','返回后台登录'); link.href = '/admin/login'; $('gate').append(link);
+    if(state.csrf) {
+      const button = node('button','退出后台','neutral-button'); button.type='button'; button.id='gateLogout';
+      button.addEventListener('click',logoutAdmin); $('gate').append(button);
+    }
+  }
 }
 function loginExpired() {
   Object.values(state.requests).forEach(controller => controller.abort());
-  window.location.assign('/?notice=login');
+  clearTimeout(uptimeTimer);
+  clearCredential();
+  window.location.assign('/admin/login?notice=expired');
 }
 async function api(path, {method='GET', body, signal, timeout=12000}={}) {
-  if(state.denied) throw new ApiError('管理员权限已失效，请重新登录后核对。',403);
+  if(state.denied && path !== '/api/admin/auth/logout') throw new ApiError('管理员权限已失效，请重新登录后核对。',403);
   const writing = method !== 'GET' && method !== 'HEAD';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -185,17 +226,25 @@ function queryPath(view) {
   return `/api/admin/${view}?${params}`;
 }
 async function load(view=state.view) {
-  if(!views[view] || state.denied) return false;
+  if(!views[view] || state.denied || state.loggingOut) return false;
   state.requests[view]?.abort();
   const controller = new AbortController();
   const serial = (state.serial[view] || 0) + 1;
   state.requests[view] = controller; state.serial[view] = serial;
-  if(view === state.view) $('refreshButton').disabled = true;
+  const section = $(`view-${view}`);
+  section.inert = true;
+  section.classList.remove('view-enter');
+  section.hidden = true;
+  if(view === state.view) {
+    $('refreshButton').disabled = true;
+    text('loadingLabel',`正在读取${views[view][0]}…`);
+    $('viewLoading').hidden = false;
+    feedback();
+  }
   if(['users','devices','audit'].includes(view)) {
     $(`${view}Prev`).disabled = true; $(`${view}Next`).disabled = true;
   }
-  if(view === state.view) feedback('正在加载…');
-  $(`view-${view}`).setAttribute('aria-busy','true');
+  section.setAttribute('aria-busy','true');
   try {
     let data;
     if(view === 'overview') {
@@ -209,10 +258,15 @@ async function load(view=state.view) {
       try { data = {...await api('/api/admin/backups/history',{signal:controller.signal}),status}; }
       catch(error) { if(error.status !== 404) throw error; data = {status}; }
     } else data = await api(['users','devices','audit'].includes(view) ? queryPath(view) : `/api/admin/${view}`,{signal:controller.signal});
-    if(serial !== state.serial[view]) return false;
+    if(serial !== state.serial[view] || controller.signal.aborted || state.loggingOut) return false;
     ({overview:renderOverview,users:renderUsers,devices:renderDevices,storage:renderStorage,
       backups:renderBackups,audit:renderAudit})[view](data);
-    if(view === state.view) feedback();
+    if(view === state.view) {
+      feedback();
+      $('viewLoading').hidden = true;
+      section.classList.add('view-enter');
+      section.hidden = false;
+    }
     return true;
   } catch(error) {
     if(error.name === 'AbortError' || serial !== state.serial[view] || error.status === 401) return false;
@@ -221,31 +275,36 @@ async function load(view=state.view) {
   } finally {
     if(state.requests[view] === controller) {
       delete state.requests[view];
-      $(`view-${view}`).setAttribute('aria-busy','false');
-      if(view === state.view) $('refreshButton').disabled = false;
+      section.setAttribute('aria-busy','false');
+      section.inert = false;
+      if(view === state.view) { $('refreshButton').disabled = false; $('viewLoading').hidden = true; }
     }
   }
 }
 function setView(view) {
+  if(state.loggingOut) return;
   if(!views[view]) view = 'overview';
   state.view = view;
-  document.querySelectorAll('.view').forEach(element => { element.hidden = element.id !== `view-${view}`; });
+  // 切页先隐藏所有旧快照，只有当前页最新请求成功后才揭示内容。
+  document.querySelectorAll('.view').forEach(element => { element.hidden = true; });
   document.querySelectorAll('.nav-item').forEach(button => {
     button.classList.toggle('active', button.dataset.view === view);
     if(button.dataset.view === view) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
   text('pageTitle', views[view][0]); text('crumbTitle', views[view][0]); text('pageSubtitle', views[view][1]);
-  $('shell').classList.remove('menu-open'); $('menuToggle').setAttribute('aria-expanded', 'false');
-  $('navScrim').hidden = true;
+  const menuWasOpen = $('shell').classList.contains('menu-open');
+  setMenu(false);
+  if(menuWasOpen) $('main').focus({preventScroll:true});
   history.replaceState(null, '', `#${view}`);
+  tickUptime();
   load(view);
 }
 function renderOverview(dashboard) {
   const data = dashboard.summary || dashboard;
   text('metricUsers', data.users?.total); text('metricUsersNote', data.users ? `${data.users.enabled ?? '未提供'} 启用 · ${data.users.disabled ?? '未提供'} 停用` : '未接入');
   text('metricDevices', data.devices?.total); text('metricDevicesNote', data.devices ? `${data.devices.bound} 已绑定` : '未接入');
-  text('metricUptime', duration(data.uptime_seconds));
+  anchorUptime(data.uptime_seconds);
   const storage = data.storage;
   const total = storage && Number(storage.database_bytes || 0) + Number(storage.wal_bytes || 0);
   text('metricStorage', storage ? bytes(total) : '暂无');
@@ -845,8 +904,42 @@ $('runBackup').addEventListener('click',() => confirmAction({title:'检查并备
 
 document.querySelectorAll('.nav-item').forEach(button => button.addEventListener('click', () => setView(button.dataset.view)));
 $('refreshButton').addEventListener('click', () => load());
-$('menuToggle').addEventListener('click', () => { const open = $('shell').classList.toggle('menu-open'); $('menuToggle').setAttribute('aria-expanded',String(open)); $('navScrim').hidden=!open; if(open) document.querySelector('.nav-item.active')?.focus(); });
-$('navScrim').addEventListener('click',() => { $('shell').classList.remove('menu-open'); $('menuToggle').setAttribute('aria-expanded','false'); $('navScrim').hidden=true; $('menuToggle').focus(); });
+const mobileNavigation = matchMedia('(max-width:760px)');
+function setMenu(open) {
+  open = mobileNavigation.matches && open;
+  $('shell').classList.toggle('menu-open',open);
+  $('menuToggle').setAttribute('aria-expanded',String(open));
+  $('navScrim').hidden = !open;
+  $('sidebar').inert = mobileNavigation.matches && !open;
+  document.querySelector('.main-wrap').inert = open;
+}
+mobileNavigation.addEventListener('change',() => setMenu(false));
+setMenu(false);
+$('menuToggle').addEventListener('click',() => { setMenu(!$('shell').classList.contains('menu-open')); if($('shell').classList.contains('menu-open')) document.querySelector('.nav-item.active')?.focus(); });
+$('navScrim').addEventListener('click',() => { setMenu(false); $('menuToggle').focus(); });
+
+async function logoutAdmin() {
+  if(state.busy || state.loggingOut) return;
+  state.loggingOut = true;
+  $('logoutButton').disabled = true;
+  if($('gateLogout')) $('gateLogout').disabled = true;
+  document.querySelector('.main-wrap').inert = true;
+  Object.values(state.requests).forEach(controller => controller.abort());
+  try {
+    await api('/api/admin/auth/logout',{method:'POST'});
+    clearCredential();
+    clearTimeout(uptimeTimer);
+    window.location.assign('/admin/login?notice=logout');
+  } catch(error) {
+    if(error.status === 401) return;
+    toast(`${error.message} 请重试退出；若已失效，将返回登录页。`,true);
+    state.loggingOut = false;
+    $('logoutButton').disabled = false;
+    if($('gateLogout')) $('gateLogout').disabled = false;
+    setMenu($('shell').classList.contains('menu-open'));
+  }
+}
+$('logoutButton').addEventListener('click',logoutAdmin);
 document.addEventListener('keydown',event => { if(event.key === 'Escape' && $('shell').classList.contains('menu-open')) $('navScrim').click(); });
 document.addEventListener('click', event => { if($('shell').classList.contains('menu-open') && !event.target.closest('#sidebar,#menuToggle')) $('navScrim').click(); });
 for(const view of ['users','devices','audit']) {
@@ -864,8 +957,7 @@ window.addEventListener('hashchange', () => { const view = location.hash.slice(1
 (async function init() {
   try {
     const admin = await api('/api/admin/session');
-    const auth = await api('/api/auth/session');
-    state.user = admin.user; state.csrf = auth.csrf_token || admin.csrf_token;
+    state.user = admin.user; state.csrf = admin.csrf_token;
     if(!state.csrf) throw new ApiError('无法取得会话校验信息，请重新登录。');
     text('accountName',admin.user?.username);
     restoreUnbindFollowups();
@@ -876,3 +968,6 @@ window.addEventListener('hashchange', () => { const view = location.hash.slice(1
     gate(error.status === 403 ? '当前账号无权访问管理员后台。' : error.message, true);
   }
 })();
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded',initializeAdmin,{once:true});
+else initializeAdmin();

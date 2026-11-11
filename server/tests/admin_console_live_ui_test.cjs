@@ -64,7 +64,7 @@ const fixtureReady=new Promise((resolve,reject) => {
     await page.getByRole('button',{name:'撤销凭证',exact:true}).click(); await confirm('cat-live-created');
     await page.getByRole('button',{name:'永久删除空设备',exact:true}).click(); await confirm('cat-live-created'); await page.click('#detailClose');
     assert.equal(await page.locator('#devicesBody tr').filter({hasText:'cat-live-created'}).count(),0);
-    await nav('资料与记忆'); assert.equal(await page.locator('#storageDocuments').innerText(),'5'); assert.equal(await page.locator('#storagePending').innerText(),'1'); assert.equal(await page.locator('#storageProcessing').innerText(),'1');
+    await nav('存储概况'); assert.equal(await page.locator('#storageDocuments').innerText(),'5'); assert.equal(await page.locator('#storagePending').innerText(),'1'); assert.equal(await page.locator('#storageProcessing').innerText(),'1');
     await page.screenshot({path:path.join(output,'real-storage.png'),fullPage:true});
     await nav('备份');
     const backup=page.waitForResponse(response => response.url().endsWith('/backups/run'));

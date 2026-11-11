@@ -30,6 +30,8 @@ $env:PYTHON_EXECUTABLE='D:\Github\cat\catapp\server\.venv\Scripts\python.exe'
 node server/tests/admin_ui_test.cjs
 node server/tests/admin_live_ui_test.cjs
 node server/tests/admin_recovery_ui_test.cjs
+node server/tests/admin_console_ui_test.cjs
+node server/tests/admin_console_live_ui_test.cjs
 node server/tests/web_ui_test.cjs
 node server/tests/knowledge_ui_test.cjs
 ~~~
@@ -38,7 +40,7 @@ node server/tests/knowledge_ui_test.cjs
 
 ## 功能与数据保护
 
-管理范围包括首页聚合、账号与设备的列表和详情、确认后的维护操作、容量统计、备份状态与校验历史、脱敏审计。新增账号、设备生命周期和备份检查的实际可用性以固定集成版本的接口与测试为准，不能把旧版本通过记录外推到新功能。
+已验收的管理范围包括真实首页聚合、普通账号创建/详情/改名/启停/撤销会话/受保护空账号删除、设备登记/详情/重命名/解绑/撤销/凭证轮换/受保护空登记删除，以及容量、备份检查与校验历史、脱敏审计。网页不提供管理员提权、密码重置、真实 Key 读取或在线恢复。
 
 所有写请求须携带有效管理员 Cookie、同源 Origin、CSRF 和目标二次确认，并在锁后及写事务内重新核验授权。管理员角色仅由服务端命令行授予和撤销，网页不能提权。详情和统计不创建设备运行时，不读取私人正文、密码散列、硬件令牌或模型密文。
 
@@ -50,7 +52,13 @@ node server/tests/knowledge_ui_test.cjs
 
 ## 验证环境与限制
 
-独立 QA 本机环境为 Windows 11、Python 3.13.14，浏览器测试使用本机 Chromium。2026-11-11 新增的第二轮独立 HTTP 验收 6 项、隔离预览 2 项均通过；它们尚不能代表完整 CRUD 集成版本通过。最终固定版本需重新执行完整 Python 和浏览器验收并记录准确通过、失败和跳过数。
+2026-11-11 的功能基线为 4056fb126df375597921b74014116cf4380111fa。独立 QA 在本地 7aa5766530db5d847e5ca1b08260d59967c16fa2 复验统一应用：该版本相对功能基线仅增加 6 项账号独立用例和此前保留的 CI 流程，没有实现差异。环境为 Windows 11、Python 3.13.14、本机 Chrome，未使用跨工作树的后端路径覆盖。
+
+- 完整 Python：357 项，356 通过，1 项因当前 Windows 用户没有符号链接权限跳过，退出码 0。包括第二轮 6 项、设备/首页/备份独立 11 项、账号独立 6 项及当时的预览 2 项。
+- 浏览器：上述 7 个脚本均退出 0。包含真实 FastAPI/临时数据库的账号和设备完整 CRUD、503 收尾、一次性凭证、备份、原用户页面与资料库；桌面和手机浅/深色页面及设备详情截图已目视核对。
+- 后续只修复预览的功能检测：改用 OpenAPI 路径及 HTTP 方法，避免 FastAPI router 容器导致功能被误报。修复后的预览 3 项单独通过，包含 CLI 输出与登录后的真实 dashboard、设备轮换和账号创建逐项一致，以及 Ctrl+C 清理等效中断和外部配置隔离。此专项不冒充又一次完整全量。
+
+原始证据保存在本地忽略提交的 artifacts/validation/admin-qa-final-python.log、admin-qa-final-browsers.json 和各脚本日志；截图在 artifacts/admin-ui 与 artifacts/web-tests。后续说明或测试契约提交不改变本次功能运行基线，不因文档更新重跑全量。
 
 本机没有可用的 Linux / Python 3.10 运行环境；现有 WSL 与 Docker 均未启动。本次没有启动虚拟机、WSL、Docker 或修改系统设置。保留的 Linux Python 3.10 工作流只是一份可复现流程；此前公开 Actions 运行 42786930235 的结论为 failure、作业数为 0，没有解释器或测试执行证据，不能写成兼容性通过。当前不再依赖远程 CI，也不推送远程分支。
 

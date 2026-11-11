@@ -1,6 +1,6 @@
 # 管理后台账号 CRUD 契约
 
-路由由 `admin_accounts.router` 导出，主对话负责在应用注册。路径前缀 `/api/admin`，沿用管理员会话、同源 Origin、X-CSRF-Token 和 `no-store`。不提供提权、密码重置或 Key 读取接口。
+路由由 `admin_accounts.router` 导出，主对话负责在应用注册。依赖安全提交 `cb8b58e` 的 `audited(..., locked=...)` 与 `AdminStore.require_writer`；目标用户锁在审计操作开始前取得，队列可取消，事务内再次核验会话及角色。路径前缀 `/api/admin`，沿用管理员会话、同源 Origin、X-CSRF-Token 和 `no-store`。不提供提权、密码重置或 Key 读取接口。
 
 ## 创建普通账号
 
@@ -31,7 +31,7 @@
 
 `PATCH /users/{user_id}`，JSON：`{username,confirm_username}`。`username` 为新名字，`confirm_username` 必须等于锁后当前旧账号名。成功 **200**：`{ok:true,user:{id,username,created_at,disabled,is_admin,key_configured},sessions_revoked:true}`。
 
-禁止修改当前管理员自己的账号。改名保留用户 ID、设备、资料和记忆，事务内撤销旧网页登录；随后清理该用户请求、连接、运行时及资料/记忆后台任务。新旧账号名相同也执行会话撤销和清理，允许在部分生效后用当前名字确认重试。已有 Key 只返回布尔状态。
+禁止修改当前管理员自己的账号。改名保留用户 ID、设备、资料和记忆，事务内撤销旧网页登录；随后持有用户锁清理该用户请求、连接、运行时及资料/记忆后台任务。登录提交会话前同时复核账号名，密码校验期间发生的改名会使旧账号名登录失败。新旧账号名相同也执行会话撤销和清理，允许在部分生效后用当前名字确认重试。已有 Key 只返回布尔状态。
 
 ## 删除停用空账号
 

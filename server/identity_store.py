@@ -277,8 +277,9 @@ class IdentityStore(DeviceSharing):
         token = secrets.token_urlsafe(32)
         now = self.clock()
         with self._transaction(write=True) as connection:
-            current = connection.execute("SELECT disabled, password_hash FROM auth_users WHERE id=?", (row["id"],)).fetchone()
-            if current is None or current["disabled"] or current["password_hash"] != password_hash:
+            current = connection.execute("SELECT username, disabled, password_hash FROM auth_users WHERE id=?", (row["id"],)).fetchone()
+            # 密码校验期间可能由管理员改名；旧账号名不能在改名后补发有效会话。
+            if current is None or current["disabled"] or current["username"] != row["username"] or current["password_hash"] != password_hash:
                 return None
             if replacement != password_hash:
                 connection.execute("UPDATE auth_users SET password_hash=? WHERE id=?", (replacement, row["id"]))

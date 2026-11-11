@@ -17,10 +17,10 @@ const documentStatuses = new Map([
   ['queued','待处理'], ['pending','待处理'], ['processing','处理中'],
   ['ready','已就绪'], ['keyword','关键词检索可用'], ['failed','处理失败'],
 ]);
-const state = {view:'overview', csrf:'', user:null, requests:{}, serial:{}, busy:false,
+const state = {view:'overview', csrf:'', user:null, requests:{}, serial:{}, busy:false, denied:false, unbindFollowups:new Map(),
   pages:{users:1,devices:1,audit:1}, queries:{users:'',devices:'',audit:''},
   statuses:{users:'all',devices:'all'}};
-let toastTimer;
+let toastTimer, recoveryContext;
 
 class ApiError extends Error {
   constructor(message, status=0) { super(message); this.status = status; }
@@ -82,6 +82,7 @@ function loginExpired() {
   window.location.assign('/?notice=login');
 }
 async function api(path, {method='GET', body, signal, timeout=12000}={}) {
+  if(state.denied) throw new ApiError('管理员权限已失效，请重新登录后核对。',403);
   const writing = method !== 'GET' && method !== 'HEAD';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -102,6 +103,11 @@ async function api(path, {method='GET', body, signal, timeout=12000}={}) {
       return {};
     });
     if(response.status === 401) { loginExpired(); throw new ApiError('登录已过期，请重新登录。', 401); }
+    if(response.status === 403 && !writing && path.startsWith('/api/admin/')) {
+      state.denied = true;
+      gate('当前账号已无权访问管理员后台，请重新登录后核对。',true);
+      document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+    }
     if(!response.ok) {
       const detail = typeof payload.detail === 'string' ? payload.detail : '';
       const fallback = response.status === 403 ? '无权执行此操作，或请求校验已失效。' :
@@ -130,7 +136,7 @@ function queryPath(view) {
   return `/api/admin/${view}?${params}`;
 }
 async function load(view=state.view) {
-  if(!views[view]) return false;
+  if(!views[view] || state.denied) return false;
   state.requests[view]?.abort();
   const controller = new AbortController();
   const serial = (state.serial[view] || 0) + 1;
@@ -228,7 +234,11 @@ function renderDevices(data) {
     voiceCell.append(node('small', `音频 ${device.audio_online ? '已连接' : '未连接'} · 摄像头 ${device.camera_online ? '已连接' : '未连接'}`));
     const actions = node('div', '', 'row-actions');
     if(device.voice_paused != null && !device.revoked) actionButton(actions, device.voice_paused ? '恢复语音' : '暂停语音', () => deviceAction(device,'voice'), device.voice_paused);
-    if(device.owner_user_id != null && !device.revoked) actionButton(actions, '解绑', () => deviceAction(device,'unbind'), true);
+    if(!device.revoked) {
+      if(device.owner_user_id == null) actionButton(actions, '核对收尾', () => openUnbindRecovery(device.id));
+      else if(state.unbindFollowups.has(device.id)) actionButton(actions, '核对解绑结果', () => openUnbindRecovery(device.id));
+      else actionButton(actions, '解绑', () => deviceAction(device,'unbind'), true);
+    }
     addCell(row, '', 'actions').append(actions); body.append(row);
   });
   $('devicesEmpty').hidden = items.length > 0; $('devicesEmpty').textContent = data.total ? '本页暂无设备记录' : '暂无设备记录';
@@ -289,9 +299,9 @@ function actionButton(parent, label, handler, danger=false, disabled=false) {
   if(disabled) button.title = '不能对当前账号执行此操作';
   button.addEventListener('click', handler); parent.append(button);
 }
-function confirmAction({title,description,expected,buttonLabel,run}) {
+function confirmAction({title,description,expected,buttonLabel,run,followupId}) {
   const dialog = $('confirmDialog');
-  if(state.busy || dialog.open) return;
+  if(state.busy || state.denied || dialog.open || $('unbindDialog').open) return;
   const view = state.view;
   let active = true, submitted = false;
   text('confirmTitle',title); text('confirmDescription',description);
@@ -299,11 +309,13 @@ function confirmAction({title,description,expected,buttonLabel,run}) {
   $('confirmLabel').hidden = false; $('confirmInput').hidden = false;
   $('confirmInput').disabled = false; $('confirmCancel').disabled = false; text('confirmCancel','取消');
   $('confirmInput').value = ''; $('confirmError').textContent = '';
+  $('confirmFollowup').hidden = true;
   text('confirmSubmit',buttonLabel); $('confirmSubmit').disabled = true;
   dialog.showModal(); $('confirmInput').focus();
   const update = () => { $('confirmSubmit').disabled = state.busy || submitted || $('confirmInput').value !== expected; };
   const close = () => { if(state.busy) return; cleanup(); dialog.close(); };
   const cancel = event => { event.preventDefault(); close(); };
+  const followup = () => { if(state.busy) return; close(); openUnbindRecovery(followupId); };
   const submit = async event => {
     event.preventDefault();
     if(!active || state.busy || submitted || $('confirmInput').value !== expected) return;
@@ -327,16 +339,21 @@ function confirmAction({title,description,expected,buttonLabel,run}) {
       else toast(`${title}：${message}`,Boolean(failure) || !checked);
     } finally {
       state.busy = false;
-      if(active) { $('confirmCancel').disabled = false; text('confirmCancel','关闭'); text('confirmSubmit','已提交'); update(); }
+      if(active) {
+        $('confirmCancel').disabled = false; text('confirmCancel','关闭'); text('confirmSubmit','已提交'); update();
+        $('confirmFollowup').hidden = !followupId || !state.unbindFollowups.has(followupId);
+      }
     }
   };
   const cleanup = () => {
     active = false;
     $('confirmInput').removeEventListener('input',update); $('confirmForm').removeEventListener('submit',submit);
     $('confirmCancel').removeEventListener('click',close); dialog.removeEventListener('cancel',cancel); dialog.removeEventListener('close',cleanup);
+    $('confirmFollowup').removeEventListener('click',followup);
   };
   $('confirmInput').addEventListener('input',update); $('confirmForm').addEventListener('submit',submit);
   $('confirmCancel').addEventListener('click',close); dialog.addEventListener('cancel',cancel); dialog.addEventListener('close',cleanup,{once:true});
+  $('confirmFollowup').addEventListener('click',followup);
 }
 function userAction(user, kind) {
   const status = kind === 'status', disabled = !user.disabled;
@@ -352,8 +369,153 @@ function deviceAction(device, kind) {
     buttonLabel:voice ? (paused ? '确认暂停' : '确认恢复') : '确认解绑',
     description:voice ? (paused ? `将暂停 ${device.id} 的语音。已建立的语音连接可能结束。` : `将恢复 ${device.id} 的语音。恢复后可能建立模型连接并产生调用费用。`) :
       `将解除 ${device.id} 与当前主人的绑定及借用关系。硬件凭证、Wi-Fi 配置和既有记忆会保留。`,
-    run:() => api(`/api/admin/devices/${encodeURIComponent(device.id)}/${kind}`,{method:'POST',body:voice ? {paused,confirm_device_id:device.id} : {confirm_device_id:device.id}})});
+    followupId:voice ? undefined : device.id,
+    run:voice ? () => api(`/api/admin/devices/${encodeURIComponent(device.id)}/voice`,{method:'POST',body:{paused,confirm_device_id:device.id}}) :
+      async () => {
+        const current = await readUnbindState(device.id);
+        if(!current.device || current.device.revoked || current.device.owner_user_id !== device.owner_user_id || current.device.active_user_id !== device.active_user_id)
+          throw new ApiError('设备归属已变化，本次未提交。请关闭后重新核对目标。',409);
+        return sendUnbind(device.id,current,false);
+      }});
 }
+
+function followupKey() { return `admin-unbind-followups:${state.user?.id}`; }
+function saveUnbindFollowups() {
+  // 仅在当前浏览器会话保存目标与响应状态；刷新不能把超时转成可安全重试。
+  try { sessionStorage.setItem(followupKey(),JSON.stringify([...state.unbindFollowups.values()])); } catch {}
+  renderUnbindFollowups();
+}
+function restoreUnbindFollowups() {
+  try {
+    const records = JSON.parse(sessionStorage.getItem(followupKey()) || '[]');
+    if(Array.isArray(records)) for(const item of records) {
+      if(typeof item.id === 'string' && item.id.length <= 64 && Number.isSafeInteger(item.after) && item.after >= 0 &&
+        ['partial','uncertain'].includes(item.response)) state.unbindFollowups.set(item.id,item);
+    }
+  } catch {}
+  renderUnbindFollowups();
+}
+function renderUnbindFollowups() {
+  const body = $('unbindFollowupsBody'); body.replaceChildren();
+  $('unbindFollowups').hidden = state.unbindFollowups.size === 0;
+  for(const item of state.unbindFollowups.values()) {
+    const row = node('div','','followup-row'), detail = node('div');
+    detail.append(node('strong',item.id),node('small',item.response === 'partial' ? '请求已返回异常，收尾尚未确认' : '请求结果未确认，后台可能仍在处理'));
+    const actions = node('div','','row-actions'); actionButton(actions,'核对解绑结果',() => openUnbindRecovery(item.id));
+    row.append(detail,actions); body.append(row);
+  }
+}
+async function readUnbindState(id,signal) {
+  const session = await api('/api/admin/session',{signal});
+  if(String(session.user?.id) !== String(state.user?.id)) throw new ApiError('登录账号已变化，请重新打开后台后核对。',403);
+  if(session.csrf_token) state.csrf = session.csrf_token;
+  const query = new URLSearchParams({q:id,page:'1',page_size:'100'});
+  const [devices,audits] = await Promise.all([
+    api(`/api/admin/devices?${query}&status=all`,{signal}),api(`/api/admin/audit?${query}`,{signal}),
+  ]);
+  if(!Array.isArray(devices.items) || !Array.isArray(audits.items)) throw new ApiError('核对数据不完整，暂不能重试。');
+  const entries = audits.items.filter(item => item.target_type === 'device' && String(item.target_id) === id &&
+    item.action === 'unbind-device' && Number.isSafeInteger(item.id)).sort((a,b) => b.id-a.id);
+  return {device:devices.items.find(item => item.id === id),entries,latest:entries[0],auditComplete:audits.total <= audits.items.length};
+}
+function unbindVerdict(id,current) {
+  const device = current.device, record = state.unbindFollowups.get(id), latest = current.latest;
+  if(!device) return {message:'未找到目标设备，核对未完成，不能重试收尾。'};
+  if(device.revoked) return {message:'设备凭证已撤销，不能通过本次跟进重试。请核对设备状态。'};
+  if(device.owner_user_id !== null || device.active_user_id !== null)
+    return {message:`设备当前属于 ${device.owner_username || device.owner_user_id || '未知用户'}，归属已变化或解绑尚未生效。不能重试旧解绑收尾，请重新核对。`};
+  if(latest?.result === 'success' && (!record || latest.id > record.after)) {
+    state.unbindFollowups.delete(id); saveUnbindFollowups();
+    return {message:'最近一次解绑审计已记录成功，当前设备未绑定。无需重试收尾。'};
+  }
+  const newer = record ? current.entries.filter(item => item.id > record.after) : [];
+  if(record?.response === 'partial' && current.auditComplete && newer.length === 1 &&
+    String(newer[0].actor_id) === String(state.user.id) && (!record.auditId || record.auditId === latest.id) &&
+    ['started','failed'].includes(latest?.result)) {
+    record.auditId = latest.id; saveUnbindFollowups();
+    return {allowed:true,message:`当前设备未绑定；该次请求已返回 503，审计仍为${latest.result === 'started' ? '未完成' : '失败'}。\n本次核对不代表连接和运行任务已清理。可以明确确认后，只重试解绑收尾。`};
+  }
+  if(record || latest?.result === 'started') return {message:'解绑收尾尚未确认，后台可能仍在处理中，或审计无法与上次请求准确对应。\n请稍后重新核对；当前不能重试，也不能据此认定后台已完成。'};
+  return {message:'当前设备未绑定，没有可安全重试的解绑收尾记录。'};
+}
+async function sendUnbind(id,current,cleanupOnly) {
+  const record = {id,after:current.latest?.id || 0,response:'uncertain'};
+  state.unbindFollowups.set(id,record); saveUnbindFollowups();
+  try {
+    const result = await api(`/api/admin/devices/${encodeURIComponent(id)}/unbind`,{method:'POST',
+      body:cleanupOnly ? {confirm_device_id:id,cleanup_only:true} : {confirm_device_id:id}});
+    state.unbindFollowups.delete(id);
+    return result;
+  } catch(error) {
+    if(error.status === 503) record.response = 'partial';
+    throw error;
+  } finally { saveUnbindFollowups(); }
+}
+function recoveryControls(context) {
+  const busy = context.checking || context.writing;
+  $('unbindCheck').disabled = busy; $('unbindClose').disabled = context.writing;
+  $('unbindConfirm').disabled = busy;
+  $('unbindRetry').disabled = busy || !context.allowed || $('unbindConfirm').value !== context.id;
+}
+async function checkUnbind(context,notice='') {
+  context.controller?.abort();
+  const controller = new AbortController(); context.controller = controller;
+  context.checking = true; context.allowed = false; context.current = null;
+  $('unbindConfirm').value = ''; $('unbindConfirm').hidden = true; $('unbindLabel').hidden = true; $('unbindRetry').hidden = true;
+  text('unbindStatus',`${notice ? notice+'\n' : ''}正在核对设备归属与解绑审计…`); recoveryControls(context);
+  try {
+    const current = await readUnbindState(context.id,controller.signal);
+    if(recoveryContext !== context || context.controller !== controller) return;
+    const verdict = unbindVerdict(context.id,current);
+    context.allowed = Boolean(verdict.allowed); context.current = current;
+    text('unbindStatus',`${notice ? notice+'\n' : ''}${verdict.message}`);
+    $('unbindConfirm').hidden = !context.allowed; $('unbindLabel').hidden = !context.allowed; $('unbindRetry').hidden = !context.allowed;
+    text('unbindLabel',`重新输入 ${context.id}，确认只重试解绑收尾`);
+  } catch(error) {
+    if(recoveryContext !== context || error.name === 'AbortError' || error.status === 401) return;
+    text('unbindStatus',`${notice ? notice+'\n' : ''}核对未完成：${error.message}\n暂不能重试，请重新核对。`);
+  } finally {
+    if(recoveryContext === context && context.controller === controller) { context.checking = false; recoveryControls(context); }
+  }
+}
+function openUnbindRecovery(id) {
+  if(state.busy || state.denied || $('confirmDialog').open || $('unbindDialog').open) return;
+  const context = {id,checking:false,writing:false,allowed:false}; recoveryContext = context;
+  text('unbindTarget',id); $('unbindDialog').showModal(); checkUnbind(context);
+}
+function closeUnbindRecovery() {
+  if(recoveryContext?.writing) return;
+  recoveryContext?.controller?.abort(); recoveryContext = null; $('unbindDialog').close();
+}
+$('unbindDialog').addEventListener('cancel',event => { event.preventDefault(); closeUnbindRecovery(); });
+$('unbindDialog').addEventListener('close',() => { recoveryContext?.controller?.abort(); recoveryContext = null; });
+$('unbindClose').addEventListener('click',closeUnbindRecovery);
+$('unbindCheck').addEventListener('click',() => { if(recoveryContext && !recoveryContext.writing) checkUnbind(recoveryContext); });
+$('unbindConfirm').addEventListener('input',() => { if(recoveryContext) recoveryControls(recoveryContext); });
+$('unbindForm').addEventListener('submit',async event => {
+  event.preventDefault();
+  const context = recoveryContext;
+  if(!context?.allowed || context.checking || state.busy || state.denied || $('unbindConfirm').value !== context.id) return;
+  context.writing = true; state.busy = true; recoveryControls(context);
+  let notice;
+  try {
+    // 预检用于反馈；cleanup_only 由后端在设备锁内校验，保护预检后出现的新主人。
+    const current = await readUnbindState(context.id);
+    const verdict = unbindVerdict(context.id,current);
+    if(!verdict.allowed || current.latest?.id !== context.current.latest?.id)
+      throw new ApiError('核对结果已变化，本次未提交。请重新核对后决定。',409);
+    await sendUnbind(context.id,current,true);
+    notice = '服务已确认本次收尾成功。';
+  } catch(error) {
+    if(error.status === 401) return;
+    notice = `${error.message}\n${error.status === 409 ? '本次重试未完成，请重新核对；不会自动重试。' : '尚未确认本次收尾结果，不会自动重试。'}`;
+  } finally {
+    await Promise.all([load('devices'),load('audit')]);
+    if(recoveryContext === context && !state.denied) await checkUnbind(context,notice);
+    state.busy = false; context.writing = false;
+    if(recoveryContext === context) recoveryControls(context);
+  }
+});
 
 document.querySelectorAll('.nav-item').forEach(button => button.addEventListener('click', () => setView(button.dataset.view)));
 $('refreshButton').addEventListener('click', () => load());
@@ -378,6 +540,7 @@ window.addEventListener('hashchange', () => { const view = location.hash.slice(1
     state.user = admin.user; state.csrf = auth.csrf_token || admin.csrf_token;
     if(!state.csrf) throw new ApiError('无法取得会话校验信息，请重新登录。');
     text('accountName',admin.user?.username);
+    restoreUnbindFollowups();
     $('gate').hidden = true; $('shell').hidden = false;
     setView(location.hash.slice(1));
   } catch(error) {

@@ -9,13 +9,15 @@ import sys
 import tempfile
 import threading
 import time
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import uvicorn
 
 from support import server_app
 from access_control import AccessSettings
 from memory_store import MemoryStore, SummaryResult
+from knowledge_service import KnowledgeService
+from knowledge_store import KnowledgeStore
 import device_runtime
 
 
@@ -23,12 +25,25 @@ async def summarize(messages):
     return SummaryResult(summary="模拟摘要")
 
 
+class OfflineEmbeddings:
+    model = "admin-offline-fixture"
+
+    async def embed(self, texts, *, timeout=8):
+        raise ConnectionError("offline fixture only")
+
+    async def close(self):
+        pass
+
+
 def main():
     with ExitStack() as stack:
         directory = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="admin-web-")))
         stack.enter_context(patch.object(device_runtime, "API_KEY", ""))
         store = MemoryStore(directory / "memory.sqlite3")
-        app = server_app.create_app(store=store, summarizer=summarize, access=AccessSettings("accounts"))
+        knowledge = KnowledgeService(KnowledgeStore(store.path), embedder=OfflineEmbeddings())
+        # Hold deterministic queued/processing metadata without starting a worker or calling a model.
+        stack.enter_context(patch.object(knowledge, "start", new=AsyncMock()))
+        app = server_app.create_app(store=store, summarizer=summarize, access=AccessSettings("accounts"), knowledge_service=knowledge)
         identities = app.state.identities
         identities.create_user("site-admin", "temporary-test-password")
         owner = identities.create_user("ordinary-user", "temporary-test-password")
@@ -36,6 +51,23 @@ def main():
         device = identities.register_device("cat-browser-test", "测试小喵")
         code = identities.request_pairing(device.device_id, device.token)
         identities.claim_pairing(code.code, owner.id, client_key="test")
+        identities.register_device("deer-browser-test", "测试小鹿")
+        identities.register_device("mystery-browser-test", "待识别设备")
+        for index, status in enumerate(("queued", "processing", "ready", "keyword", "failed")):
+            document, _ = knowledge.store.add_document(owner.id, f"fixture-{index}.txt", f"offline fixture {index}".encode())
+            with knowledge.store.connection(write=True) as db:
+                db.execute("UPDATE knowledge_documents SET status=? WHERE id=?", (status, document["id"]))
+
+        # First unbind commits in the real route, then deterministically fails connection cleanup.
+        revoke_device = app.state.connections.revoke_device
+        cleanup_failed = False
+        async def fail_cleanup_once(device_id, *args, **kwargs):
+            nonlocal cleanup_failed
+            if device_id == device.device_id and not cleanup_failed:
+                cleanup_failed = True
+                raise RuntimeError("simulated connection cleanup failure")
+            return await revoke_device(device_id, *args, **kwargs)
+        stack.enter_context(patch.object(app.state.connections, "revoke_device", new=fail_cleanup_once))
 
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))

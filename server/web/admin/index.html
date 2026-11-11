@@ -51,6 +51,7 @@
         </section>
 
         <section class="view" id="view-devices" aria-label="设备" hidden>
+          <section id="unbindFollowups" class="followups" aria-label="待核对的解绑操作" hidden><h2>解绑结果待核对</h2><p>先核对设备归属与审计，再决定是否手动重试收尾。刷新不会重试操作。</p><div id="unbindFollowupsBody"></div></section>
           <div class="toolbar"><form class="search-form" id="deviceSearchForm"><label class="sr-only" for="deviceSearch">搜索设备</label><input id="deviceSearch" type="search" placeholder="搜索设备 ID、名称或主人" autocomplete="off"><label class="sr-only" for="deviceStatus">设备状态</label><select id="deviceStatus"><option value="all">全部状态</option><option value="bound">已绑定</option><option value="unbound">未绑定</option><option value="online">已连接</option><option value="offline">未连接</option></select><button type="submit">搜索</button></form><span class="toolbar-meta" id="devicesCount"></span></div>
           <div class="table-scroll"><table><thead><tr><th scope="col">设备</th><th scope="col">类型</th><th scope="col">主人 / 借用</th><th scope="col">连接</th><th scope="col">语音</th><th scope="col" class="actions-head">操作</th></tr></thead><tbody id="devicesBody"></tbody></table></div>
           <p class="empty" id="devicesEmpty" hidden>暂无设备记录</p><div class="pagination" id="devicesPagination"><span id="devicesPageInfo"></span><div><button id="devicesPrev" type="button">上一页</button><button id="devicesNext" type="button">下一页</button></div></div>
@@ -73,7 +74,8 @@
     </div>
   </div>
   <div class="gate" id="gate" role="status">正在确认管理员权限…</div>
-  <dialog id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog" id="confirmForm"><p class="eyebrow">确认操作</p><h2 id="confirmTitle"></h2><p id="confirmDescription"></p><label for="confirmInput" id="confirmLabel" hidden>输入确认内容</label><input id="confirmInput" autocomplete="off" spellcheck="false" hidden><p class="dialog-error" id="confirmError" role="alert"></p><div class="dialog-actions"><button id="confirmCancel" value="cancel" type="button">取消</button><button id="confirmSubmit" class="danger-button" type="submit">确认</button></div></form></dialog>
+  <dialog id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog" id="confirmForm"><p class="eyebrow">确认操作</p><h2 id="confirmTitle"></h2><p id="confirmDescription"></p><label for="confirmInput" id="confirmLabel" hidden>输入确认内容</label><input id="confirmInput" autocomplete="off" spellcheck="false" hidden><p class="dialog-error" id="confirmError" role="alert"></p><div class="dialog-actions"><button id="confirmCancel" value="cancel" type="button">取消</button><button id="confirmFollowup" type="button" hidden>核对解绑结果</button><button id="confirmSubmit" class="danger-button" type="submit">确认</button></div></form></dialog>
+  <dialog id="unbindDialog" aria-labelledby="unbindTitle"><form method="dialog" id="unbindForm"><p class="eyebrow">解绑操作跟进</p><h2 id="unbindTitle">核对解绑结果</h2><p id="unbindTarget"></p><p id="unbindStatus" role="status" aria-live="polite"></p><label id="unbindLabel" for="unbindConfirm" hidden>重新输入设备编号</label><input id="unbindConfirm" autocomplete="off" spellcheck="false" hidden><div class="dialog-actions"><button id="unbindClose" type="button">关闭</button><button id="unbindCheck" type="button">重新核对</button><button id="unbindRetry" type="submit" class="danger-button" hidden>确认重试收尾</button></div></form></dialog>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

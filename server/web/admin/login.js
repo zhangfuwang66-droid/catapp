@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const submit = byId('adminLoginSubmit'), label = byId('loginSubmitLabel');
   const notice = byId('loginNotice'), errorBox = byId('loginError'), status = byId('loginStatus');
   let submitting = false, leaving = false;
+  submit.disabled = false;
   requestAnimationFrame(() => document.documentElement.classList.add('theme-ready'));
 
   function updateThemeButton() {
@@ -101,7 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
     busy(true); status.textContent = '正在建立管理会话…';
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      const response = await fetch('/api/admin/login', {method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      const response = await fetch('/api/admin/auth/login', {method: 'POST', credentials: 'same-origin', cache: 'no-store',
         headers: {'Content-Type': 'application/json', 'Accept': 'application/json'}, body: JSON.stringify(body), signal: controller.signal});
       if (!response.ok) {
         const messages = {401: '账号或密码不正确，请核对后重试。', 403: '此账号没有管理员权限，请使用已授权的管理员账号。',

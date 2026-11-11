@@ -36,22 +36,22 @@
       <h1 id="loginTitle">欢迎回来</h1>
       <p class="intro">登录管理工作区，照顾好每一份连接。</p>
       <p class="login-notice" id="loginNotice" role="status" hidden></p>
-      <form id="adminLoginForm" action="/api/admin/login" method="post">
+      <form id="adminLoginForm" action="/api/admin/auth/login" method="post">
         <label class="field-label" for="adminUsername">管理员账号</label>
         <div class="input-wrap">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>
-          <input id="adminUsername" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" placeholder="输入已授权的账号" required>
+          <input id="adminUsername" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="128" placeholder="输入已授权的账号" required>
         </div>
         <label class="field-label password-label" for="adminPassword">密码</label>
         <div class="input-wrap password-wrap">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
-          <input id="adminPassword" name="password" type="password" autocomplete="current-password" maxlength="512" placeholder="输入登录密码" aria-describedby="capsLock loginError" required>
+          <input id="adminPassword" name="password" type="password" autocomplete="current-password" maxlength="128" placeholder="输入登录密码" aria-describedby="capsLock loginError" required>
           <button class="password-toggle" id="passwordToggle" type="button" aria-label="显示密码" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="eye-slash" d="m3 3 18 18"/></svg></button>
         </div>
         <p class="caps-lock" id="capsLock" hidden>大写锁定已开启</p>
         <div class="form-options"><span class="access-note"><span></span>仅限已授权管理员</span><button id="loginHelp" class="text-button" type="button">登录遇到问题？</button></div>
         <p class="login-error" id="loginError" role="alert" tabindex="-1" hidden></p>
-        <button class="login-submit" id="adminLoginSubmit" type="submit"><span class="button-spinner" aria-hidden="true"></span><span id="loginSubmitLabel">进入管理后台</span><svg class="submit-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></button>
+        <button class="login-submit" id="adminLoginSubmit" type="submit" disabled><span class="button-spinner" aria-hidden="true"></span><span id="loginSubmitLabel">进入管理后台</span><svg class="submit-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></button>
         <p class="submit-status" id="loginStatus" role="status" aria-live="polite"></p>
       </form>
       <div class="privacy-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-8 4v5c0 5 8 9 8 9s8-4 8-9V7Z"/><path d="m8 12 3 3 5-6"/></svg><p>管理运行状态，守护用户隐私。<br><span>聊天、记忆与资料正文不在后台展示。</span></p></div>

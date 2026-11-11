@@ -97,8 +97,23 @@ class DeviceAuthorizationTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 404, response.text)
 
     def test_legacy_anonymous_routes_are_closed_in_accounts_mode(self):
-        for path in ("/api/memory", "/repeat.wav", "/stream.wav", "/servo", "/screen_mode", "/record/state"):
-            self.assertEqual(self.client.get(path, headers=self.headers["alice"]).status_code, 404)
+        for path in ("/api/memory", "/repeat.wav", "/stream.wav", "/screen_mode", "/record/state"):
+            with self.subTest(registered_get=path):
+                self.assertEqual(self.client.get(path, headers=self.headers["alice"]).status_code, 404)
+        moved_writes = ("/servo?ch=3&angle=91", "/servo_raw?ch=3&angle=91", "/servo_raw_mode?active=0",
+                        "/camera_setting?param=quality&value=12", "/tft_setting?param=brightness&value=1")
+        with patch.object(self.app.state.devices, "get", side_effect=AssertionError("匿名旧接口不能创建 runtime")) as runtime_get:
+            for path in moved_writes:
+                with self.subTest(removed_get=path):
+                    response = self.client.get(path, headers=self.headers["alice"])
+                    self.assertEqual(response.status_code, 405, response.text)
+                    self.assertIn("POST", response.headers["Allow"])
+            for path in (*moved_writes, "/screen_mode?mode=0"):
+                with self.subTest(correct_post=path):
+                    response = self.client.post(path, headers=self.headers["alice"])
+                    self.assertEqual(response.status_code, 404, response.text)
+            runtime_get.assert_not_called()
+        self.assertEqual(self.app.state.devices.devices, {})
         for path in ("/ws_ui", "/ws_audio", "/ws/camera", "/ws/viewer"):
             with self.assertRaises(WebSocketDisconnect):
                 with self.client.websocket_connect(path, headers=self.headers["alice"]):

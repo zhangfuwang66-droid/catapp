@@ -19,7 +19,7 @@ const fixtureReady=new Promise((resolve,reject) => {
     const url=await fixtureReady, output=path.resolve(__dirname,'../../artifacts/admin-ui'); fs.mkdirSync(output,{recursive:true});
     browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE ? {executablePath:process.env.BROWSER_EXECUTABLE} : {})});
     const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce',acceptDownloads:true});
-    const login=await context.request.post(url+'/api/auth/login',{headers:{Origin:url},data:{username:'site-admin',password:'temporary-test-password'}});
+    const login=await context.request.post(url+'/api/admin/auth/login',{headers:{Origin:url},data:{username:'site-admin',password:'temporary-test-password'}});
     assert.equal(login.status(),200);
     const page=await context.newPage(), errors=[],writes=[]; page.on('pageerror',error => errors.push(error.message));
     page.on('request',request => { if(request.url().includes('/api/admin/') && request.method() !== 'GET') writes.push(request.url()); });

@@ -36,9 +36,10 @@ async function fixtureUrl() {
     page.on('pageerror',error => errors.push(error.message));
     const unauthenticated = await context.request.get(url + '/admin',{maxRedirects:0});
     assert.equal(unauthenticated.status(),303);
+    assert.equal(unauthenticated.headers().location,'/admin/login');
     await page.goto(url + '/admin');
-    assert.equal(new URL(page.url()).pathname,'/');
-    const login = await context.request.post(url + '/api/auth/login',
+    assert.equal(new URL(page.url()).pathname,'/admin/login');
+    const login = await context.request.post(url + '/api/admin/auth/login',
       {headers:{Origin:url},data:{username:'site-admin',password:'temporary-test-password'}});
     assert.equal(login.status(),200);
     await page.goto(url + '/admin');
@@ -80,7 +81,7 @@ async function fixtureUrl() {
     await page.click('#unbindClose');
     await catRow.getByText('未绑定',{exact:true}).waitFor();
     const mobile = await browser.newContext({viewport:{width:390,height:844},isMobile:true,deviceScaleFactor:1});
-    const mobileLogin = await mobile.request.post(url + '/api/auth/login',
+    const mobileLogin = await mobile.request.post(url + '/api/admin/auth/login',
       {headers:{Origin:url},data:{username:'site-admin',password:'temporary-test-password'}});
     assert.equal(mobileLogin.status(),200);
     const mobilePage = await mobile.newPage(); mobilePage.on('pageerror',error => errors.push(error.message));

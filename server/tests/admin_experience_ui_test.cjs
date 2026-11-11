@@ -58,7 +58,8 @@ function elapsedSeconds(text) {
       page.setDefaultNavigationTimeout(15000);
       page.on('pageerror', error => pageErrors.push(error.message));
       page.on('response', response => {
-        if (new URL(response.url()).pathname.startsWith('/api/admin/')) {
+        if (new URL(response.url()).pathname.startsWith('/api/admin/')
+            && response.request().method() === 'GET' && response.status() === 200) {
           // 立即接住导航取消，结束前逐项核查，避免未处理的 Promise 拒绝。
           adminBodies.push(response.text().then(body => ({body}), error => ({error, page})));
         }
@@ -127,11 +128,25 @@ function elapsedSeconds(text) {
     checked('匿名跳独立登录、错误密码401、普通账号403且不签发会话');
     await ordinary.close();
 
+    // 登录页成功后立即导航；用独立真实 HTTP 上下文读 JSON，避免回读已被导航释放的响应。
+    const authProbe = await browser.newContext();
+    try {
+      const response = await authProbe.request.post(url + '/api/admin/auth/login', {
+        headers: {Origin: url}, data: {username: 'experience-admin', password: 'temporary-experience-password'}});
+      assert.equal(response.status(), 200);
+      const body = await response.json();
+      assert.equal(body.ok, true);
+      assert.equal(Object.hasOwn(body, 'redirect'), false);
+      assert.equal(Object.hasOwn(body, 'next'), false);
+      assert.ok(!JSON.stringify(body).includes('PRIVATE_EXPERIENCE_'));
+    } finally {
+      await authProbe.close();
+    }
+
     const context = await browser.newContext({viewport: {width: 1440, height: 1000}, reducedMotion: 'no-preference'});
     const page = await pageFor(context);
     const successfulLogin = await login(page, 'experience-admin');
     assert.equal(successfulLogin.status(), 200);
-    assert.equal(Object.hasOwn(await successfulLogin.json(), 'redirect'), false);
     await page.waitForURL(current => current.pathname === '/admin');
     await ready(page);
     const direct = await context.request.get(url + '/admin/login', {maxRedirects: 0});

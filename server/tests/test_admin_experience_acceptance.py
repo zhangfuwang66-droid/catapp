@@ -104,7 +104,8 @@ class IndependentAdminExperienceTests(unittest.TestCase):
     def test_dedicated_login_is_absent_in_local_mode(self):
         app = server_app.create_app(store=MemoryStore(self.database.with_name("local.sqlite3")),
                                     access=AccessSettings("local"))
-        with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 12345)) as client:
+        with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 12345),
+                        headers={"Origin": "http://127.0.0.1"}) as client:
             self.assertEqual(client.get("/admin/login", follow_redirects=False).status_code, 404)
             self.assertEqual(client.get("/admin", follow_redirects=False).status_code, 404)
             self.assertEqual(client.post("/api/admin/auth/login", json={

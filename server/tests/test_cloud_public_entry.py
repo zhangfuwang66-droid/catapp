@@ -166,14 +166,17 @@ class PublicProcessTests(unittest.TestCase):
             headers = {"Cookie": cookie, "Origin": public_url}
             self.assertEqual(client.get("/api/auth/session", headers=headers).status_code, 200)
             self.assertEqual(client.get("/api/knowledge", headers=headers).status_code, 200)
-            ws_url = f"ws://127.0.0.1:{port}/ws/devices/cat-alice/viewer"
-            with connect(ws_url, additional_headers={**headers, "X-Forwarded-Proto": "https"},
-                         open_timeout=5, close_timeout=5, proxy=None):
-                pass
-            with self.assertRaises(InvalidStatus):
-                with connect(ws_url, additional_headers={**headers, "Origin": "https://other.example.test",
-                             "X-Forwarded-Proto": "https"}, open_timeout=5, close_timeout=5, proxy=None):
+            # URI 保留公网权威；只将底层传输送往回环上游，避免伪造或重复 Host。
+            ws_url = public_url.replace("https://", "ws://", 1) + "/ws/devices/cat-alice/viewer"
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as transport:
+                with connect(ws_url, sock=transport, additional_headers={**headers, "X-Forwarded-Proto": "https"},
+                             open_timeout=5, close_timeout=5, proxy=None):
                     pass
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as transport:
+                with self.assertRaises(InvalidStatus):
+                    with connect(ws_url, sock=transport, additional_headers={**headers, "Origin": "https://other.example.test",
+                                 "X-Forwarded-Proto": "https"}, open_timeout=5, close_timeout=5, proxy=None):
+                        pass
             self.assertEqual(client.post("/api/auth/logout", headers=headers).status_code, 403)
             headers["X-CSRF-Token"] = login.json()["csrf_token"]
             self.assertEqual(client.post("/api/auth/logout", headers={**headers,

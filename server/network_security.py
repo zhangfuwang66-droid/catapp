@@ -2,7 +2,9 @@
 
 import asyncio
 from dataclasses import dataclass
+import ipaddress
 import math
+import re
 from urllib.parse import urlsplit
 
 from starlette.exceptions import HTTPException
@@ -35,7 +37,7 @@ class NetworkLimits:
 
 
 def authority(value, scheme):
-    """只接受单一规范 Host；不接受用户信息、路径、空端口或控制字符。"""
+    """只接受规范的 DNS 名或 IP Host；拒绝路径、凭据、空端口和控制字符。"""
     if not value or any(char.isspace() or ord(char) < 33 or ord(char) > 126 for char in value):
         raise ValueError()
     parsed = urlsplit('http://' + value)
@@ -46,10 +48,42 @@ def authority(value, scheme):
     if port is not None and not 1 <= port <= 65535:
         raise ValueError()
     host = parsed.hostname.lower()
+    if ':' in host:
+        # Host 不接受带接口标识的 IPv6；解析器本身允许此类非站点地址。
+        if '%' in host:
+            raise ValueError()
+        ipaddress.IPv6Address(host)
+    else:
+        dns_name = host[:-1] if host.endswith('.') else host
+        if not dns_name or len(dns_name) > 253:
+            raise ValueError()
+        if all(char in '0123456789.' for char in dns_name):
+            # 数字点分地址必须是完整 IPv4，避免无效/缩写地址被当成域名。
+            ipaddress.IPv4Address(dns_name)
+        elif any(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) is None
+                 for label in dns_name.split('.')):
+            raise ValueError()
     expected = ('[' + host + ']') if ':' in host else host
     if value.lower() != expected + (':' + str(port) if port is not None else ''):
         raise ValueError()
     return host, port if port is not None else (443 if scheme in {'https', 'wss'} else 80)
+
+
+def security_headers(scope, settings, headers=()):
+    """为业务和框架错误响应补齐相同默认头，不覆盖已有的严格 CSP 等策略。"""
+    headers = list(headers)
+    names = {key.lower() for key, _ in headers}
+    defaults = {
+        b'x-content-type-options': b'nosniff', b'x-frame-options': b'DENY',
+        b'referrer-policy': b'no-referrer',
+        b'permissions-policy': b'camera=(self), microphone=(self), geolocation=(), payment=()',
+        b'content-security-policy': b"frame-ancestors 'none'; object-src 'none'; base-uri 'self'",
+        b'cache-control': b'no-store',
+    }
+    if scope.get('scheme') == 'https' and settings.public_url.startswith('https://'):
+        defaults[b'strict-transport-security'] = b'max-age=86400'
+    headers.extend((key, value) for key, value in defaults.items() if key not in names)
+    return headers
 
 
 class NetworkSecurityMiddleware:
@@ -66,19 +100,7 @@ class NetworkSecurityMiddleware:
 
         async def protected_send(message):
             if message['type'] == 'http.response.start':
-                headers = list(message.get('headers', []))
-                names = {key.lower() for key, _ in headers}
-                defaults = {
-                    b'x-content-type-options': b'nosniff', b'x-frame-options': b'DENY',
-                    b'referrer-policy': b'no-referrer',
-                    b'permissions-policy': b'camera=(self), microphone=(self), geolocation=(), payment=()',
-                    b'content-security-policy': b"frame-ancestors 'none'; object-src 'none'; base-uri 'self'",
-                    b'cache-control': b'no-store',
-                }
-                if scope.get('scheme') == 'https' and settings.public_url.startswith('https://'):
-                    defaults[b'strict-transport-security'] = b'max-age=86400'
-                headers.extend((key, value) for key, value in defaults.items() if key not in names)
-                message = {**message, 'headers': headers}
+                message = {**message, 'headers': security_headers(scope, settings, message.get('headers', []))}
             await send(message)
 
         async def deny(status, detail, *, retry=False):
@@ -120,8 +142,12 @@ class NetworkSecurityMiddleware:
             # scope.server 是 ASGI 服务器的监听地址，不是 Host/Forwarded 输入。
             if host[0] not in {'localhost', bound_host} and not is_local_client(host[0]):
                 return await deny(400, '本地模式不接受此主机地址')
-        if any(len(values.get(key, [])) > 1 for key in (b'origin', b'content-length', b'transfer-encoding')):
+        if any(len(values.get(key, [])) > 1 for key in (
+                b'origin', b'content-length', b'transfer-encoding', b'content-encoding', b'sec-fetch-site')):
             return await deny(400, '请求头存在歧义')
+        if b'sec-fetch-site' in values and values[b'sec-fetch-site'][0] not in {
+                'none', 'same-origin', 'same-site', 'cross-site'}:
+            return await deny(400, '请求来源标记格式无效')
         if values.get(b'content-length') and values.get(b'transfer-encoding'):
             return await deny(400, '请求长度存在歧义')
         if settings.mode == 'local':

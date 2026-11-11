@@ -34,7 +34,7 @@ from runtime_logging import log_event
 from tools.memory_database import check_database_ready
 from identity_store import IdentityStore
 from access_control import AccessSettings, LocalAccessMiddleware, authorize_runtime, require_session
-from network_security import NetworkLimits, NetworkSecurityMiddleware
+from network_security import NetworkLimits, NetworkSecurityMiddleware, security_headers
 from connection_authorization import ConnectionAuthorizer, AuthorizedStreamingResponse
 from auth_routes import router as auth_router
 from admin_auth import router as admin_auth_router
@@ -452,6 +452,14 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     async def validation_error(request, exc):
         errors = [{"type": item["type"], "loc": item["loc"], "msg": item["msg"]} for item in exc.errors()]
         return JSONResponse({"detail": errors}, status_code=422)
+
+    @application.exception_handler(Exception)
+    async def server_error(request, exc):
+        # ServerErrorMiddleware 在用户中间件外发送 500，并在发送后重抛原异常。
+        response = PlainTextResponse('Internal Server Error', status_code=500)
+        response.raw_headers = security_headers(request.scope, request.app.state.access, response.raw_headers)
+        return response
+
     application.state.memory_manager = manager
     application.state.devices = devices
     application.state.access = access

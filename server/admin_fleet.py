@@ -52,7 +52,14 @@ class FleetStore:
 
     def _snapshot(self, db, device_id):
         row = db.execute('SELECT * FROM devices WHERE id=?', (device_id,)).fetchone()
-        return self.identities.decorate_device(db, row) if row else None
+        if row is None:
+            return None
+        snapshot = self.identities.decorate_device(db, row)
+        # 删除后同编号可以重新登记，代次和时间可能相同；用内部凭证版本识别新登记。
+        # 仅供事务核对，详情与列表不得输出此字段或凭证散列。
+        snapshot['_credential_version'] = tuple(item[0] for item in db.execute(
+            'SELECT token_hash FROM device_credentials WHERE device_id=? ORDER BY token_hash', (device_id,)))
+        return snapshot
 
     def snapshot(self, device_id):
         with self.identities._transaction() as db:
@@ -113,7 +120,8 @@ class FleetStore:
                 if current is None:
                     raise HTTPException(404, '设备不存在')
                 if expected is None or any(current[key] != expected[key] for key in
-                        ('owner_user_id', 'active_user_id', 'access_epoch', 'revoked_at')):
+                        ('owner_user_id', 'active_user_id', 'access_epoch', 'revoked_at',
+                         'created_at', '_credential_version')):
                     raise HTTPException(409, '设备归属或状态已改变，请刷新后重新确认')
             if operation in ('register', 'rotate'):
                 if operation == 'rotate' and current['owner_user_id'] is not None:

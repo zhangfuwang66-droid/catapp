@@ -119,11 +119,11 @@ class AdminStore:
             EXISTS(SELECT 1 FROM admin_roles a WHERE a.user_id=u.id) AS is_admin,
             (SELECT COUNT(*) FROM devices d WHERE d.owner_user_id=u.id) AS device_count,
             EXISTS(SELECT 1 FROM account_provider_keys k WHERE k.user_id=u.id) AS key_configured
-            FROM auth_users u WHERE instr(u.username,?)>0"""
+            FROM auth_users u WHERE (instr(u.username,?)>0 OR instr(lower(u.id),?)>0)"""
         if status != 'all':
             query += ' AND u.disabled=' + ('1' if status == 'disabled' else '0')
         with self.identities._transaction() as db:
-            result = self._page(db,query+' ORDER BY u.created_at DESC,u.id',(q.casefold(),),page,page_size)
+            result = self._page(db,query+' ORDER BY u.created_at DESC,u.id',(q.casefold(),)*2,page,page_size)
         for row in result['items']:
             for field in ('disabled','is_admin','key_configured'):
                 row[field] = bool(row[field])

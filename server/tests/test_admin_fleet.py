@@ -224,6 +224,13 @@ class AdminFleetTests(unittest.TestCase):
         self.assertEqual(result.status_code, 503, result.text)
         self.assertNotIn('private-failure-path', result.text)
 
+    def test_user_search_matches_visible_user_id_as_well_as_username(self):
+        response = self.client.get('/api/admin/users', params={'q': self.member.id.upper()})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['total'], 1)
+        self.assertEqual(response.json()['items'][0]['id'], self.member.id)
+        self.assertEqual(self.client.get('/api/admin/users', params={'q': "%' OR 1=1 --"}).json()['total'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

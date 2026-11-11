@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 import hashlib
+import ipaddress
 import os
 from pathlib import Path
 import re
@@ -129,6 +130,36 @@ class RateLimited(ValueError):
         self.retry_after = max(1, retry_after)
 
 
+LOGIN_CONCURRENCY = 2
+
+
+@contextmanager
+def _login_slot(semaphore):
+    if not semaphore.acquire(blocking=False):
+        raise RateLimited(1)
+    try:
+        yield
+    finally:
+        semaphore.release()
+
+
+def _login_client_key(client_key):
+    if not isinstance(client_key, str) or not 1 <= len(client_key) <= 128:
+        return 'unknown'
+    try:
+        address = ipaddress.ip_address(client_key)
+    except ValueError:
+        try:
+            client_key.encode('utf-8')
+        except UnicodeEncodeError:
+            return 'unknown'
+        return client_key
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    # 同一地址的压缩、展开、映射及接口作用域写法共用预算；不解析任何转发头。
+    return ipaddress.ip_address(address.packed).compressed
+
+
 def token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -149,6 +180,9 @@ class IdentityStore(DeviceSharing):
             os.close(descriptor)
         self.clock = clock
         self._lock = threading.RLock()
+        self._login_requests = threading.BoundedSemaphore(LOGIN_CONCURRENCY)
+        self._password_checks = threading.BoundedSemaphore(LOGIN_CONCURRENCY)
+        self._dummy_lock = threading.Lock()
         self.hasher = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2, type=Type.ID)
         self._dummy_hash: Optional[str] = None
         self._migrate()
@@ -246,21 +280,36 @@ class IdentityStore(DeviceSharing):
             # 仅保存短期计数，不让未知账号或客户端不断累积限流记录。
             connection.execute("DELETE FROM auth_rate_limits WHERE window_start < ?", (now - 86400,))
 
+    def login_admission(self):
+        """两个网页登录入口在提交共享线程池前共用非排队准入，取消后也须收尾才释放。"""
+        return _login_slot(self._login_requests)
+
     def login(self, username: str, password: str, *, client_key: str, ttl: float = 7 * 86400,
               authorize: Optional[Callable[[sqlite3.Connection, str], bool]] = None) -> Optional[SessionGrant]:
         try:
+            if not isinstance(username, str) or len(username) > 128:
+                raise ValueError('账号格式不正确')
             normalized = self.normalize_username(username)
         except ValueError:
             normalized = ""
-        self.consume_rate_limit("login-ip:" + token_digest(client_key), limit=30, window=300)
+        self.consume_rate_limit("login-ip:" + token_digest(_login_client_key(client_key)), limit=30, window=300)
         self.consume_rate_limit("login-user:" + token_digest(normalized), limit=10, window=300)
-        if not isinstance(password, str) or len(password) > 128:
+        if not normalized or not isinstance(password, str) or not 1 <= len(password) <= 128:
             return None
+        try:
+            password.encode('utf-8')
+        except UnicodeEncodeError:
+            return None
+        # Argon2 每次约占 64 MiB；同步调用同样不能靠轮换账号/IP 放大并行内存。
+        with _login_slot(self._password_checks):
+            return self._login_password(normalized, password, ttl=ttl, authorize=authorize)
+
+    def _login_password(self, normalized, password, *, ttl, authorize):
         with self._transaction() as connection:
             row = connection.execute("SELECT * FROM auth_users WHERE username=?", (normalized,)).fetchone()
         # 不存在的账号也做相同的密码校验，接口统一返回账号或密码错误。
         if row is None:
-            with self._lock:
+            with self._dummy_lock:
                 if self._dummy_hash is None:
                     self._dummy_hash = self.hasher.hash(secrets.token_urlsafe(32))
             password_hash = self._dummy_hash

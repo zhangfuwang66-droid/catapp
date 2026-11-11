@@ -1,6 +1,8 @@
 """网页登录接口。账号通过本机管理工具创建，不提供公开注册。"""
 
-from async_helpers import run_blocking
+import asyncio
+
+from async_helpers import finish_before_cancel, run_blocking
 from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -17,6 +19,21 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128, repr=False)
 
 
+async def finish_login(identities, perform, issued):
+    # 必须在进入共享 executor 之前拒绝，避免攻击请求占满队列拖住会话和设备鉴权。
+    with identities.login_admission():
+        try:
+            return await finish_before_cancel(perform())
+        except BaseException as exc:
+            if issued.get('token'):
+                try:
+                    await run_blocking(identities.revoke_session, issued['token'])
+                except Exception:
+                    if isinstance(exc, Exception):
+                        raise HTTPException(503, '登录暂时无法完成，请稍后重试') from None
+            raise
+
+
 @router.get("/mode")
 async def mode(request: Request):
     return {"mode": request.app.state.access.mode}
@@ -25,20 +42,34 @@ async def mode(request: Request):
 @router.post("/login")
 async def login(payload: LoginRequest, request: Request, response: Response):
     require_origin(request)
+    identities = request.app.state.identities
+    issued = {}
+
+    async def perform():
+        grant = await run_blocking(identities.login, payload.username, payload.password,
+                                  client_key=request.client.host if request.client else 'unknown')
+        if grant is None:
+            raise HTTPException(status_code=401, detail="账号或密码错误")
+        issued['token'] = grant.token
+        is_admin = await run_blocking(request.app.state.admin_store.is_admin, grant.user.id)
+        previous = request.cookies.get(SESSION_COOKIE)
+        if previous:
+            await run_blocking(identities.revoke_session, previous)
+            await request.app.state.connections.revoke_session(previous)
+        return grant, is_admin
+
     try:
-        grant = await run_blocking(
-            request.app.state.identities.login, payload.username, payload.password,
-            client_key=request.client.host if request.client else "unknown",
-        )
-    except RateLimited as exc:
-        raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": str(exc.retry_after)}) from None
-    if grant is None:
-        raise HTTPException(status_code=401, detail="账号或密码错误")
-    is_admin = await run_blocking(request.app.state.admin_store.is_admin, grant.user.id)
-    previous = request.cookies.get(SESSION_COOKIE)
-    if previous:
-        await run_blocking(request.app.state.identities.revoke_session, previous)
-        await request.app.state.connections.revoke_session(previous)
+        grant, is_admin = await finish_login(identities, perform, issued)
+    except BaseException as exc:
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        if isinstance(exc, RateLimited):
+            raise HTTPException(429, str(exc), headers={'Retry-After': str(exc.retry_after)}) from None
+        if isinstance(exc, HTTPException):
+            raise
+        if not isinstance(exc, Exception):
+            raise
+        raise HTTPException(503, '登录暂时无法完成，请稍后重试') from None
     response.set_cookie(SESSION_COOKIE, grant.token, max_age=7 * 86400, httponly=True,
                         secure=request.url.scheme == "https", samesite="strict", path="/")
     response.headers["Cache-Control"] = "no-store"

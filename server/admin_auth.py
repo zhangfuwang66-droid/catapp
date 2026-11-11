@@ -12,6 +12,7 @@ from access_control import SESSION_COOKIE, require_origin, require_session_write
 from admin_pages import ADMIN_CSP, admin_login_html
 from admin_routes import require_admin
 from async_helpers import finish_before_cancel, run_blocking
+from auth_routes import finish_login
 from identity_store import RateLimited, csrf_for_session
 
 
@@ -84,15 +85,8 @@ async def login(payload: AdminLogin, request: Request, response: Response):
         return grant
 
     try:
-        grant = await finish_before_cancel(perform())
+        grant = await finish_login(identities, perform, issued)
     except BaseException as exc:
-        # 取消或收尾失败时新 Cookie 尚未交付，撤销刚签发的会话，避免留下可用凭证。
-        if issued.get('token'):
-            try:
-                await run_blocking(identities.revoke_session, issued['token'])
-            except Exception:
-                if isinstance(exc, Exception):
-                    raise HTTPException(503, '管理登录暂时无法完成，请稍后重试') from None
         if isinstance(exc, asyncio.CancelledError):
             raise
         if isinstance(exc, RateLimited):

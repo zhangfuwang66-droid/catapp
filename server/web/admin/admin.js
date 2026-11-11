@@ -153,6 +153,11 @@ function toast(message, error=false) {
   toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4500);
 }
 function gate(message, denied=false) {
+  if(denied) {
+    document.documentElement.classList.add('access-denied');
+    clearTimeout(uptimeTimer);
+    clearCredential();
+  }
   $('shell').hidden = true;
   $('gate').hidden = false;
   $('gate').className = denied ? 'gate denied' : 'gate';
@@ -794,7 +799,10 @@ function renderDeviceDetail(data,body) {
 }
 function closeDetail() { detailContext?.controller?.abort(); detailContext=null; $('detailDialog').close(); }
 $('detailClose').addEventListener('click',closeDetail);
-$('detailDialog').addEventListener('close',() => { detailContext?.controller?.abort(); detailContext=null; });
+$('detailDialog').addEventListener('close',() => {
+  if($('detailDialog').open) return;
+  detailContext?.controller?.abort(); detailContext=null;
+});
 function openEditor(spec) {
   if(state.busy || state.denied || $('editorDialog').open || $('confirmDialog').open || $('credentialDialog').open) return;
   const context={...spec,submitted:false,view:state.view,inputs:{}}; editorContext=context;

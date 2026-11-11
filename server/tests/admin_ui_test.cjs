@@ -217,6 +217,9 @@ const server = http.createServer(async (req,res) => {
     assert.doesNotMatch(await page.locator('#confirmError').innerText(),/已刷新/);
     assert.equal(await page.locator('#confirmSubmit').isDisabled(),true);
     await page.click('#confirmCancel'); getBehavior = null;
+    assert.equal(await page.locator('#view-devices').isVisible(),false,'核对失败后不展示旧设备快照');
+    await page.getByRole('button',{name:'重新加载',exact:true}).click();
+    await page.getByRole('button',{name:'恢复语音',exact:true}).waitFor({state:'visible'});
 
     // 即使确认框被外部关闭，迟到的写响应也只核对原目标，不能污染新页面。
     const lateWrite = deferred(), lateSent = deferred();
@@ -237,6 +240,8 @@ const server = http.createServer(async (req,res) => {
     await ordinaryRow.getByRole('button',{name:'启用',exact:true}).click();
     assert.equal(await page.locator('#confirmError').innerText(),'','新确认框不能继承旧请求错误');
     await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#confirmDialog').evaluate(dialog => dialog.open),false,'Escape立即解除弹窗交互');
+    await page.locator('#confirmDialog').waitFor({state:'hidden'});
     assert.equal(await page.locator('#confirmDialog').isVisible(),false,'未提交时仍能 Escape 取消');
 
     // 旧页面的读取失败到达时，当前页面仍保持自己的加载状态。

@@ -7,7 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from httpx import ASGITransport, AsyncClient
 
@@ -356,3 +356,91 @@ class AdminWriterRevocationTests(unittest.IsolatedAsyncioTestCase):
         row = next(row for row in self.audit_rows() if row["action"] == "unbind-device")
         self.assertEqual(row["result"],"success")
         self.assertFalse(self.admins.is_admin(self.first.id))
+
+    async def leave_unbound(self):
+        await run_blocking(self.ids.unbind_device,self.credential.device_id,self.target.id)
+
+    async def rebind_to_second(self):
+        pairing = self.ids.request_pairing(self.credential.device_id,self.credential.token)
+        response = await self.client.post('/api/devices/pair',headers=self.second_headers,
+                                          json={'code':pairing.code})
+        self.assertEqual(response.status_code,200,response.text)
+        return self.ids.credential_device(self.credential.device_id,self.credential.token)
+
+    def cleanup(self, **extra):
+        return self.client.post(f'/api/admin/devices/{self.credential.device_id}/unbind',headers=self.headers,
+                                json={'confirm_device_id':self.credential.device_id,'cleanup_only':True,**extra})
+
+    async def test_cleanup_only_rejects_rebinding_after_ui_preflight(self):
+        await self.leave_unbound()
+        preflight = await self.client.get('/api/admin/devices',headers=self.headers)
+        self.assertIsNone(preflight.json()['items'][0]['owner_user_id'])
+        rebound = await self.rebind_to_second()
+        with patch.object(self.ids,'unbind_device',wraps=self.ids.unbind_device) as unbind, \
+             patch.object(self.app.state.connections,'revoke_device',new_callable=AsyncMock) as revoke:
+            response = await self.cleanup()
+        self.assertEqual(response.status_code,409,response.text)
+        unbind.assert_not_called()
+        revoke.assert_not_awaited()
+        self.assertEqual(self.ids.credential_device(self.credential.device_id,self.credential.token),rebound)
+
+    async def test_cleanup_only_rechecks_rebinding_after_queue(self):
+        await self.leave_unbound()
+        await self.gate.acquire()
+        pending = asyncio.create_task(self.cleanup())
+        try:
+            await self.gate.wait_for_waiters()
+            rebound = await self.rebind_to_second()
+        finally:
+            self.gate.release()
+        with patch.object(self.ids,'unbind_device',wraps=self.ids.unbind_device) as unbind:
+            response = await asyncio.wait_for(pending,timeout=3)
+        self.assertEqual(response.status_code,409,response.text)
+        unbind.assert_not_called()
+        self.assertEqual(self.ids.credential_device(self.credential.device_id,self.credential.token),rebound)
+
+    async def test_cleanup_only_rechecks_rebinding_after_device_lock_queue(self):
+        await self.leave_unbound()
+        lock = ObservedLock()
+        self.app.state.devices._locks[self.credential.device_id] = lock
+        await lock.acquire()
+        pending = asyncio.create_task(self.cleanup())
+        with patch.object(self.ids,'unbind_device',wraps=self.ids.unbind_device) as unbind, \
+             patch.object(self.app.state.connections,'revoke_device',new_callable=AsyncMock) as revoke:
+            try:
+                await lock.wait_for_waiters()
+                rebound = await self.rebind_to_second()
+            finally:
+                lock.release()
+            response = await asyncio.wait_for(pending,timeout=3)
+        self.assertEqual(response.status_code,409,response.text)
+        unbind.assert_not_called()
+        revoke.assert_not_awaited()
+        self.assertEqual(self.ids.credential_device(self.credential.device_id,self.credential.token),rebound)
+
+    async def test_cleanup_only_is_retryable_without_rewriting_binding(self):
+        runtime = await self.app.state.devices.resolve(self.credential.device_id,self.target.id)
+        await self.leave_unbound()
+        before = self.ids.credential_device(self.credential.device_id,self.credential.token)
+        with patch.object(self.app.state.connections,'revoke_device',new_callable=AsyncMock,
+                          side_effect=RuntimeError('fictional retry failure')):
+            response = await self.cleanup()
+        self.assertEqual(response.status_code,503,response.text)
+        self.assertEqual(self.audit_rows()[0]['result'],'started')
+        with patch.object(self.ids,'unbind_device',wraps=self.ids.unbind_device) as unbind:
+            response = await self.cleanup()
+        self.assertEqual(response.status_code,200,response.text)
+        unbind.assert_not_called()
+        self.assertNotIn(self.credential.device_id,self.app.state.devices.devices)
+        self.assertTrue(runtime._closed)
+        self.assertEqual(self.ids.credential_device(self.credential.device_id,self.credential.token),before)
+        self.assertEqual(self.audit_rows()[0]['result'],'success')
+
+    async def test_cleanup_only_uses_strict_boolean_and_keeps_regular_unbind_compatible(self):
+        for invalid in ('true',1,None):
+            with self.subTest(value=invalid):
+                response = await self.cleanup(cleanup_only=invalid)
+                self.assertEqual(response.status_code,422,response.text)
+        response = await self.write('unbind')
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertIsNone(self.ids.credential_device(self.credential.device_id,self.credential.token)['owner_user_id'])

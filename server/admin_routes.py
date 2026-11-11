@@ -149,6 +149,7 @@ class UserStatus(ConfirmUser):
 
 class ConfirmDevice(BaseModel):
     confirm_device_id: str = Field(min_length=1,max_length=64)
+    cleanup_only: StrictBool = False
 
 
 class Voice(ConfirmDevice):
@@ -261,10 +262,23 @@ async def device_action(request,user,device_id,payload,paused=None):
     found = await run_blocking(store.devices,device_ids=(device_id,))
     if not found:
         raise HTTPException(404,'设备不存在')
+    def require_unbound(device):
+        if device['owner_user_id'] is not None or device['active_user_id'] is not None:
+            raise HTTPException(409,'设备已重新绑定，不能执行旧解绑操作的收尾；请刷新查看当前归属')
+    if paused is None and payload.cleanup_only:
+        require_unbound(found[0])
     def mark_committed():
         progress['committed'] = True
     def authorize(db):
         store.require_writer(db,user.id,request.cookies.get(SESSION_COOKIE,''))
+    def authorize_cleanup():
+        with store.identities._transaction() as db:
+            authorize(db)
+            row = db.execute('SELECT * FROM devices WHERE id=?',(device_id,)).fetchone()
+            if row is None or row['revoked_at'] is not None:
+                raise ValueError('设备不存在或已撤销')
+            if payload.cleanup_only:
+                require_unbound(store.identities.decorate_device(db,row))
     @asynccontextmanager
     async def locked():
         # 与 resolve_runtime 相同的用户锁→设备锁顺序，防止与停用/Key 更新互锁。
@@ -285,8 +299,12 @@ async def device_action(request,user,device_id,payload,paused=None):
         if not current or current['active_user_id'] != initial['active_user_id'] or current['owner_user_id'] != initial['owner_user_id'] or current['revoked']:
             raise ValueError('设备使用权已改变')
         if paused is None:
+            if payload.cleanup_only:
+                require_unbound(current)
             if current['owner_user_id'] is not None:
                 await run_blocking(request.app.state.identities.unbind_device,device_id,current['owner_user_id'],authorize=authorize)
+            else:
+                await run_blocking(authorize_cleanup)
             # 已解绑时仍重试收尾，不重复变更 access_epoch 或设备凭证。
             mark_committed()
             await request.app.state.connections.revoke_device(device_id,code=4403,reason='设备已解绑')

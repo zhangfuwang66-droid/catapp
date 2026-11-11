@@ -9,12 +9,12 @@
 - `POST /users/{id}/revoke-sessions`，JSON `{confirm_username:"目标账号"}` → `{ok:true}`；撤销全部网页登录，清理相关连接和运行任务，禁止对自己执行。
 - `GET /devices?q=&status=all|bound|unbound|online|offline&page=1&page_size=20` → `{items:[{id,display_name,device_type,owner_user_id,owner_username,active_user_id,active_username,loan_active,loan_pending,loan_expires_at,revoked,created_at,audio_online,camera_online,online,voice_paused}],total,page,page_size}`。device_type 根据登记编号的 `cat-`、`deer-` 前缀分别返回 cat、deer，其他编号返回 unknown，不根据显示名称猜测；未绑定时 voice_paused=null；读接口绝不创建运行时。
 - `POST /devices/{id}/voice`，JSON `{paused:true|false,confirm_device_id:"目标ID"}` → `{ok:true,paused}`；恢复可能触发模型连接，UI 必须说明并确认。
-- `POST /devices/{id}/unbind`，JSON `{confirm_device_id:"目标ID"}` → `{ok:true}`；保留硬件凭证、Wi-Fi 和记忆。
+- `POST /devices/{id}/unbind`，JSON `{confirm_device_id:"目标ID",cleanup_only:false}` → `{ok:true}`；保留硬件凭证、Wi-Fi 和记忆。手动重试旧解绑的收尾必须传 `cleanup_only:true`（严格布尔值）；该模式在请求开始、取得设备锁及最终授权检查时均要求 owner 和 active user 为空，重新绑定返回 409，不解绑新主人、不变更授权代次或凭证。省略该字段仍执行普通解绑。
 - `GET /storage` → `{documents:{count,bytes,statuses:{状态:数量},chunks},memory:{conversations,messages,summaries,memories,content_bytes,archives,archive_bytes,archived_messages,policies:{模式:数量}},retention:{...}}`；只含聚合元数据，不返回私有正文或文件名。
 - `GET /backups` → `{enabled,running,last_success_at,last_failure_at,last_error_type,backup_count,skipped_unverified,pruned}`，复用现有备份任务状态，无路径和异常原文；暂无成功时间不代表完成过备份，不提供在线恢复。
 - `GET /audit?q=&page=1&page_size=20` → `{items:[{id,actor_id,actor_username,target_type,target_id,action,result,created_at}],total,page,page_size}`。result 为 started/success/failed，日志不接收任意详情文本。
 
-账号状态、会话撤销、设备解绑或语音偏好已提交，后续连接、任务清理或设备同步失败时返回 503 并明确提示已生效及需要重试，审计保持 started（未完成），不谎报整体失败或成功。设备已解绑时可用相同确认编号重试收尾，不重复变更设备授权代次；语音操作重试会再次同步设备状态。重试成功产生 success 审计，先前未完成尝试的 started 记录保留。
+账号状态、会话撤销、设备解绑或语音偏好已提交，后续连接、任务清理或设备同步失败时返回 503 并明确提示已生效及需要重试，审计保持 started（未完成），不谎报整体失败或成功。设备已解绑时可用相同确认编号及 `cleanup_only:true` 手动重试收尾，不重复变更设备授权代次；若期间重新绑定则返回 409。语音操作重试会再次同步设备状态。重试成功产生 success 审计，先前未完成尝试的 started 记录保留。
 
 管理员写请求在全局、目标账号和设备锁排队期间可以取消，取得锁后重新检查原网页登录和管理员角色；网页登录已撤销、过期或账号停用返回 401，角色撤销返回 403。业务数据库变更的事务内再次核验授权，防止等待阻塞操作期间的撤销遗漏。已开始的合法变更在请求取消或后续撤权时仍完成清理及结果审计，完成前所属请求不会退出，也不会留下独立排队写任务。
 

@@ -495,15 +495,23 @@ def prepare_ai_vision_image_b64(jpeg_bytes: bytes) -> str:
     if not jpeg_bytes:
         return ""
     if not PIL_AVAILABLE:
+        # 可选依赖缺失时仅保留完整 JPEG 标记的协议帧，不尝试其他解码器。
+        if not jpeg_bytes.startswith(b"\xff\xd8\xff") or not jpeg_bytes.endswith(b"\xff\xd9"):
+            return ""
         return base64.b64encode(jpeg_bytes).decode("ascii")
     try:
-        src = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
-        src.thumbnail((320, 320))
-        out = io.BytesIO()
-        src.save(out, format="JPEG", quality=60, optimize=True)
-        return base64.b64encode(out.getvalue()).decode("ascii")
+        with Image.open(io.BytesIO(jpeg_bytes), formats=["JPEG"]) as source:
+            width, height = source.size
+            # open 只解析 JPEG 头；必须在 convert/load 分配像素前限制解码面积。
+            if width <= 0 or height <= 0 or width * height > 4096 * 4096:
+                return ""
+            with source.convert("RGB") as src:
+                src.thumbnail((320, 320))
+                out = io.BytesIO()
+                src.save(out, format="JPEG", quality=60, optimize=True)
+                return base64.b64encode(out.getvalue()).decode("ascii")
     except Exception:
-        return base64.b64encode(jpeg_bytes).decode("ascii")
+        return ""
 
 def pcm16_to_wav_bytes(pcm16: bytes, sample_rate: int = STREAM_SR) -> bytes:
     out = io.BytesIO()

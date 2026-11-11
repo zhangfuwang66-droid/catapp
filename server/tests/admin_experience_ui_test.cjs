@@ -41,7 +41,11 @@ function elapsedSeconds(text) {
 
 (async () => {
   let browser;
-  const pageErrors = [], adminBodies = [], checks = [];
+  const pages = [], pageErrors = [], adminBodies = [], checks = [];
+  function checked(message) {
+    checks.push(message);
+    console.log(JSON.stringify({passed: message}));
+  }
   try {
     const {url, owner_id: ownerId} = await fixtureReady;
     fs.mkdirSync(output, {recursive: true});
@@ -49,6 +53,9 @@ function elapsedSeconds(text) {
       ...(process.env.BROWSER_EXECUTABLE ? {executablePath: process.env.BROWSER_EXECUTABLE} : {})});
     async function pageFor(context) {
       const page = await context.newPage();
+      pages.push(page);
+      page.setDefaultTimeout(10000);
+      page.setDefaultNavigationTimeout(15000);
       page.on('pageerror', error => pageErrors.push(error.message));
       page.on('response', response => {
         if (new URL(response.url()).pathname.startsWith('/api/admin/')) {
@@ -71,7 +78,7 @@ function elapsedSeconds(text) {
     async function ready(page) {
       await page.locator('#shell').waitFor({state: 'visible'});
       await page.waitForFunction(() => document.querySelector('.view:not([hidden])')?.getAttribute('aria-busy') === 'false'
-        && document.getElementById('pageFeedback').hidden);
+        && document.getElementById('pageFeedback').hidden, null, {timeout: 10000});
     }
     async function noOverflow(page) {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -117,7 +124,7 @@ function elapsedSeconds(text) {
     assert.match(await ordinaryPage.locator('[role=alert]:visible').first().innerText(), /管理员|权限/);
     assert.equal(new URL(ordinaryPage.url()).pathname, '/admin/login');
     assert.equal((await ordinary.request.get(url + '/api/admin/dashboard')).status(), 401);
-    checks.push('匿名跳独立登录、错误密码401、普通账号403且不签发会话');
+    checked('匿名跳独立登录、错误密码401、普通账号403且不签发会话');
     await ordinary.close();
 
     const context = await browser.newContext({viewport: {width: 1440, height: 1000}, reducedMotion: 'no-preference'});
@@ -133,7 +140,7 @@ function elapsedSeconds(text) {
     const appLink = page.locator('a[href="/"]');
     assert.ok(await appLink.count() > 0);
     await appLink.first().waitFor({state: 'visible'});
-    checks.push('管理员表单登录直达、已有会话直达、返回应用入口可见');
+    checked('管理员表单登录直达、已有会话直达、返回应用入口可见');
 
     const firstText = await page.locator('#metricUptime').innerText();
     const firstSeconds = elapsedSeconds(firstText);
@@ -157,7 +164,7 @@ function elapsedSeconds(text) {
     const refreshed = await (await context.request.get(url + '/api/admin/dashboard')).json();
     assert.ok(Math.abs(elapsedSeconds(await page.locator('#metricUptime').innerText())
       - refreshed.summary.uptime_seconds) <= 4);
-    checks.push('运行时长来自真实服务、每秒推进、刷新重新校准');
+    checked('运行时长来自真实服务、每秒推进、刷新重新校准');
 
     if (await page.locator('html').getAttribute('data-theme') !== 'light') await page.click('#themeToggle');
     await finishAnimations(page.locator('.sidebar'));
@@ -174,7 +181,7 @@ function elapsedSeconds(text) {
     await page.screenshot({path: path.join(output, 'desktop-dark.png'), fullPage: true});
     await page.reload(); await ready(page);
     assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
-    checks.push('浅深主题包含侧栏并在刷新后保留');
+    checked('浅深主题包含侧栏并在刷新后保留');
 
     await page.evaluate(() => {
       window.__experienceMotion = [];
@@ -202,7 +209,7 @@ function elapsedSeconds(text) {
     const lightDialog = await page.locator('#editorDialog').evaluate(element => getComputedStyle(element).backgroundColor);
     assert.notEqual(darkDialog, lightDialog);
     await page.click('#editorCancel');
-    checks.push('正常模式切页和弹窗有动效、弹窗主题同步');
+    checked('正常模式切页和弹窗有动效、弹窗主题同步');
 
     // 只延迟真实 HTTP 请求的放行，不伪造 API 响应；检查晚返回数据不会覆盖当前页。
     await page.getByRole('button', {name: '概览', exact: true}).click(); await ready(page);
@@ -222,7 +229,7 @@ function elapsedSeconds(text) {
         {timeout: 8000});
       await page.getByRole('button', {name: '用户', exact: true}).click();
       await observedUsers;
-      for (const name of ['设备', '资料与记忆', '备份', '概览', '设备']) {
+      for (const name of ['设备', '存储概况', '备份', '概览', '设备']) {
         await page.getByRole('button', {name, exact: true}).click();
       }
       await ready(page);
@@ -231,12 +238,13 @@ function elapsedSeconds(text) {
       await page.unroute('**/api/admin/users?*', delayUsers);
     }
     await Promise.all(lateRequests);
-    await page.waitForFunction(() => document.getElementById('view-users').getAttribute('aria-busy') === 'false');
+    await page.waitForFunction(() => document.getElementById('view-users').getAttribute('aria-busy') === 'false',
+      null, {timeout: 10000});
     assert.equal(await page.locator('.view:not([hidden])').count(), 1);
     assert.equal(await page.locator('.view:not([hidden])').getAttribute('id'), 'view-devices');
     assert.equal(await page.locator('#pageTitle').innerText(), '设备');
     assert.equal(await page.locator('#pageFeedback').isVisible(), false);
-    checks.push('快速切换页面后晚返回的真实请求不覆盖当前页面');
+    checked('快速切换页面后晚返回的真实请求不覆盖当前页面');
 
     await page.getByRole('button', {name: '用户', exact: true}).click(); await ready(page);
 
@@ -245,7 +253,7 @@ function elapsedSeconds(text) {
     await page.locator('#editorDialog').waitFor({state: 'visible'});
     await assertReducedMotion(page, '.view, .sidebar, dialog[open]');
     await page.click('#editorCancel');
-    checks.push('reduced-motion 关闭页面、侧栏和弹窗长动效');
+    checked('reduced-motion 关闭页面、侧栏和弹窗长动效');
 
     for (const width of [320, 390]) {
       const mobile = await browser.newContext({viewport: {width, height: 844}, isMobile: true,
@@ -272,7 +280,7 @@ function elapsedSeconds(text) {
       await mp.click('#editorCancel');
       await mobile.close();
     }
-    checks.push('320/390手机登录、后台和弹窗无水平溢出，减少动态偏好生效、操作可达');
+    checked('320/390手机登录、后台和弹窗无水平溢出，减少动态偏好生效、操作可达');
 
     for (const endpoint of ['session', 'dashboard', 'overview', 'users', 'users/' + ownerId, 'devices',
       'devices/cat-experience', 'storage', 'backups', 'backups/history', 'audit']) {
@@ -287,7 +295,7 @@ function elapsedSeconds(text) {
       else assert.ok(!result.body.includes('PRIVATE_EXPERIENCE_'));
     }
     assert.deepEqual(pageErrors, []);
-    checks.push('管理页面与全部读取响应无私人正文、运行时和模型访问受阻');
+    checked('管理页面与全部读取响应无私人正文、运行时和模型访问受阻');
 
     const sessionCookie = (await context.cookies()).find(cookie => cookie.name === 'cybermiao_session');
     assert.ok(sessionCookie?.httpOnly && sessionCookie.sameSite === 'Strict');
@@ -303,9 +311,18 @@ function elapsedSeconds(text) {
     const expiredCookie = await context.request.get(url + '/api/admin/session', {
       headers: {Cookie: 'cybermiao_session=' + sessionCookie.value}});
     assert.equal(expiredCookie.status(), 401);
-    checks.push('退出返回独立登录、清除Cookie且旧令牌失效，令牌未进入网页存储');
+    checked('退出返回独立登录、清除Cookie且旧令牌失效，令牌未进入网页存储');
     console.log(JSON.stringify({ok: true, checks, screenshots: output}));
     await context.close();
+  } catch (error) {
+    console.error(JSON.stringify({ok: false, passed: checks, pageErrors, error: error.message, fixtureErrors}));
+    for (const [index, page] of pages.entries()) {
+      if (page.isClosed()) continue;
+      console.error(JSON.stringify({url: page.url(), feedback: await page.locator('#pageFeedback, #gate, [role=alert]:visible')
+        .allTextContents().catch(() => [])}));
+      await page.screenshot({path: path.join(output, 'failure-' + index + '.png'), fullPage: true, timeout: 5000}).catch(() => {});
+    }
+    throw error;
   } finally {
     await browser?.close();
     fixture.stdin.end();

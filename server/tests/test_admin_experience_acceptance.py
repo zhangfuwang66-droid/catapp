@@ -4,6 +4,7 @@ from contextlib import closing
 import sqlite3
 import time
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -14,9 +15,15 @@ import test_admin_round2_acceptance as fixture
 
 
 class IndependentAdminExperienceTests(unittest.TestCase):
-    setUp = fixture.AdminRound2AcceptanceTests.setUp
     tearDown = fixture.AdminRound2AcceptanceTests.tearDown
     request = fixture.AdminRound2AcceptanceTests.request
+
+    def setUp(self):
+        # 哨兵文档由测试同步建好，后台索引不得抢走任务或尝试模型调用。
+        worker = patch("knowledge_service.KnowledgeService.start", new=AsyncMock())
+        worker.start()
+        self.addCleanup(worker.stop)
+        fixture.AdminRound2AcceptanceTests.setUp(self)
 
     def test_failed_admin_login_does_not_issue_sessions_or_revoke_existing_browser_session(self):
         with closing(sqlite3.connect(self.database)) as db:
@@ -97,7 +104,7 @@ class IndependentAdminExperienceTests(unittest.TestCase):
     def test_dedicated_login_is_absent_in_local_mode(self):
         app = server_app.create_app(store=MemoryStore(self.database.with_name("local.sqlite3")),
                                     access=AccessSettings("local"))
-        with TestClient(app) as client:
+        with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 12345)) as client:
             self.assertEqual(client.get("/admin/login", follow_redirects=False).status_code, 404)
             self.assertEqual(client.get("/admin", follow_redirects=False).status_code, 404)
             self.assertEqual(client.post("/api/admin/auth/login", json={

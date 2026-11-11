@@ -1,7 +1,6 @@
 """Real administrator API/DB fixture, using only the current worktree's integrated backend."""
 import asyncio
 from contextlib import ExitStack
-import importlib
 import json
 import os
 from pathlib import Path
@@ -52,11 +51,12 @@ def main():
         stack.enter_context(patch.object(knowledge, "start", new=AsyncMock()))
         app = server_app.create_app(store=memory, summarizer=summarize, access=AccessSettings("accounts"), knowledge_service=knowledge,
             backup_settings=BackupSettings(directory=directory / "backups", min_free_bytes=0))
-        if "/api/admin/users/{user_id}" not in app.openapi().get("paths", {}) and importlib.util.find_spec("admin_accounts"):
-            app.include_router(importlib.import_module("admin_accounts").router)
-            app.openapi_schema = None
-        required = {"/api/admin/dashboard", "/api/admin/users/{user_id}", "/api/admin/backups/run", "/api/admin/devices/{device_id}"}
-        missing = required - set(app.openapi().get("paths", {}))
+        # 只验证真实 create_app 注册结果，夹具不得补挂缺失的业务路由。
+        required = {"/api/admin/dashboard": "get", "/api/admin/users/{user_id}": "get",
+                    "/api/admin/backups/run": "post", "/api/admin/devices/{device_id}": "get"}
+        paths = app.openapi().get("paths", {})
+        missing = {method.upper() + " " + path for path, method in required.items()
+                   if method not in paths.get(path, {})}
         if missing:
             raise RuntimeError("集成后端尚未包含管理扩展接口: " + ", ".join(sorted(missing)))
         def no_runtime(*_args, **_kwargs):

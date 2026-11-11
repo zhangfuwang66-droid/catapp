@@ -53,6 +53,15 @@ class PreviewEmbeddings:
         pass
 
 
+def preview_features(application):
+    paths = application.openapi().get('paths', {})
+    return {
+        'dashboard': 'get' in paths.get('/api/admin/dashboard', {}),
+        'device_crud': 'post' in paths.get('/api/admin/devices/{device_id}/rotate-credential', {}),
+        'account_crud': 'post' in paths.get('/api/admin/users', {}),
+    }
+
+
 class PreviewBoundary:
     def __init__(self, app):
         self.app = app
@@ -161,16 +170,11 @@ async def serve(application, listener, directory):
         while not server.started and not server.should_exit:
             await asyncio.sleep(.025)
         if server.started:
-            routes = {route.path for route in application.routes if hasattr(route, "path")}
             print(json.dumps({
                 "url": f"http://{HOST}:{port}/admin", "temporary_data_dir": str(directory),
                 "accounts": [{"username": name, "password": PASSWORD,
                               "role": "管理员" if name in ACCOUNTS[:2] else "普通用户"} for name in ACCOUNTS],
-                "features": {"dashboard": "/api/admin/dashboard" in routes,
-                             "device_crud": any("rotate-credential" in path for path in routes),
-                             "account_crud": any(getattr(route, 'path', '') == '/api/admin/users'
-                                                 and 'POST' in getattr(route, 'methods', ())
-                                                 for route in application.routes)},
+                "features": preview_features(application),
                 "models": "仅本地模拟摘要与固定向量，设备运行时及真实模型访问已阻止",
                 "stop": "Ctrl+C 结束服务并删除本次全部模拟数据",
             }, ensure_ascii=False), flush=True)

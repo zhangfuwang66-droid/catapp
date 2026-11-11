@@ -1,6 +1,7 @@
 """在新进程验证预览不读取真实配置、没有模型/设备通道并清理临时数据。"""
 
 import json
+from http.cookiejar import CookieJar
 import os
 from pathlib import Path
 import queue
@@ -9,11 +10,24 @@ import sys
 import tempfile
 import textwrap
 import threading
+from types import SimpleNamespace
 import unittest
 from urllib import request
 
 
 class AdminPreviewTests(unittest.TestCase):
+    def test_feature_detection_checks_openapi_methods_not_route_container_shape(self):
+        from tools.preview_admin import preview_features
+        missing = SimpleNamespace(openapi=lambda: {'paths': {
+            '/api/admin/dashboard': {'post': {}}, '/api/admin/users': {'get': {}}}})
+        self.assertEqual(preview_features(missing), {
+            'dashboard': False, 'device_crud': False, 'account_crud': False})
+        included = SimpleNamespace(openapi=lambda: {'paths': {
+            '/api/admin/dashboard': {'get': {}}, '/api/admin/users': {'get': {}, 'post': {}},
+            '/api/admin/devices/{device_id}/rotate-credential': {'post': {}}}})
+        self.assertEqual(preview_features(included), {
+            'dashboard': True, 'device_crud': True, 'account_crud': True})
+
     def test_preview_is_isolated_authenticated_and_removes_its_data(self):
         server_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="preview-isolation-sentinel-") as temporary:
@@ -113,6 +127,28 @@ class AdminPreviewTests(unittest.TestCase):
             with request.urlopen(info["url"].replace("/admin", "/api/health"), timeout=5) as response:
                 self.assertEqual(response.status, 200)
                 self.assertEqual(response.read(), b"OK")
+            base_url = info['url'].removesuffix('/admin')
+            opener = request.build_opener(request.ProxyHandler({}), request.HTTPCookieProcessor(CookieJar()))
+            headers = {'Origin': base_url, 'Content-Type': 'application/json'}
+
+            def call(path, method='GET', body=None):
+                data = json.dumps(body).encode('utf-8') if body is not None else None
+                with opener.open(request.Request(base_url + path, data=data, headers=headers, method=method), timeout=8) as response:
+                    return response.status, json.load(response)
+
+            login_status, session = call('/api/auth/login', 'POST', {
+                'username': 'preview-admin', 'password': 'preview-only-password'})
+            self.assertEqual(login_status, 200)
+            headers['X-CSRF-Token'] = session['csrf_token']
+            dashboard_status, _ = call('/api/admin/dashboard')
+            rotation_status, _ = call('/api/admin/devices/deer-preview/rotate-credential', 'POST', {
+                'confirm_device_id': 'deer-preview'})
+            creation_status, _ = call('/api/admin/users', 'POST', {
+                'username': 'cli-check-user', 'password': 'simulated-cli-password', 'confirm_username': 'cli-check-user'})
+            self.assertEqual(info['features'], {'dashboard': dashboard_status == 200,
+                                               'device_crud': rotation_status == 200,
+                                               'account_crud': creation_status == 201})
+            self.assertTrue(all(info['features'].values()))
             stdout, stderr = child.communicate(input="stop\n", timeout=20)
             self.assertEqual(child.returncode, 0, stderr)
             self.assertIn("临时数据已清理", stdout)

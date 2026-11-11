@@ -20,6 +20,30 @@ const fixture=createFixture();
       await page.fill('#editor-username',username); await page.fill('#editor-password',password); await page.fill('#editor-repeat',password); await page.fill('#editor-confirm',username.toLowerCase());
     };
     const confirm=async(expected) => { await page.fill('#confirmInput',expected); await page.click('#confirmSubmit'); await page.locator('#confirmDialog').waitFor({state:'hidden'}); };
+    const checkPristineRequiredForm=async(target,evidence) => {
+      const settle=() => target.locator('#editorDialog').evaluate(async dialog => {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        await Promise.all(dialog.getAnimations({subtree:true}).map(animation => animation.finished.catch(() => {})));
+      });
+      await settle();
+      const fields=await target.locator('#editorFields input[required]').evaluateAll(inputs => inputs.map(input => ({
+        missing:input.validity.valueMissing,userInvalid:input.matches(':user-invalid'),border:getComputedStyle(input).borderTopColor,
+        normal:getComputedStyle(input.closest('dialog')).borderTopColor,
+      })));
+      assert.ok(fields.length>=4);
+      for(const field of fields) {
+        assert.equal(field.missing,true,'保留原生必填约束');
+        assert.equal(field.userInvalid,false,'空表单初次打开尚未交互');
+        assert.equal(field.border,field.normal,'首次打开空必填框不显示错误红边');
+      }
+      await target.screenshot({path:path.join(output,evidence),fullPage:true});
+      const before=state.writes.length;
+      await target.click('#editorSubmit'); await settle();
+      assert.equal(state.writes.length,before,'原生必填校验阻止空表单写请求');
+      assert.ok(await target.locator('#editorFields input:user-invalid').count()>0,'尝试提交后标出必填错误');
+      assert.equal(await target.locator('#editorError').getAttribute('role'),'alert','保留表单错误反馈区域');
+      assert.equal(await target.locator('#editor-username').evaluate(input => getComputedStyle(input).borderTopColor === getComputedStyle(input.closest('dialog')).borderTopColor),false,'提交无效表单后显示错误红边');
+    };
     await page.goto(url+'/admin'); await ready();
     assert.equal(await page.locator('.chart-day').count(),7);
     assert.match(await page.locator('#systemInfo').innerText(),/磁盘空间：未知/);
@@ -38,7 +62,8 @@ const fixture=createFixture();
     assert.equal(await page.getByRole('button',{name:'永久删除空账号',exact:true}).isDisabled(),true);
     assert.match(await page.locator('#detailContent').innerText(),/有效网页登录\s+未提供/);
     await page.click('#detailClose');
-    await page.getByRole('button',{name:'新增用户',exact:true}).click(); await fillUser('Operator');
+    await page.getByRole('button',{name:'新增用户',exact:true}).click();
+    await checkPristineRequiredForm(page,'console-user-form-desktop-pristine.png'); await fillUser('Operator');
     await page.fill('#editor-repeat','fictional-password-mismatch'); await page.click('#editorSubmit');
     await page.locator('#editorError').getByText('两次密码不一致。').waitFor(); assert.equal(state.writes.length,0);
     await page.fill('#editor-repeat','fictional-password-123');
@@ -118,12 +143,15 @@ const fixture=createFixture();
     await mobilePage.click('#themeToggle'); await mobilePage.screenshot({path:path.join(output,'console-mobile-dark.png'),fullPage:true});
     await mobilePage.click('#menuToggle'); await mobilePage.keyboard.press('Escape'); assert.equal(await mobilePage.locator('#navScrim').isVisible(),false);
     await mobilePage.click('#menuToggle'); await mobilePage.getByRole('button',{name:'用户',exact:true}).click();
+    await mobilePage.getByRole('button',{name:'新增用户',exact:true}).click();
+    await checkPristineRequiredForm(mobilePage,'console-user-form-mobile-390-pristine.png');
+    await mobilePage.click('#editorCancel');
     await mobilePage.locator('#usersBody tr').first().getByRole('button',{name:'详情',exact:true}).click();
     await mobilePage.locator('#detailContent .detail-section').first().waitFor();
     assert.equal(await mobilePage.getByRole('button',{name:'修改账号名',exact:true}).isDisabled(),true,'当前管理员不可改自己');
     assert.equal(await mobilePage.locator('#detailDialog').evaluate(element => element.scrollWidth <= element.clientWidth),true);
     await mobilePage.screenshot({path:path.join(output,'console-mobile-drawer.png')});
     await mobile.close();
-    console.log('admin console UI: CRUD, validation/422 correction, deletion guards, one-time credentials, backup policies, null states, themes and mobile passed');
+    console.log('admin console UI: CRUD, pristine/native-required forms, validation/422 correction, deletion guards, one-time credentials, backup policies, null states, themes and mobile passed');
   } finally { await browser?.close(); fixture.close(); }
 })().catch(error => { console.error(error); process.exitCode=1; });

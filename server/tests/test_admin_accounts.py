@@ -14,7 +14,6 @@ import zlib
 from httpx import ASGITransport, AsyncClient
 
 from access_control import AccessSettings, SESSION_COOKIE
-from admin_accounts import router
 from admin_accounts_store import AdminAccountsStore
 from async_helpers import run_blocking
 from device_registry import DeviceLock
@@ -56,8 +55,7 @@ class AdminAccountTests(unittest.IsolatedAsyncioTestCase):
         self.path = Path(self.temporary.name) / 'memory.sqlite3'
         self.app = await run_blocking(server_app.create_app, store=MemoryStore(self.path),
                                       summarizer=summarize, access=AccessSettings('accounts', 'https://cat.example'))
-        # 应用注册由主对话负责，本测试只接入自己的临时应用。
-        self.app.include_router(router)
+        # 使用统一应用的实际注册，禁止在测试中补挂路由掩盖集成遗漏。
         self.ids = self.app.state.identities
         self.admins = self.app.state.admin_store
         self.admin = await self.new_user('account-admin')
@@ -108,6 +106,12 @@ class AdminAccountTests(unittest.IsolatedAsyncioTestCase):
         pairing = await run_blocking(self.ids.request_pairing, device_id, credential.token)
         await run_blocking(self.ids.claim_pairing, pairing.code, (owner or self.member).id, client_key=device_id)
         return credential
+
+    async def test_integrated_application_exposes_all_account_operations(self):
+        paths = self.app.openapi()['paths']
+        self.assertIn('post', paths['/api/admin/users'])
+        for method in ('get', 'patch', 'delete'):
+            self.assertIn(method, paths['/api/admin/users/{user_id}'])
 
     async def test_create_normalizes_username_without_granting_role_or_session(self):
         password = 'temporary-new-password'

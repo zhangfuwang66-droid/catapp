@@ -1,6 +1,6 @@
 # 管理后台账号 CRUD 契约
 
-路由由 `admin_accounts.router` 导出，主对话负责在应用注册。依赖安全提交 `cb8b58e` 的 `audited(..., locked=...)` 与 `AdminStore.require_writer`；目标用户锁在审计操作开始前取得，队列可取消，事务内再次核验会话及角色。路径前缀 `/api/admin`，沿用管理员会话、同源 Origin、X-CSRF-Token 和 `no-store`。不提供提权、密码重置或 Key 读取接口。
+路由由 `admin_accounts.router` 导出，统一应用 `app.py` 已注册。账号回归直接使用统一应用，不在测试中重复补挂路由。依赖安全提交 `cb8b58e` 的 `audited(..., locked=...)` 与 `AdminStore.require_writer`；目标用户锁在审计操作开始前取得，队列可取消，事务内再次核验会话及角色。路径前缀 `/api/admin`，沿用管理员会话、同源 Origin、X-CSRF-Token 和 `no-store`。不提供提权、密码重置或 Key 读取接口。
 
 ## 创建普通账号
 

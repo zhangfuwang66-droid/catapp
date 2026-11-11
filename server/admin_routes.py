@@ -48,7 +48,7 @@ async def session(request: Request, user: User = Depends(require_admin)):
 def backup_status(app):
     value = app.state.database_backups.status()
     # 不返回目录、回执内容或异常文本。这里只是备份任务状态，不是恢复演练证明。
-    return {key:value.get(key) for key in ('enabled','running','last_success_at','last_failure_at',
+    return {key:value.get(key) for key in ('enabled','running','scheduler_running','last_success_at','last_failure_at',
             'last_error_type','backup_count','skipped_unverified','pruned')}
 
 

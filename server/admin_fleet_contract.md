@@ -30,3 +30,9 @@
 ```
 
 近7天按UTC自然日聚合，包含今天；空白日期为真实的0。只统计管理员操作，不声称是聊天量、AI用量或计费趋势。磁盘读失败显示unknown，不伪造健康状态。不提供数据库下载、任意命令、在线恢复或网页提权。
+
+## 备份操作
+
+- `GET /backups` 原状态增加 `scheduler_running`。`running` 现在准确表示正在执行备份，不再把调度器等待下一次运行误报为正在备份。
+- `GET /backups/history`：`{items:[{created_at,bytes,verified:true}],total,skipped_unverified,retain,interval_seconds,includes_provider_key:false,status:原备份状态}`。只列校验通过的最近20份数据库备份，不返回路径、文件名、回执或数据库内容。独立模型加密主密钥不在这些数据库快照中，恢复仍须使用部署方安全保留的对应主密钥。
+- `POST /backups/run`：`{confirm:"检查并备份"}`，按已配置策略检查备份、到期时创建并校验。返回 `{ok:true,created:true|false,status,message}`；已有近期备份时created=false并明确说明已检查，没有伪造新备份。未配置备份目录409。写请求同样CSRF、二次确认、审计；排队后开始操作前复核会话。不允许网页修改备份目录或执行恢复。

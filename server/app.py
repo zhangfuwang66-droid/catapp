@@ -50,6 +50,7 @@ from admin_store import AdminStore
 from admin_routes import router as admin_router
 from admin_fleet import router as admin_fleet_router
 from admin_dashboard import router as admin_dashboard_router
+from admin_maintenance import router as admin_maintenance_router
 from admin_operations import AccountOperations, AccountOperationsMiddleware
 from admin_pages import admin_html
 from admin_routes import require_admin
@@ -461,6 +462,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.include_router(admin_router)
     application.include_router(admin_fleet_router)
     application.include_router(admin_dashboard_router)
+    application.include_router(admin_maintenance_router)
     application.mount("/web", PublicWebStaticFiles(WEB_ROOT), name="web")
     if access.mode == 'accounts':
         application.add_middleware(AccountOperationsMiddleware, identities=identities, operations=application.state.account_operations)

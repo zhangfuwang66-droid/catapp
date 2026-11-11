@@ -154,7 +154,8 @@ class DatabaseBackups:
 
     def status(self):
         return {"enabled": self.settings.directory is not None,
-                "running": bool(self._task and not self._task.done()),
+                "running": self._lock.locked(),
+                "scheduler_running": bool(self._task and not self._task.done()),
                 "last_success_at": self.last_success_at, "last_failure_at": self.last_failure_at,
                 "last_error_type": self.last_error_type, "backup_count": self.backup_count,
                 "skipped_unverified": self.skipped_unverified, "pruned": self.pruned}
@@ -169,10 +170,13 @@ class DatabaseBackups:
             await asyncio.gather(self._task, return_exceptions=True)
             self._task = None
 
-    async def run_once(self):
+    async def run_once(self, *, authorize=None):
         if self.settings.directory is None:
             return False
         async with self._lock:
+            # 管理请求排队期间可能已撤销；开始读写备份前复核，调度任务沿用原行为。
+            if authorize is not None:
+                await authorize()
             try:
                 entries, skipped = await run_blocking(self.repository.verified_entries)
                 self.skipped_unverified = skipped

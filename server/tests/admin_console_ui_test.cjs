@@ -14,7 +14,7 @@ const fixture=createFixture();
     const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true});
     const page=await context.newPage(), errors=[]; page.on('pageerror',error => errors.push(error.message));
     fs.mkdirSync(output,{recursive:true});
-    const ready=async() => page.waitForFunction(() => document.getElementById('pageFeedback').hidden);
+    const ready=async() => page.waitForFunction(() => !document.getElementById('shell').hidden && document.getElementById('pageFeedback').hidden && document.querySelector('.view:not([hidden])')?.getAttribute('aria-busy') === 'false');
     const nav=async(view) => { await page.getByRole('button',{name:view,exact:true}).click(); await ready(); };
     const fillUser=async(username,password='fictional-password-123') => {
       await page.fill('#editor-username',username); await page.fill('#editor-password',password); await page.fill('#editor-repeat',password); await page.fill('#editor-confirm',username.toLowerCase());

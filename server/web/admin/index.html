@@ -1,81 +1,89 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
   <title>管理后台 · CyberMiao</title>
-  <link rel="stylesheet" href="/web/admin/admin.css">
-  <script src="/web/admin/admin.js" defer></script>
+  <link rel="stylesheet" href="/web/admin/admin.css"><script src="/web/admin/admin.js" defer></script>
 </head>
 <body>
-  <div class="shell" id="shell" hidden>
-    <aside class="sidebar" id="sidebar">
-      <a class="brand" href="/admin" aria-label="CyberMiao 管理后台"><span class="brand-mark">M</span><span>CyberMiao<small>管理后台</small></span></a>
-      <div class="nav-label">工作台</div>
-      <nav aria-label="管理页面" id="navigation">
-        <button class="nav-item active" data-view="overview" type="button">概览</button>
-        <button class="nav-item" data-view="users" type="button">用户</button>
-        <button class="nav-item" data-view="devices" type="button">设备</button>
-        <button class="nav-item" data-view="storage" type="button">资料与记忆</button>
-        <button class="nav-item" data-view="backups" type="button">备份</button>
-        <button class="nav-item" data-view="audit" type="button">操作审计</button>
-      </nav>
-      <div class="side-footer"><span class="side-dot"></span> 管理员工作区</div>
-    </aside>
-    <div class="main-wrap">
-      <header class="topbar">
-        <button class="menu-toggle icon-button" id="menuToggle" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="sidebar">☰</button>
-        <div class="crumb">CyberMiao <span>/</span> <strong id="crumbTitle">概览</strong></div>
-        <div class="top-actions"><span class="account-name" id="accountName"></span><a href="/" class="account-link">返回我的小喵</a></div>
-      </header>
-      <main id="main">
-        <div class="page-head"><div><p class="eyebrow">ADMIN CONSOLE</p><h1 id="pageTitle">概览</h1><p class="page-subtitle" id="pageSubtitle">账号、设备与服务状态</p></div><button class="refresh-button" id="refreshButton" type="button">刷新</button></div>
-        <p class="feedback" id="pageFeedback" role="status" aria-live="polite" hidden></p>
-
-        <section class="view" id="view-overview" aria-label="概览">
-          <div class="metrics" id="metrics">
-            <div class="metric"><span>用户总数</span><strong id="metricUsers">—</strong><small id="metricUsersNote">等待数据</small></div>
-            <div class="metric"><span>设备总数</span><strong id="metricDevices">—</strong><small id="metricDevicesNote">等待数据</small></div>
-            <div class="metric"><span>服务运行时长</span><strong id="metricUptime">—</strong><small>当前服务进程</small></div>
-            <div class="metric"><span>数据库占用</span><strong id="metricStorage">—</strong><small id="metricStorageNote">等待数据</small></div>
-          </div>
-          <div class="section-heading"><h2>服务状态</h2><span id="overviewTime">—</span></div>
-          <div class="status-grid"><div class="status-line"><span>设备连接</span><strong id="overviewConnections">暂无数据</strong></div><div class="status-line"><span>语音状态</span><strong id="overviewVoice">暂无数据</strong></div><div class="status-line"><span>最近备份</span><strong id="overviewBackup">暂无数据</strong></div></div>
-        </section>
-
-        <section class="view" id="view-users" aria-label="用户" hidden>
-          <div class="toolbar"><form class="search-form" id="userSearchForm"><label class="sr-only" for="userSearch">搜索用户</label><input id="userSearch" type="search" placeholder="搜索账号或用户 ID" autocomplete="off"><label class="sr-only" for="userStatus">账号状态</label><select id="userStatus"><option value="all">全部状态</option><option value="enabled">启用</option><option value="disabled">停用</option></select><button type="submit">搜索</button></form><span class="toolbar-meta" id="usersCount"></span></div>
-          <div class="table-scroll"><table><thead><tr><th scope="col">账号</th><th scope="col">状态</th><th scope="col">设备</th><th scope="col">Key 配置</th><th scope="col">创建时间</th><th scope="col" class="actions-head">操作</th></tr></thead><tbody id="usersBody"></tbody></table></div>
-          <p class="empty" id="usersEmpty" hidden>暂无用户记录</p><div class="pagination" id="usersPagination"><span id="usersPageInfo"></span><div><button id="usersPrev" type="button">上一页</button><button id="usersNext" type="button">下一页</button></div></div>
-        </section>
-
-        <section class="view" id="view-devices" aria-label="设备" hidden>
-          <section id="unbindFollowups" class="followups" aria-label="待核对的解绑操作" hidden><h2>解绑结果待核对</h2><p>先核对设备归属与审计，再决定是否手动重试收尾。刷新不会重试操作。</p><div id="unbindFollowupsBody"></div></section>
-          <div class="toolbar"><form class="search-form" id="deviceSearchForm"><label class="sr-only" for="deviceSearch">搜索设备</label><input id="deviceSearch" type="search" placeholder="搜索设备 ID、名称或主人" autocomplete="off"><label class="sr-only" for="deviceStatus">设备状态</label><select id="deviceStatus"><option value="all">全部状态</option><option value="bound">已绑定</option><option value="unbound">未绑定</option><option value="online">已连接</option><option value="offline">未连接</option></select><button type="submit">搜索</button></form><span class="toolbar-meta" id="devicesCount"></span></div>
-          <div class="table-scroll"><table><thead><tr><th scope="col">设备</th><th scope="col">类型</th><th scope="col">主人 / 借用</th><th scope="col">连接</th><th scope="col">语音</th><th scope="col" class="actions-head">操作</th></tr></thead><tbody id="devicesBody"></tbody></table></div>
-          <p class="empty" id="devicesEmpty" hidden>暂无设备记录</p><div class="pagination" id="devicesPagination"><span id="devicesPageInfo"></span><div><button id="devicesPrev" type="button">上一页</button><button id="devicesNext" type="button">下一页</button></div></div>
-        </section>
-
-        <section class="view" id="view-storage" aria-label="资料与记忆" hidden>
-          <div class="section-heading"><h2>用量概览</h2><span>仅显示元数据</span></div>
-          <div class="metrics compact"><div class="metric"><span>资料数量</span><strong id="storageDocuments">—</strong></div><div class="metric"><span>记忆数量</span><strong id="storageMemories">—</strong></div><div class="metric"><span>总占用</span><strong id="storageBytes">—</strong></div><div class="metric"><span>待处理 / 处理中</span><strong><span id="storagePending">—</span> / <span id="storageProcessing">—</span></strong><small>等待开始 / 正在处理</small></div></div>
-          <div class="section-heading"><h2>处理与归档</h2><span id="storageTime">—</span></div><div class="table-scroll"><table><thead><tr><th scope="col">类型</th><th scope="col">数量</th><th scope="col">状态</th><th scope="col">更新时间</th></tr></thead><tbody id="storageBody"></tbody></table></div><p class="empty" id="storageEmpty" hidden>暂无处理或归档记录</p>
-        </section>
-
-        <section class="view" id="view-backups" aria-label="备份" hidden>
-          <div class="section-heading"><h2>备份状态</h2><span>只读概览</span></div><p class="summary-line" id="backupSummary"></p><div class="table-scroll"><table><thead><tr><th scope="col">时间</th><th scope="col">状态</th><th scope="col">异常类型</th></tr></thead><tbody id="backupsBody"></tbody></table></div><p class="empty" id="backupsEmpty" hidden>暂无备份状态</p>
-        </section>
-
-        <section class="view" id="view-audit" aria-label="操作审计" hidden>
-          <div class="toolbar"><form class="search-form" id="auditSearchForm"><label class="sr-only" for="auditSearch">搜索审计记录</label><input id="auditSearch" type="search" placeholder="搜索操作、对象或管理员" autocomplete="off"><button type="submit">搜索</button></form><span class="toolbar-meta" id="auditCount"></span></div><div class="table-scroll"><table><thead><tr><th scope="col">时间</th><th scope="col">管理员</th><th scope="col">操作</th><th scope="col">对象</th><th scope="col">结果 / 异常</th></tr></thead><tbody id="auditBody"></tbody></table></div><p class="empty" id="auditEmpty" hidden>暂无审计记录</p><div class="pagination" id="auditPagination"><span id="auditPageInfo"></span><div><button id="auditPrev" type="button">上一页</button><button id="auditNext" type="button">下一页</button></div></div>
-        </section>
-      </main>
-    </div>
+<a class="skip-link" href="#main">跳到主要内容</a>
+<div class="shell" id="shell" hidden>
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="/admin" aria-label="CyberMiao 管理后台"><span class="brand-mark">m<span>·</span></span><span>CyberMiao<small>运营管理台</small></span></a>
+    <div class="nav-label">工作空间 <span>WORKSPACE</span></div>
+    <nav aria-label="管理页面" id="navigation">
+      <button class="nav-item active" data-view="overview" data-icon="overview" type="button"><span>概览</span></button>
+      <button class="nav-item" data-view="users" data-icon="users" type="button"><span>用户</span></button>
+      <button class="nav-item" data-view="devices" data-icon="devices" type="button"><span>设备</span></button>
+      <button class="nav-item" data-view="storage" data-icon="storage" type="button"><span>资料与记忆</span></button>
+      <button class="nav-item" data-view="backups" data-icon="backups" type="button"><span>备份</span></button>
+      <button class="nav-item" data-view="audit" data-icon="audit" type="button"><span>操作审计</span></button>
+    </nav>
+    <div class="side-note"><span data-icon="shield"></span><strong>每一次操作，都有记录</strong><p>敏感操作需明确确认，执行结果可在审计中核对。</p></div>
+    <div class="side-footer"><span class="avatar">A</span><div><strong>管理员工作区</strong><small>CyberMiao Console</small></div></div>
+  </aside>
+  <button class="nav-scrim" id="navScrim" aria-label="关闭导航" type="button" tabindex="-1" hidden></button>
+  <div class="main-wrap">
+    <header class="topbar">
+      <button class="menu-toggle icon-button" id="menuToggle" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="sidebar" data-icon="menu"></button>
+      <div class="crumb">工作空间 <span>/</span> <strong id="crumbTitle">概览</strong></div>
+      <div class="top-actions"><button class="icon-button" id="themeToggle" type="button" aria-label="切换为深色主题" title="切换主题" data-icon="theme"></button><span class="account-name" id="accountName"></span><a href="/" class="account-link">返回应用 <span aria-hidden="true">↗</span></a></div>
+    </header>
+    <main id="main" tabindex="-1">
+      <div class="page-head"><div><p class="eyebrow">CYBERMIAO CONSOLE <span>/ 管理工作台</span></p><h1 id="pageTitle">概览</h1><p class="page-subtitle" id="pageSubtitle">账号、设备与服务状态</p></div><button class="refresh-button" id="refreshButton" type="button"><span data-icon="refresh"></span>刷新</button></div>
+      <p class="feedback" id="pageFeedback" role="status" aria-live="polite" hidden></p>
+      <section class="view" id="view-overview" aria-label="概览">
+        <div class="metrics" id="metrics">
+          <div class="metric"><div class="metric-top"><span>用户总数</span><span class="metric-icon" data-icon="users"></span></div><strong id="metricUsers">—</strong><small id="metricUsersNote">等待数据</small></div>
+          <div class="metric"><div class="metric-top"><span>设备总数</span><span class="metric-icon" data-icon="devices"></span></div><strong id="metricDevices">—</strong><small id="metricDevicesNote">等待数据</small></div>
+          <div class="metric"><div class="metric-top"><span>服务运行时长</span><span class="metric-icon" data-icon="clock"></span></div><strong id="metricUptime">—</strong><small>当前服务进程</small></div>
+          <div class="metric"><div class="metric-top"><span>数据库占用</span><span class="metric-icon" data-icon="storage"></span></div><strong id="metricStorage">—</strong><small id="metricStorageNote">等待数据</small></div>
+        </div>
+        <div class="dashboard-grid">
+          <section class="panel activity-panel"><div class="panel-heading"><div><p class="eyebrow">ACTIVITY</p><h2>近 7 天活动</h2></div><span class="subtle-tag">UTC 自然日</span></div><p class="panel-caption">新增账号、登记设备与管理操作，来自实际记录。</p><div id="activityChart" class="activity-chart"><p class="empty-inline">正在读取活动统计…</p></div><div class="chart-legend"><span><i class="legend-user"></i>新增账号</span><span><i class="legend-device"></i>登记设备</span><span><i class="legend-action"></i>管理操作</span></div></section>
+          <section class="panel attention-panel"><div class="panel-heading"><div><p class="eyebrow">ATTENTION</p><h2>需要关注</h2></div><span class="subtle-tag" id="attentionCount">—</span></div><div id="attentionList" class="attention-list"><p class="empty-inline">正在读取待办…</p></div></section>
+        </div>
+        <section class="panel"><div class="panel-heading"><div><p class="eyebrow">SERVICE</p><h2>服务与存储</h2></div><span id="overviewTime" class="panel-time">—</span></div><div class="status-grid"><div class="status-line"><span>设备连接</span><strong id="overviewConnections">暂无数据</strong></div><div class="status-line"><span>语音状态</span><strong id="overviewVoice">暂无数据</strong></div><div class="status-line"><span>最近备份</span><strong id="overviewBackup">暂无数据</strong></div></div><div id="systemInfo" class="system-info" hidden></div></section>
+        <section class="panel"><div class="panel-heading"><div><p class="eyebrow">RECENT LOG</p><h2>近期操作</h2></div><button class="text-button" type="button" id="openAudit">查看全部 <span aria-hidden="true">↗</span></button></div><div id="recentAudit" class="recent-audit"><p class="empty-inline">正在读取审计记录…</p></div></section>
+      </section>
+      <section class="view" id="view-users" aria-label="用户" hidden>
+        <div class="toolbar"><form class="search-form" id="userSearchForm"><label class="sr-only" for="userSearch">搜索用户</label><input id="userSearch" type="search" placeholder="搜索账号或用户 ID" autocomplete="off" maxlength="80"><label class="sr-only" for="userStatus">账号状态</label><select id="userStatus"><option value="all">全部状态</option><option value="enabled">启用</option><option value="disabled">停用</option></select><button type="submit">搜索</button></form><button class="primary-button" id="createUser" type="button"><span data-icon="plus"></span>新增用户</button></div>
+        <div class="list-caption"><span>账号目录</span><span id="usersCount"></span></div><div class="table-scroll"><table><thead><tr><th scope="col">账号</th><th scope="col">状态</th><th scope="col">设备</th><th scope="col">Key 配置</th><th scope="col">创建时间</th><th scope="col" class="actions-head">操作</th></tr></thead><tbody id="usersBody"></tbody></table></div>
+        <p class="empty" id="usersEmpty" hidden>暂无用户记录</p><div class="pagination" id="usersPagination"><span id="usersPageInfo"></span><div><button id="usersPrev" type="button">上一页</button><button id="usersNext" type="button">下一页</button></div></div>
+      </section>
+      <section class="view" id="view-devices" aria-label="设备" hidden>
+        <section id="unbindFollowups" class="followups" aria-label="待核对的解绑操作" hidden><h2>解绑结果待核对</h2><p>先核对设备归属与审计，再决定是否手动重试收尾。刷新不会重试操作。</p><div id="unbindFollowupsBody"></div></section>
+        <div class="toolbar"><form class="search-form" id="deviceSearchForm"><label class="sr-only" for="deviceSearch">搜索设备</label><input id="deviceSearch" type="search" placeholder="搜索设备 ID、名称或主人" autocomplete="off" maxlength="80"><label class="sr-only" for="deviceStatus">设备状态</label><select id="deviceStatus"><option value="all">全部状态</option><option value="bound">已绑定</option><option value="unbound">未绑定</option><option value="online">已连接</option><option value="offline">未连接</option></select><button type="submit">搜索</button></form><button class="primary-button" id="createDevice" type="button"><span data-icon="plus"></span>登记设备</button></div>
+        <div class="list-caption"><span>设备目录</span><span id="devicesCount"></span></div><div class="table-scroll"><table><thead><tr><th scope="col">设备</th><th scope="col">类型</th><th scope="col">主人 / 借用</th><th scope="col">连接</th><th scope="col">语音</th><th scope="col" class="actions-head">操作</th></tr></thead><tbody id="devicesBody"></tbody></table></div>
+        <p class="empty" id="devicesEmpty" hidden>暂无设备记录</p><div class="pagination" id="devicesPagination"><span id="devicesPageInfo"></span><div><button id="devicesPrev" type="button">上一页</button><button id="devicesNext" type="button">下一页</button></div></div>
+      </section>
+      <section class="view" id="view-storage" aria-label="资料与记忆" hidden>
+        <div class="section-heading"><h2>用量概览</h2><span>仅显示元数据</span></div>
+        <div class="metrics compact"><div class="metric"><span>资料数量</span><strong id="storageDocuments">—</strong><small>已入库资料</small></div><div class="metric"><span>记忆数量</span><strong id="storageMemories">—</strong><small>保留的记忆条目</small></div><div class="metric"><span>总占用</span><strong id="storageBytes">—</strong><small>资料、记忆与归档逻辑容量</small></div><div class="metric"><span>待处理 / 处理中</span><strong><span id="storagePending">—</span> / <span id="storageProcessing">—</span></strong><small>等待开始 / 正在处理</small></div></div>
+        <section class="panel"><div class="panel-heading"><h2>资料处理分布</h2><span class="panel-time">当前入库状态</span></div><div id="storageDistribution" class="distribution"></div></section>
+        <div class="section-heading"><h2>处理与归档</h2><span id="storageTime">—</span></div><div class="table-scroll"><table><thead><tr><th scope="col">类型</th><th scope="col">数量</th><th scope="col">状态</th><th scope="col">更新时间</th></tr></thead><tbody id="storageBody"></tbody></table></div><p class="empty" id="storageEmpty" hidden>暂无处理或归档记录</p><p class="footnote">此处仅展示汇总数据，不提供私人资料、对话或记忆正文。</p>
+      </section>
+      <section class="view" id="view-backups" aria-label="备份" hidden>
+        <div class="toolbar"><p class="panel-caption">按服务端已配置策略检查、创建并校验数据库备份</p><button id="runBackup" class="primary-button" type="button"><span data-icon="backups"></span>检查并备份</button></div>
+        <div class="metrics compact"><div class="metric"><span>自动备份</span><strong id="backupEnabled">—</strong><small id="backupRunning">等待数据</small></div><div class="metric"><span>已保留备份</span><strong id="backupCount">—</strong><small>经过验证的备份</small></div><div class="metric"><span>最近成功</span><strong class="metric-date" id="backupLastSuccess">—</strong><small>服务端记录的成功时间</small></div><div class="metric"><span>跳过未验证</span><strong id="backupSkipped">—</strong><small>不作为可恢复备份计入</small></div></div>
+        <div class="section-heading"><h2>备份执行记录</h2><span>只读概览</span></div><p class="summary-line" id="backupSummary"></p><div class="table-scroll"><table><thead><tr><th scope="col">时间</th><th scope="col">状态</th><th scope="col">异常类型</th></tr></thead><tbody id="backupsBody"></tbody></table></div><p class="empty" id="backupsEmpty" hidden>暂无备份状态</p>
+        <div class="section-heading"><h2>已验证的备份</h2><span>最近 20 份</span></div><p id="backupPolicy" class="summary-line"></p><div class="table-scroll"><table><thead><tr><th scope="col">创建时间</th><th scope="col">容量</th><th scope="col">校验</th></tr></thead><tbody id="backupHistoryBody"></tbody></table></div><p id="backupHistoryEmpty" class="empty" hidden>暂无备份历史</p>
+        <section class="panel info-panel"><span data-icon="shield"></span><div><h2>恢复需要受控维护</h2><p>数据库快照不包含独立的模型加密主密钥，部署方需另行安全保存。成功备份记录不等于已完成恢复演练；恢复请通过停服维护流程执行。</p></div></section>
+      </section>
+      <section class="view" id="view-audit" aria-label="操作审计" hidden>
+        <div class="toolbar"><form class="search-form" id="auditSearchForm"><label class="sr-only" for="auditSearch">搜索审计记录</label><input id="auditSearch" type="search" placeholder="搜索操作、对象或管理员" autocomplete="off" maxlength="80"><button type="submit">搜索</button></form><span class="subtle-tag">保留操作轨迹</span></div><div class="list-caption"><span>管理操作记录</span><span id="auditCount"></span></div><div class="table-scroll"><table><thead><tr><th scope="col">时间</th><th scope="col">管理员</th><th scope="col">操作</th><th scope="col">对象</th><th scope="col">结果 / 异常</th></tr></thead><tbody id="auditBody"></tbody></table></div><p class="empty" id="auditEmpty" hidden>暂无审计记录</p><div class="pagination" id="auditPagination"><span id="auditPageInfo"></span><div><button id="auditPrev" type="button">上一页</button><button id="auditNext" type="button">下一页</button></div></div><p class="footnote">“未完成”表示没有完整成功回执，操作可能已部分生效。请核对目标后决定后续操作。</p>
+      </section>
+      <footer class="page-footer"><span>CyberMiao · 运营管理台</span><span>操作有边界，结果可核对</span></footer>
+    </main>
   </div>
-  <div class="gate" id="gate" role="status">正在确认管理员权限…</div>
-  <dialog id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog" id="confirmForm"><p class="eyebrow">确认操作</p><h2 id="confirmTitle"></h2><p id="confirmDescription"></p><label for="confirmInput" id="confirmLabel" hidden>输入确认内容</label><input id="confirmInput" autocomplete="off" spellcheck="false" hidden><p class="dialog-error" id="confirmError" role="alert"></p><div class="dialog-actions"><button id="confirmCancel" value="cancel" type="button">取消</button><button id="confirmFollowup" type="button" hidden>核对解绑结果</button><button id="confirmSubmit" class="danger-button" type="submit">确认</button></div></form></dialog>
-  <dialog id="unbindDialog" aria-labelledby="unbindTitle"><form method="dialog" id="unbindForm"><p class="eyebrow">解绑操作跟进</p><h2 id="unbindTitle">核对解绑结果</h2><p id="unbindTarget"></p><p id="unbindStatus" role="status" aria-live="polite"></p><label id="unbindLabel" for="unbindConfirm" hidden>重新输入设备编号</label><input id="unbindConfirm" autocomplete="off" spellcheck="false" hidden><div class="dialog-actions"><button id="unbindClose" type="button">关闭</button><button id="unbindCheck" type="button">重新核对</button><button id="unbindRetry" type="submit" class="danger-button" hidden>确认重试收尾</button></div></form></dialog>
-  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</div>
+<div class="gate" id="gate" role="status">正在确认管理员权限…</div>
+<dialog id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog" id="confirmForm"><p class="eyebrow">确认操作</p><h2 id="confirmTitle"></h2><p id="confirmDescription"></p><label for="confirmInput" id="confirmLabel" hidden>输入确认内容</label><input id="confirmInput" autocomplete="off" spellcheck="false" hidden><p class="dialog-error" id="confirmError" role="alert"></p><div class="dialog-actions"><button id="confirmCancel" value="cancel" type="button">取消</button><button id="confirmFollowup" type="button" hidden>核对解绑结果</button><button id="confirmSubmit" class="danger-button" type="submit">确认</button></div></form></dialog>
+<dialog id="unbindDialog" aria-labelledby="unbindTitle"><form method="dialog" id="unbindForm"><p class="eyebrow">解绑操作跟进</p><h2 id="unbindTitle">核对解绑结果</h2><p id="unbindTarget"></p><p id="unbindStatus" role="status" aria-live="polite"></p><label id="unbindLabel" for="unbindConfirm" hidden>重新输入设备编号</label><input id="unbindConfirm" autocomplete="off" spellcheck="false" hidden><div class="dialog-actions"><button id="unbindClose" type="button">关闭</button><button id="unbindCheck" type="button">重新核对</button><button id="unbindRetry" type="submit" class="danger-button" hidden>确认重试收尾</button></div></form></dialog>
+<dialog class="drawer" id="detailDialog" aria-labelledby="detailTitle"><div class="drawer-head"><div><p class="eyebrow" id="detailKind">详情</p><h2 id="detailTitle">正在加载…</h2></div><button class="icon-button" id="detailClose" type="button" aria-label="关闭详情" data-icon="close"></button></div><div id="detailContent" class="drawer-content" aria-live="polite"></div></dialog>
+<dialog id="editorDialog" aria-labelledby="editorTitle"><form id="editorForm"><p class="eyebrow">管理操作</p><h2 id="editorTitle"></h2><p id="editorDescription"></p><div id="editorFields"></div><p class="dialog-error" id="editorError" role="alert"></p><div class="dialog-actions"><button id="editorCancel" type="button">取消</button><button id="editorSubmit" type="submit" class="primary-button">保存</button></div></form></dialog>
+<dialog id="credentialDialog" aria-labelledby="credentialTitle"><p class="eyebrow">仅此次展示</p><h2 id="credentialTitle">安全保存设备凭证</h2><p id="credentialTarget"></p><p>这是设备认证凭证，仅保留在当前弹窗。请复制或下载后，通过既有安全配发工具更新设备；关闭后无法再次查看。此页面不连接实体设备。</p><label for="credentialValue">设备凭证</label><textarea id="credentialValue" readonly rows="4" spellcheck="false"></textarea><p id="credentialFeedback" role="status"></p><div class="dialog-actions"><button id="credentialCopy" type="button">复制凭证</button><button id="credentialDownload" type="button">下载凭证</button><button id="credentialClose" type="button" class="primary-button">已保存，关闭</button></div></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>
+

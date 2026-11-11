@@ -27,6 +27,8 @@ class AccountOperationsMiddleware:
         self.app,self.identities,self.operations = app,identities,operations
 
     async def __call__(self,scope,receive,send):
+        # 管理写请求自行在各级锁后及变更事务内复核会话。不能将已开始的
+        # 管理清理任务加入 cancel_user，否则两个管理员互撤会话时会互等。
         if scope['type'] != 'http' or not scope['path'].startswith('/api/') or scope['path'].startswith('/api/admin/'):
             return await self.app(scope,receive,send)
         cookies = SimpleCookie()

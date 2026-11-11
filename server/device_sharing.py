@@ -55,9 +55,11 @@ class DeviceSharing:
         db.execute("UPDATE device_loans SET ended_at=? WHERE device_id=? AND ended_at IS NULL", (now,device_id))
         db.execute("UPDATE device_memberships SET ended_at=? WHERE device_id=? AND kind='guest' AND ended_at IS NULL", (now,device_id))
 
-    def unbind_device(self, device_id, user_id):
+    def unbind_device(self, device_id, user_id, *, authorize=None):
         now = self.clock()
         with self._transaction(write=True) as db:
+            if authorize is not None:
+                authorize(db)
             row = db.execute("SELECT * FROM devices WHERE id=? AND owner_user_id=? AND revoked_at IS NULL", (device_id,user_id)).fetchone()
             if row is None:
                 raise ValueError('设备不存在或无权解绑')
@@ -130,7 +132,9 @@ class DeviceSharing:
             row = db.execute("SELECT voice_paused FROM device_preferences WHERE user_id=? AND device_id=?", (user_id,device_id)).fetchone()
             return bool(row and row[0])
 
-    def save_voice_preference(self, user_id, device_id, paused):
+    def save_voice_preference(self, user_id, device_id, paused, *, authorize=None):
         with self._transaction(write=True) as db:
+            if authorize is not None:
+                authorize(db)
             db.execute("""INSERT INTO device_preferences(user_id,device_id,voice_paused) VALUES(?,?,?)
                 ON CONFLICT(user_id,device_id) DO UPDATE SET voice_paused=excluded.voice_paused""", (user_id,device_id,int(paused)))

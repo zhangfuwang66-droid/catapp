@@ -2,6 +2,11 @@
 
 import time
 from database_schema import validate_admin_schema
+from identity_store import token_digest
+
+
+class AdminSessionExpired(PermissionError):
+    """当前网页登录已失效；区别于仍登录但已撤销管理员角色。"""
 
 
 class AdminStore:
@@ -57,9 +62,19 @@ class AdminStore:
             return [dict(r) for r in db.execute("""SELECT u.id,u.username,u.disabled,a.granted_at
                 FROM admin_roles a JOIN auth_users u ON u.id=a.user_id ORDER BY u.username""")]
 
-    def begin_action(self, actor, target_type, target_id, action):
+    def require_writer(self, db, actor_id, session_token):
+        if not db.execute("""SELECT 1 FROM auth_sessions s JOIN auth_users u ON u.id=s.user_id
+            WHERE s.token_hash=? AND s.user_id=? AND s.expires_at>? AND s.revoked_at IS NULL AND u.disabled=0""",
+            (token_digest(session_token),actor_id,self.identities.clock())).fetchone():
+            raise AdminSessionExpired("管理员网页登录已失效")
+        if not self._is_admin(db, actor_id):
+            raise PermissionError("管理员权限已撤销")
+
+    def begin_action(self, actor, target_type, target_id, action, *, session_token=None):
         with self.identities._transaction(write=True) as db:
-            if not self._is_admin(db, actor.id):
+            if session_token is not None:
+                self.require_writer(db,actor.id,session_token)
+            elif not self._is_admin(db, actor.id):
                 raise PermissionError("管理员权限已撤销")
             return db.execute("""INSERT INTO admin_audit(actor_id,actor_username,target_type,target_id,action,result,created_at)
                 VALUES(?,?,?,?,?,'started',?)""", (actor.id,actor.username,target_type,target_id,action,time.time())).lastrowid
@@ -73,10 +88,12 @@ class AdminStore:
             row = db.execute("SELECT id,username,disabled FROM auth_users WHERE id=?", (user_id,)).fetchone()
             return dict(row) if row else None
 
-    def change_user(self, actor_id, user_id, disabled=None):
+    def change_user(self, actor_id, user_id, disabled=None, *, session_token=None):
         """同步撤销会话；禁用用户即使持有硬件连接也不能继续获得授权。"""
         with self.identities._transaction(write=True) as db:
-            if not self._is_admin(db, actor_id):
+            if session_token is not None:
+                self.require_writer(db,actor_id,session_token)
+            elif not self._is_admin(db, actor_id):
                 raise PermissionError("管理员权限已撤销")
             if actor_id == user_id:
                 raise ValueError("不能对当前管理员执行此操作")

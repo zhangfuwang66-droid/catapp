@@ -901,7 +901,8 @@ $('credentialCopy').addEventListener('click',async() => {
 });
 $('credentialDownload').addEventListener('click',() => {
   if(!credentialMemory) return;
-  const url=URL.createObjectURL(new Blob([JSON.stringify(credentialMemory,null,2)],{type:'application/json'}));
+  const exported={version:1,device_id:credentialMemory.device_id,device_token:credentialMemory.token};
+  const url=URL.createObjectURL(new Blob([JSON.stringify(exported,null,2)],{type:'application/json'}));
   const link=node('a'); link.href=url; link.download=`${String(credentialMemory.device_id).replace(/[^A-Za-z0-9_-]/g,'_')}-credential.secret.json`;
   link.click(); setTimeout(() => URL.revokeObjectURL(url),1000); text('credentialFeedback','下载已发起，请安全保存凭证文件。');
 });

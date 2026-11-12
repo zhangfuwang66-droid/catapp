@@ -97,7 +97,8 @@ const fixture=createFixture();
     const secret=await page.locator('#credentialValue').inputValue(); assert.match(secret,/fictional-device-token/);
     const download=page.waitForEvent('download'); await page.click('#credentialDownload'); const file=await download;
     assert.equal(file.suggestedFilename(),'cat-ui-created-credential.secret.json');
-    assert.equal(JSON.parse(fs.readFileSync(await file.path(),'utf8')).token,secret);
+    assert.deepEqual(JSON.parse(fs.readFileSync(await file.path(),'utf8')),
+      {version:1,device_id:'cat-ui-created',device_token:secret},'下载文件直接符合USB配发工具的凭证契约');
     assert.doesNotMatch(await page.evaluate(() => JSON.stringify({local:{...localStorage},session:{...sessionStorage}})),/fictional-device-token|fictional-password/);
     await page.keyboard.press('Escape'); assert.equal(await page.locator('#credentialValue').inputValue(),'');
     await page.locator('#devicesBody tr').filter({hasText:'cat-ui-created'}).getByRole('button',{name:'详情',exact:true}).click();

@@ -1,6 +1,8 @@
 # 管理后台现网部署与成对回退操作稿
 
-状态：本地集成验收已完成（见 `admin-console-local.md`）；隔离副本迁移及服务器操作仍待逐项批准，本文命令尚未在服务器执行。
+2026-11-12 更新：已获用户明确批准，将固定提交 `4cdc0b3` 部署到现有云端服务，并显式授予 `owner` 管理员角色。实际发布、Linux/Python 3.10 验证、备份及公网验收结果见[云端发布验收](admin-console-cloud-acceptance.md)。
+
+以下保留通用操作稿，不能视为可直接重复运行的幂等脚本。现网入口已改变；再次发布前必须重新核对旧入口、数据库和备份路径。原文中的占位符、旧入口和回退命令用于解释成对恢复，不应直接套用到新的发布。
 
 目标是 `123.57.23.227` 的 `cybermiao-test.service`。现有代码入口 `/opt/cybermiao-test/app` 指向 `/opt/cybermiao-test/upgrades/accounts-v2-6ad995182c54/source`，数据库为 `/var/lib/cybermiao-test/memory.sqlite3`。以下命令仅供批准后由操作者在服务器执行。部署包须来自经过验收的固定 Git commit，不能从未提交的工作树打包。小猫 `cat-649020AD4F7C` 的语音保持暂停。
 

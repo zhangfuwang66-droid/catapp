@@ -70,6 +70,7 @@ class AdminWriterRevocationTests(unittest.IsolatedAsyncioTestCase):
         self.credential = self.ids.register_device("cat-fictional-writer", "Fictional writer")
         pairing = self.ids.request_pairing(self.credential.device_id, self.credential.token)
         self.ids.claim_pairing(pairing.code, self.target.id, client_key="fictional")
+        self.ids.save_voice_preference(self.target.id, self.credential.device_id, False)
         self.gate = ObservedLock()
         self.app.state.admin_mutation_lock = self.gate
         self.client = AsyncClient(transport=ASGITransport(self.app), base_url="http://testserver")

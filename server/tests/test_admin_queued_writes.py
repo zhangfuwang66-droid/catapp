@@ -132,6 +132,7 @@ class AdminQueuedWriteTests(unittest.IsolatedAsyncioTestCase):
         credential = self.ids.register_device('cat-queued', '排队写入测试')
         pairing = self.ids.request_pairing(credential.device_id, credential.token)
         self.ids.claim_pairing(pairing.code, self.member.id, client_key='fixture')
+        self.ids.save_voice_preference(self.member.id, 'cat-queued', False)
         self.conversation = self.store.create_conversation(self.member.id, 'cat-queued')
         self.store.append_message(self.conversation, 'user', '撤销后必须保留的记忆')
         self.app.state.memory_retention.set_mode(self.member.id, 'cat-queued', 'temporary')

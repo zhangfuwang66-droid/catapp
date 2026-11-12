@@ -87,6 +87,29 @@ class FleetStore:
             blockers.append('设备存在记忆保留策略')
         return blockers
 
+    @staticmethod
+    def _lifecycle(device, credentials):
+        revoked = device['revoked_at'] is not None
+        usable_credential = credentials['active_count'] > 0 and not revoked
+        bound = device['owner_user_id'] is not None
+        if not usable_credential:
+            state = 'revoked' if revoked else 'credential_missing'
+            next_action = 'unbind_to_transfer' if bound and not revoked else 'rotate_credential_and_provision'
+            message = ('硬件凭证不可用；请先解绑，再签发新凭证并通过 USB 安全配发。' if bound and not revoked else
+                       '硬件凭证不可用；请由管理员签发新凭证，再通过 USB 安全配发。旧凭证不能用于重新配对。')
+        elif not bound:
+            state, next_action = 'unbound', 'wait_for_pairing'
+            message = '设备未绑定账号；持有匹配凭证的设备联网后可申请配对码。刚签发的新凭证需先通过 USB 配发。'
+        else:
+            state = 'borrowed' if device['loan_active'] else 'bound'
+            next_action = 'unbind_to_transfer'
+            message = '转交设备请使用解绑，保留 Wi-Fi 与硬件凭证；安全停用会撤销凭证，不会自动显示配对码。'
+        return {'state': state, 'pairing_available': usable_credential and not bound,
+                'recovery_requires_usb': not usable_credential,
+                'can_unbind': not revoked and bound,
+                'can_rotate_credential': revoked or not bound,
+                'next_action': next_action, 'message': message}
+
     def detail(self, device_id):
         with self.identities._transaction() as db:
             device = self._snapshot(db, device_id)
@@ -102,6 +125,7 @@ class FleetStore:
                 (device_id, self.identities.clock())).fetchone()[0]
             blockers = self._delete_blockers(db, device)
             return {'credentials': credentials, 'pairings': {'active_count': active_pairings},
+                    'lifecycle': self._lifecycle(device, credentials),
                     'history': self._history(db, device_id), 'can_delete': not blockers,
                     'delete_blockers': blockers}
 
@@ -124,8 +148,15 @@ class FleetStore:
                          'created_at', '_credential_version')):
                     raise HTTPException(409, '设备归属或状态已改变，请刷新后重新确认')
             if operation in ('register', 'rotate'):
-                if operation == 'rotate' and current['owner_user_id'] is not None:
+                if operation == 'rotate' and current['owner_user_id'] is not None and current['revoked_at'] is None:
                     raise HTTPException(409, '请先解绑设备，再轮换硬件凭证')
+                if operation == 'rotate':
+                    # 用户安全停用保留旧主人，恢复时一次性结束旧使用权；历史不删除。
+                    self.identities._end_loans(db, device_id)
+                    db.execute('''UPDATE device_memberships SET ended_at=?
+                        WHERE device_id=? AND ended_at IS NULL''', (now, device_id))
+                    db.execute('UPDATE devices SET owner_user_id=NULL,bound_at=NULL WHERE id=?', (device_id,))
+                    db.execute('UPDATE device_preferences SET voice_paused=1 WHERE device_id=?', (device_id,))
                 token = secrets.token_urlsafe(32)
                 db.execute('''UPDATE device_credentials SET revoked_at=?
                     WHERE device_id=? AND revoked_at IS NULL''', (now, device_id))
@@ -136,7 +167,9 @@ class FleetStore:
                 db.execute('UPDATE devices SET revoked_at=NULL,access_epoch=access_epoch+1 WHERE id=?', (device_id,))
                 db.execute('DELETE FROM auth_rate_limits WHERE bucket=?', ('pair-request:' + device_id,))
                 return {'ok': True, 'device_id': device_id,
-                        'credential': {'device_id': device_id, 'token': token}, 'credential_once': True}
+                        'credential': {'device_id': device_id, 'token': token}, 'credential_once': True,
+                        'binding_cleared': True, 'requires_usb_provisioning': True,
+                        'message': '新凭证仅显示一次，请通过 USB 安全配发后联网获取配对码；旧凭证已失效，语音不会自动恢复。'}
             if operation == 'rename':
                 db.execute('UPDATE devices SET display_name=? WHERE id=?', (display_name, device_id))
             elif operation == 'revoke':
@@ -163,6 +196,12 @@ class FleetStore:
                     raise HTTPException(409, '设备仍有关联数据，请保留撤销记录') from None
             else:
                 raise ValueError('未知设备操作')
+            if operation == 'revoke':
+                return {'ok': True, 'requires_usb_provisioning': True,
+                        'message': '已安全停用并撤销硬件凭证；不会自动显示配对码。恢复使用需签发新凭证并通过 USB 配发，历史记忆保留。'}
+            if operation == 'delete':
+                return {'ok': True, 'requires_usb_provisioning': True,
+                        'message': '空设备记录已删除，旧凭证永久失效；同一设备编号可重新登记并通过 USB 配发新凭证。'}
             return {'ok': True}
 
 

@@ -494,6 +494,9 @@ class IdentityStore(DeviceSharing):
                                (user_id, now, pairing["device_id"]))
             connection.execute("INSERT INTO device_memberships VALUES(?,?,?,?,?,NULL)",
                                (uuid.uuid4().hex,pairing["device_id"],user_id,'owner',now))
+            # 首次绑定和重新绑定都需主人明确开启语音，不能沿用旧的收音状态。
+            connection.execute("""INSERT INTO device_preferences(user_id,device_id,voice_paused) VALUES(?,?,1)
+                ON CONFLICT(user_id,device_id) DO UPDATE SET voice_paused=1""", (user_id, pairing['device_id']))
             connection.execute("UPDATE device_pairings SET claimed_by=?, claimed_at=? WHERE code_hash=?",
                                (user_id, now, pairing["code_hash"]))
             connection.execute("UPDATE device_pairings SET invalidated_at=? WHERE device_id=? AND claimed_at IS NULL AND invalidated_at IS NULL",

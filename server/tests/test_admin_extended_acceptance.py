@@ -180,6 +180,92 @@ class IndependentDeviceCrudTests(ExtendedFixture):
         self.assertEqual(detail["credentials"]["active_count"], 1)
         self.assertNotIn(new["token"], str(detail))
 
+    def test_user_revoked_bound_device_recovers_with_new_usb_credential_and_private_history(self):
+        self.borrow()
+        self.seed_history()
+        self.identities.save_voice_preference(self.users['alice'].id, 'cat-alice', False)
+        self.identities.save_voice_preference(self.users['bob'].id, 'cat-alice', False)
+        before = self.epoch('cat-alice')
+        response = self.request('POST', '/api/devices/cat-alice/revoke', actor='alice')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()['requires_usb_provisioning'])
+        detail = self.get('devices/cat-alice').json()
+        self.assertEqual(detail['device']['owner_user_id'], self.users['alice'].id)
+        self.assertEqual(detail['lifecycle']['state'], 'revoked')
+        self.assertTrue(detail['lifecycle']['can_rotate_credential'])
+        self.assertFalse(detail['lifecycle']['can_unbind'])
+        self.assertTrue(detail['lifecycle']['recovery_requires_usb'])
+        self.assertFalse(detail['lifecycle']['pairing_available'])
+        self.assertEqual(self.request('POST', '/api/devices/cat-alice/pairing',
+                                      headers=self.device_headers).status_code, 401)
+        response = self.write_device('cat-alice', 'rotate-credential')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()['requires_usb_provisioning'])
+        self.assertTrue(response.json()['binding_cleared'])
+        new = response.json()['credential']['token']
+        self.assertNotEqual(new, self.device_headers['Authorization'].split()[1])
+        self.assertGreater(self.epoch('cat-alice'), before)
+        self.assertIsNone(self.identities.credential_device(
+            'cat-alice', self.device_headers['Authorization'].split()[1]))
+        detail = self.get('devices/cat-alice').json()
+        self.assertEqual(detail['lifecycle']['state'], 'unbound')
+        self.assertTrue(detail['lifecycle']['pairing_available'])
+        self.assertIsNone(detail['device']['owner_user_id'])
+        self.assertFalse(detail['device']['loan_active'])
+        self.assertFalse(detail['can_delete'])
+        for name in ('alice', 'bob'):
+            self.assertTrue(self.identities.voice_preference(self.users[name].id, 'cat-alice'))
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM device_memberships WHERE ended_at IS NULL').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM device_loans WHERE ended_at IS NULL').fetchone()[0], 0)
+        new_headers = {'Authorization': 'Bearer ' + new}
+        invitation = self.request('POST', '/api/devices/cat-alice/pairing', headers=new_headers)
+        self.assertEqual(invitation.status_code, 200, invitation.text)
+        bound = self.request('POST', '/api/devices/pair', actor='bob', json={'code': invitation.json()['code']})
+        self.assertEqual(bound.status_code, 200, bound.text)
+        self.assertIsNone(self.identities.accessible_device('cat-alice', self.users['alice'].id))
+        self.assertEqual(self.identities.accessible_device('cat-alice', self.users['bob'].id)['owner_user_id'], self.users['bob'].id)
+        self.assertTrue(self.identities.voice_preference(self.users['bob'].id, 'cat-alice'))
+        self.assert_private_history()
+        self.assertEqual(self.request('POST', '/api/devices/cat-alice/pairing',
+                                      headers=self.device_headers).status_code, 401)
+
+    def test_lifecycle_distinguishes_transfer_from_credential_revocation(self):
+        lifecycle = self.get('devices/cat-alice').json()['lifecycle']
+        self.assertEqual(lifecycle['state'], 'bound')
+        self.assertTrue(lifecycle['can_unbind'])
+        self.assertFalse(lifecycle['can_rotate_credential'])
+        self.assertFalse(lifecycle['pairing_available'])
+        self.assertFalse(lifecycle['recovery_requires_usb'])
+        self.borrow()
+        self.assertEqual(self.get('devices/cat-alice').json()['lifecycle']['state'], 'borrowed')
+        response = self.request('POST', '/api/devices/cat-alice/unbind', actor='alice',
+                                json={'confirm_device_id': 'cat-alice'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()['requires_usb_provisioning'])
+        lifecycle = self.get('devices/cat-alice').json()['lifecycle']
+        self.assertEqual(lifecycle['state'], 'unbound')
+        self.assertTrue(lifecycle['pairing_available'])
+        self.assertFalse(lifecycle['can_unbind'])
+        self.assertTrue(lifecycle['can_rotate_credential'])
+        self.assertFalse(lifecycle['recovery_requires_usb'])
+        self.assertEqual(self.request('POST', '/api/devices/cat-alice/pairing',
+                                      headers=self.device_headers).status_code, 200)
+
+    def test_delete_empty_device_then_register_same_chip_id_never_revives_old_credential(self):
+        credential = self.register('cat-same-chip')
+        self.assertEqual(self.write_device('cat-same-chip', 'revoke').status_code, 200)
+        deleted = self.write_device('cat-same-chip', 'delete')
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertTrue(deleted.json()['requires_usb_provisioning'])
+        replacement = self.register('cat-same-chip')
+        self.assertNotEqual(credential['token'], replacement['token'])
+        self.assertEqual(self.request('POST', '/api/devices/cat-same-chip/pairing', headers={
+            'Authorization': 'Bearer ' + credential['token']}).status_code, 401)
+        response = self.request('POST', '/api/devices/cat-same-chip/pairing', headers={
+            'Authorization': 'Bearer ' + replacement['token']})
+        self.assertEqual(response.status_code, 200, response.text)
+
     def test_lost_rotation_response_does_not_expose_token_and_allows_manual_recovery(self):
         credential = self.register()
         device_id = credential["device_id"]

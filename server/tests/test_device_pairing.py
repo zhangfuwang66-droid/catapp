@@ -96,6 +96,21 @@ class PairingStoreTests(unittest.TestCase):
         with self.assertRaises(RateLimited):
             self.store.claim_pairing("invalid", self.alice.id, client_key="local")
 
+    def test_first_and_repeat_binding_pause_voice_until_owner_explicitly_resumes(self):
+        invitation = self.store.request_pairing('cat-a', self.credential.token)
+        self.store.claim_pairing(invitation.code, self.alice.id, client_key='local')
+        self.assertTrue(self.store.voice_preference(self.alice.id, 'cat-a'))
+        self.store.save_voice_preference(self.alice.id, 'cat-a', False)
+        self.store.unbind_device('cat-a', self.alice.id)
+        invitation = self.store.request_pairing('cat-a', self.credential.token)
+        self.store.claim_pairing(invitation.code, self.alice.id, client_key='local')
+        self.assertTrue(self.store.voice_preference(self.alice.id, 'cat-a'))
+        self.store.unbind_device('cat-a', self.alice.id)
+        invitation = self.store.request_pairing('cat-a', self.credential.token)
+        self.store.claim_pairing(invitation.code, self.bob.id, client_key='local')
+        self.assertTrue(self.store.voice_preference(self.bob.id, 'cat-a'))
+        self.assertTrue(self.store.voice_preference(self.alice.id, 'cat-a'))
+
     def test_admin_keeps_device_token_in_private_file_and_refuses_overwrite(self):
         output = io.StringIO()
         private = Path(self.temp.name) / "cat-b.secret.json"
@@ -147,6 +162,8 @@ class PairingRoutesTests(unittest.TestCase):
         pair = self.client.post("/api/devices/pair", json={"code": code, "user_id": self.bob.id}, headers=self.a)
         self.assertEqual(pair.status_code, 200)
         self.assertEqual(pair.json()["device"]["owner_user_id"], self.alice.id)
+        self.assertTrue(pair.json()['voice_paused'])
+        self.assertTrue(self.store.voice_preference(self.alice.id, 'cat-a'))
         self.assertEqual(len(self.client.get("/api/devices", headers=self.a).json()["devices"]), 1)
         self.assertEqual(self.client.get("/api/devices", headers=self.b).json()["devices"], [])
         self.assertEqual(self.client.post("/api/devices/pair", json={"code": code}, headers=self.b).status_code, 400)

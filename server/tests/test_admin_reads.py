@@ -48,6 +48,7 @@ class AdminReadFixture(unittest.TestCase):
         if bound:
             pairing = self.ids.request_pairing(device_id, credential.token)
             self.ids.claim_pairing(pairing.code, (owner or self.owner).id, client_key=device_id)
+            self.ids.save_voice_preference((owner or self.owner).id, device_id, False)
         return device_id
 
     def lend(self, device_id, *, claim=True):

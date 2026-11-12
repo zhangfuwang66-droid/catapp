@@ -44,7 +44,8 @@ async def pair(payload: PairRequest, request: Request, user: User = Depends(requ
         raise rate_error(exc) from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    return {"ok": True, "device": device}
+    return {"ok": True, "device": device, "voice_paused": True,
+            "message": "绑定成功，语音已暂停；请在控制台确认模型设置后主动开启语音。原账号的记忆不会转移。"}
 
 
 @router.post("/{device_id}/pairing")
@@ -96,7 +97,8 @@ async def unbind(device_id: str, payload: ConfirmDevice, request: Request, user:
         await transition(request, device_id, user.id, request.app.state.identities.unbind_device, user.id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from None
-    return {"ok":True, "message":"已解绑，保留 Wi-Fi 和历史记忆；设备联网后重新获取配对码"}
+    return {"ok": True, "requires_usb_provisioning": False,
+            "message": "已转交解绑，保留 Wi-Fi 和硬件凭证；设备联网后重新获取配对码。历史记忆仍属于原账号。"}
 
 
 @router.post("/{device_id}/loan")
@@ -159,4 +161,5 @@ async def revoke(device_id: str, request: Request, user: User = Depends(require_
         await transition(request, device_id, user.id, request.app.state.identities.revoke_device, owner_user_id=user.id)
     except ValueError:
         raise HTTPException(status_code=404, detail="设备不存在或无权操作") from None
-    return {"ok": True}
+    return {"ok": True, "requires_usb_provisioning": True,
+            "message": "已安全停用，硬件凭证失效，不会自动显示配对码；恢复需管理员签发新凭证并通过 USB 配发，历史记忆保留。"}

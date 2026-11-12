@@ -94,6 +94,7 @@ class AdminAuthorizationBoundaryTests(unittest.TestCase):
         self.credential = self.ids.register_device("cat-fictional-a", "Fictional A")
         pairing = self.ids.request_pairing("cat-fictional-a", self.credential.token)
         self.ids.claim_pairing(pairing.code, self.member.id, client_key="fictional-local")
+        self.ids.save_voice_preference(self.member.id, 'cat-fictional-a', False)
         self.client = TestClient(self.app, base_url="https://fictional.example")
         self.client.__enter__()
 

@@ -43,6 +43,8 @@ class DeviceAuthorizationTests(unittest.TestCase):
             credential = self.identities.register_device(device_id, device_id)
             code = self.identities.request_pairing(device_id, credential.token)
             self.identities.claim_pairing(code.code, user.id, client_key="local")
+            # 授权测试模拟主人已主动开启语音；新绑定的默认暂停单独验证。
+            self.identities.save_voice_preference(user.id, device_id, False)
             self.credentials[name] = {"Authorization": "Bearer " + credential.token}
             self.users[name] = user
             self.headers[name] = {"Cookie": f"{SESSION_COOKIE}={session.token}", "Origin": "http://testserver",
@@ -167,6 +169,40 @@ class DeviceAuthorizationTests(unittest.TestCase):
         audio_b.send_text("STOP")
         self.assertEqual(audio_b.receive_text(), "OK:STOPPED")
         self.assertEqual(self.client.get("/api/devices/cat-alice/memory", headers=self.headers["alice"]).status_code, 404)
+
+    def test_transfer_unbind_closes_audio_camera_and_viewer_then_immediately_repairs_to_other_account(self):
+        conversation = self.store.create_conversation(self.users['alice'].id, 'cat-alice')
+        self.store.append_message(conversation, 'user', 'private-before-transfer')
+        audio, camera, viewer = self.audio('alice'), self.camera('alice'), self.viewer('alice')
+        other = self.audio('bob')
+        response = self.client.post('/api/devices/cat-alice/unbind', headers=self.headers['alice'],
+                                    json={'confirm_device_id': 'cat-alice'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()['requires_usb_provisioning'])
+        for connection in (audio, camera, viewer):
+            with self.assertRaises(WebSocketDisconnect):
+                while True:
+                    connection.receive_text()
+        self.assertNotIn('cat-alice', self.app.state.devices.devices)
+        other.send_text('STOP')
+        self.assertEqual(other.receive_text(), 'OK:STOPPED')
+        binding = self.client.get('/api/devices/cat-alice/binding', headers=self.credentials['alice'])
+        self.assertEqual(binding.status_code, 200, binding.text)
+        self.assertFalse(binding.json()['bound'])
+        invitation = self.client.post('/api/devices/cat-alice/pairing', headers=self.credentials['alice'])
+        self.assertEqual(invitation.status_code, 200, invitation.text)
+        response = self.client.post('/api/devices/pair', headers=self.headers['bob'],
+                                    json={'code': invitation.json()['code']})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.client.get('/api/devices/cat-alice/memory', headers=self.headers['alice']).status_code, 404)
+        new_memory = self.client.get('/api/devices/cat-alice/memory', headers=self.headers['bob'])
+        self.assertEqual(new_memory.status_code, 200, new_memory.text)
+        self.assertNotIn('private-before-transfer', new_memory.text)
+        old_history = self.client.get('/api/account/memories/cat-alice', headers=self.headers['alice'])
+        self.assertIn('private-before-transfer', old_history.text)
+        replacement = self.audio('alice')
+        replacement.send_text('STOP')
+        self.assertEqual(replacement.receive_text(), 'OK:STOPPED')
 
     def test_admin_credential_rotation_ends_old_connection(self):
         audio = self.audio("alice")

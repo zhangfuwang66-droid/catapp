@@ -72,9 +72,21 @@ void DeviceLink::task(void* value) {
 void DeviceLink::setStatus(DeviceLinkStatus status, int bound) {
   if (!mutex_) return;
   xSemaphoreTake(mutex_, portMAX_DELAY);
-  state_.status = status;
-  if (bound >= 0) state_.bound = bound != 0;
+  state_.updateStatus(status, bound);
   if (bound == 1 || status == DeviceLinkStatus::CredentialInvalid) { state_.pairingCode = ""; codeExpiresAt_ = 0; }
+  xSemaphoreGive(mutex_);
+}
+
+void DeviceLink::completeBinding(bool bound, uint32_t startedRevision) {
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  state_.completeVerification(bound, startedRevision);
+  if (bound) { state_.pairingCode = ""; codeExpiresAt_ = 0; }
+  xSemaphoreGive(mutex_);
+}
+
+void DeviceLink::recordHttpStatus(int status) {
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  state_.lastHttpStatus = status;
   xSemaphoreGive(mutex_);
 }
 
@@ -82,8 +94,8 @@ DeviceLinkSnapshot DeviceLink::snapshot() {
   if (!mutex_) return {};
   xSemaphoreTake(mutex_, portMAX_DELAY);
   DeviceLinkSnapshot result = state_;
-  int32_t remaining = static_cast<int32_t>(codeExpiresAt_ - millis());
-  result.expiresIn = codeExpiresAt_ && remaining > 0 ? (remaining + 999) / 1000 : 0;
+  result.expiresIn = result.canDisplayPairing()
+      ? pairingSecondsRemaining(millis(), codeExpiresAt_, result.pairingCode.length() > 0) : 0;
   if (!result.expiresIn) result.pairingCode = "";
   xSemaphoreGive(mutex_);
   return result;
@@ -92,7 +104,7 @@ DeviceLinkSnapshot DeviceLink::snapshot() {
 bool DeviceLink::allowBusiness() {
   if (config_.network().tls && !clockReady()) return false;
   if (!config_.network().accounts) return true;
-  return config_.hasCredential() && snapshot().bound;
+  return config_.hasCredential() && snapshot().businessAllowed();
 }
 
 void DeviceLink::requestPairing() {
@@ -106,16 +118,17 @@ void DeviceLink::refreshBinding() {
   if (!mutex_) return;
   xSemaphoreTake(mutex_, portMAX_DELAY);
   refreshBinding_ = true;
+  state_.requestVerification();
   xSemaphoreGive(mutex_);
 }
 
 void DeviceLink::tick() {
-  if (WiFi.status() != WL_CONNECTED) { setStatus(DeviceLinkStatus::WifiOffline); return; }
+  if (WiFi.status() != WL_CONNECTED) { setStatus(DeviceLinkStatus::WifiOffline); nextPollAt_ = 0; return; }
   if (!timeRequested_) {
     configTime(0, 0, "ntp.aliyun.com", "time.cloudflare.com", "pool.ntp.org");
     timeRequested_ = true;
   }
-  if (config_.network().tls && !clockReady()) { setStatus(DeviceLinkStatus::WaitingClock); return; }
+  if (config_.network().tls && !clockReady()) { setStatus(DeviceLinkStatus::WaitingClock); nextPollAt_ = 0; return; }
   if (!config_.network().accounts) { setStatus(DeviceLinkStatus::Local); return; }
   if (!config_.hasCredential()) { setStatus(DeviceLinkStatus::NeedCredential, 0); return; }
   uint32_t now = millis();
@@ -126,10 +139,12 @@ void DeviceLink::tick() {
   }
   xSemaphoreGive(mutex_);
   if (nextPollAt_ && static_cast<int32_t>(now - nextPollAt_) < 0) return;
+  uint32_t startedRevision = snapshot().verificationRevision;
   lastBindingPollAt_ = now;
   nextPollAt_ = now + 5000;
   String prefix = "/api/devices/" + config_.deviceId();
   JsonResponse response = request(config_, prefix + "/binding", false);
+  recordHttpStatus(response.status);
   if (response.status == 401 || response.status == 403) {
     setStatus(DeviceLinkStatus::CredentialInvalid, 0); nextPollAt_ = millis() + 30000; return;
   }
@@ -140,8 +155,8 @@ void DeviceLink::tick() {
   }
   bool isBound = cJSON_IsTrue(bound);
   cJSON_Delete(body);
-  if (isBound) { setStatus(DeviceLinkStatus::Bound, 1); nextPollAt_ = millis() + 30000; return; }
-  setStatus(DeviceLinkStatus::Unbound, 0);
+  completeBinding(isBound, startedRevision);
+  if (isBound) { nextPollAt_ = millis() + 30000; return; }
   DeviceLinkSnapshot current = snapshot();
   xSemaphoreTake(mutex_, portMAX_DELAY);
   bool refresh = refreshPairing_;
@@ -150,7 +165,10 @@ void DeviceLink::tick() {
   if ((!current.pairingCode.length() || refresh) && (!hasRequestedPair_ || now - lastPairAt_ >= 30000)) {
     lastPairAt_ = now; hasRequestedPair_ = true;
     response = request(config_, prefix + "/pairing", true);
-    if (response.status == 401 || response.status == 403) { setStatus(DeviceLinkStatus::CredentialInvalid, 0); return; }
+    recordHttpStatus(response.status);
+    if (response.status == 401 || response.status == 403) {
+      setStatus(DeviceLinkStatus::CredentialInvalid, 0); nextPollAt_ = millis() + 30000; return;
+    }
     body = cJSON_ParseWithOpts(response.body.c_str(), nullptr, true);
     cJSON* code = cJSON_GetObjectItemCaseSensitive(body, "code");
     cJSON* expires = cJSON_GetObjectItemCaseSensitive(body, "expires_in");

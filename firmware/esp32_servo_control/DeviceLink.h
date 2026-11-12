@@ -4,14 +4,12 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include "DeviceConfig.h"
+#include "DeviceLinkState.h"
 
-enum class DeviceLinkStatus { Local, WifiOffline, NeedCredential, WaitingClock, ServerOffline, Unbound, Bound, CredentialInvalid };
-
-struct DeviceLinkSnapshot {
-  DeviceLinkStatus status = DeviceLinkStatus::WifiOffline;
-  bool bound = false;
+struct DeviceLinkSnapshot : DeviceLinkState {
   String pairingCode;
   uint32_t expiresIn = 0;
+  int lastHttpStatus = 0;
 };
 
 class DeviceLink {
@@ -29,6 +27,8 @@ class DeviceLink {
   static void task(void* self);
   void tick();
   void setStatus(DeviceLinkStatus status, int bound = -1);
+  void completeBinding(bool bound, uint32_t startedRevision);
+  void recordHttpStatus(int status);
   const DeviceConfig& config_;
   SemaphoreHandle_t mutex_ = nullptr;
   DeviceLinkSnapshot state_;

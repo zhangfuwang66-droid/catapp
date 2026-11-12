@@ -171,7 +171,7 @@ h1{font-size:26px}
 const $ = id => document.getElementById(id);
 const REQUEST_TIMEOUT_MS = 4500;
 const SCAN_DEADLINE_MS = 18000;
-const labels = {local:'本地调试模式',wifi_offline:'等待连接 Wi-Fi',need_credential:'设备身份尚未配置，请联系设备提供者',waiting_clock:'正在同步时间',server_offline:'Wi-Fi 已连接，暂时无法连接服务器',unbound:'等待账号配对',bound:'已绑定账号',credential_invalid:'设备凭证已失效，请联系设备提供者'};
+const labels = {local:'本地调试模式',wifi_offline:'等待连接 Wi-Fi',need_credential:'设备身份尚未配置，请联系设备提供者通过 USB 配发',waiting_clock:'正在同步时间',server_offline:'Wi-Fi 已连接，暂时无法连接服务器',unbound:'等待账号配对',bound:'已绑定账号',credential_invalid:'设备身份已停用，请联系管理员恢复，再通过 USB 更新身份；重新配网无法恢复'};
 let csrf = '', initialized = false, operation = 'idle', phase = 'editing';
 let initial = {}, statusTimer = 0, statusController = null, statusRunning = false, scanController = null, scanTask = null, lastRequestId = '';
 
@@ -207,7 +207,8 @@ function updateStatus(data) {
   csrf = data.csrf_token;
   $('connection').classList.add('ready'); $('connectionText').textContent = '已连接)CMIAOHTML" CYBERMIAO_SHORT_NAME R"CMIAOHTML(热点'; $('offline').hidden = true;
   $('state').textContent = labels[data.status] || '设备已连接'; $('device').textContent = data.device_id || '';
-  $('pairCard').hidden = !(data.wifi_connected && data.mode === 'accounts' && data.credential_configured && !data.bound && data.pairing_code);
+  if (data.status === 'bound' && data.binding_verified === false) $('state').textContent = '正在重新确认账号绑定';
+  $('pairCard').hidden = !(data.wifi_connected && data.mode === 'accounts' && data.credential_configured && data.status === 'unbound' && !data.bound && data.pairing_code && data.expires_in > 0);
   $('pair').textContent = data.pairing_code || ''; $('ttl').textContent = data.expires_in ? '配对码剩余 ' + data.expires_in + ' 秒' : '';
   $('refresh').hidden = $('pairCard').hidden;
   if (!initialized) {

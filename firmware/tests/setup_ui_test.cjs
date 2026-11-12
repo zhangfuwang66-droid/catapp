@@ -257,6 +257,21 @@ async function main() {
       await text(f.page,'#ttl','150'); await f.page.click('#refresh'); await text(f.page,'#pair','JKLM-NPQR');
       await f.close();
     }
+    // 离线、身份失效、服务错误、已绑定或过期时不能显示上次缓存的配对码。
+    for (const state of [
+      {status:'wifi_offline',wifi_connected:false},
+      {status:'credential_invalid'},
+      {status:'server_offline'},
+      {status:'bound',bound:true,binding_verified:false},
+      {status:'unbound',expires_in:0}
+    ]) {
+      const f = await fixture({state:{wifi_connected:true,bound:false,expires_in:150,pairing_code:'ABCD-EFGH',...state}});
+      await f.ready(); assert.equal(await f.page.isHidden('#pairCard'),true);
+      if (state.status === 'credential_invalid') await text(f.page,'#state','通过 USB 更新身份');
+      if (state.status === 'bound') await text(f.page,'#state','重新确认');
+      assert.equal(f.writes.length,0,'状态变化不能自动清除网络或写入身份');
+      await f.close();
+    }
     // 字节数校验、本地模式保留、高级字段可修改；320px/桌面无横向溢出。
     {
       const f = await fixture({state:{status:'local',mode:'local',password_saved:false,wifi_ssid:''}});

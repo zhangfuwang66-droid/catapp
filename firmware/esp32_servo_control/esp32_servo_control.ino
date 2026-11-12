@@ -2781,7 +2781,7 @@ void maintainWiFi() {
 bool refreshConnectionScreen() {
   DeviceLinkSnapshot link = deviceLink.snapshot();
   bool online = WiFi.status() == WL_CONNECTED;
-  bool needed = setupPortal.active() || !online || (deviceConfig.network().accounts && !link.bound)
+  bool needed = setupPortal.active() || !online || (deviceConfig.network().accounts && link.needsAttention())
       || (deviceConfig.network().tls && !DeviceLink::clockReady());
   static bool wasVisible = false;
   static uint32_t lastDrawAt = 0;
@@ -2795,15 +2795,18 @@ bool refreshConnectionScreen() {
   else if (link.pairingCode.length()) title = link.pairingCode;
   else switch (link.status) {
     case DeviceLinkStatus::NeedCredential: title = "USB ID REQUIRED"; break;
-    case DeviceLinkStatus::CredentialInvalid: title = "CREDENTIAL INVALID"; break;
+    case DeviceLinkStatus::CredentialInvalid: title = "USB ID RECOVERY"; break;
     case DeviceLinkStatus::WaitingClock: title = "SYNCING TIME"; break;
     case DeviceLinkStatus::ServerOffline: title = "SERVER OFFLINE"; break;
     case DeviceLinkStatus::Unbound: title = "GETTING PAIR CODE"; break;
+    case DeviceLinkStatus::Bound: title = "CHECKING ACCOUNT"; break;
     default: title = setupPortal.active() ? "DEVICE SETUP" : "CONNECTING";
   }
   String subtitle = setupPortal.active() ? "AP " + deviceConfig.setupSsid() : deviceConfig.deviceId();
-  if (setupPortal.active() && link.pairingCode.length()) subtitle += " / " + String(link.expiresIn) + "s";
+  if (link.pairingCode.length()) subtitle += " / " + String(link.expiresIn) + "s";
   String detail = setupPortal.active() ? "KEY " + deviceConfig.setupPassword() : deviceConfig.serverUrl();
+  if (!setupPortal.active() && link.status == DeviceLinkStatus::CredentialInvalid) detail = "ADMIN RESTORE + USB ID";
+  if (!setupPortal.active() && link.status == DeviceLinkStatus::NeedCredential) detail = "CONTACT DEVICE PROVIDER";
   String key = title + subtitle + detail;
   if (!wasVisible || key != previous || millis() - lastDrawAt >= 2000) {
     drawConnectionBanner(title, subtitle, detail);
@@ -2907,6 +2910,9 @@ void addRuntimeDiagnostics(cJSON* object) {
   cJSON_AddBoolToObject(object, "tls_psram_preferred", runtimeDiagnostics.tlsPsramPreferred.load());
   cJSON_AddStringToObject(object, "link_state", DeviceLink::statusName(link.status));
   cJSON_AddBoolToObject(object, "bound", link.bound);
+  cJSON_AddBoolToObject(object, "binding_verified", link.bindingVerified);
+  cJSON_AddNumberToObject(object, "device_link_http_status", link.lastHttpStatus);
+  cJSON_AddNumberToObject(object, "pairing_expires_in", link.expiresIn);
   cJSON_AddNumberToObject(object, "free_heap_bytes", ESP.getFreeHeap());
   cJSON_AddNumberToObject(object, "largest_internal_block_bytes", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   cJSON_AddNumberToObject(object, "minimum_free_heap_bytes", ESP.getMinFreeHeap());

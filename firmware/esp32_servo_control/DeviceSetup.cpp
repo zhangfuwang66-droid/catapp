@@ -109,6 +109,7 @@ void DeviceSetup::status() {
   cJSON_AddBoolToObject(body, "credential_configured", config_.hasCredential());
   cJSON_AddStringToObject(body, "status", DeviceLink::statusName(state.status));
   cJSON_AddBoolToObject(body, "bound", state.bound);
+  cJSON_AddBoolToObject(body, "binding_verified", state.bindingVerified);
   cJSON_AddStringToObject(body, "pairing_code", state.pairingCode.c_str());
   cJSON_AddNumberToObject(body, "expires_in", state.expiresIn);
   cJSON_AddStringToObject(body, "csrf_token", csrf_.c_str());

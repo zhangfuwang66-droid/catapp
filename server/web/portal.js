@@ -6,6 +6,7 @@ let pairInFlight = false, pairSubmitted = false, revokeInFlight = false, revokeS
 let shareDevice = null;
 let noticeTimer = null;
 let refreshRequest = null;
+let loginInFlight = false;
 const accountChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('cybermiao-account') : null;
 
 class RequestError extends Error {
@@ -59,6 +60,9 @@ function resetPrivateView() {
   $('loanCode').textContent = ''; $('shareConfirm').value = ''; shareDevice = null;
   ['username','avatar','memoryTitle','pageError','pairError','memoryError','revokeError','retentionStatus','retentionFeedback'].forEach(id => { $(id).textContent = ''; });
   ['loginUsername','loginPassword','pairCode','clearDeviceId','revokeDeviceId'].forEach(id => { $(id).value = ''; });
+  $('loginPassword').type = 'password';
+  $('loginPasswordToggle').setAttribute('aria-label', '显示密码');
+  $('loginPasswordToggle').setAttribute('aria-pressed', 'false');
   $('deviceCount').textContent = '0'; $('sideCount').textContent = '0'; $('onlineCount').textContent = '0';
   $('clearDetails').open = false; $('clearBtn').disabled = true; $('revokeBtn').disabled = true;
   $('accountBar').hidden = true; $('devicesView').hidden = true;
@@ -217,15 +221,32 @@ function openRevoke(device) {
   $('revokeDialog').showModal();
 }
 
+$('loginPasswordToggle').addEventListener('click', () => {
+  const visible = $('loginPassword').type === 'password';
+  $('loginPassword').type = visible ? 'text' : 'password';
+  $('loginPasswordToggle').setAttribute('aria-label', visible ? '隐藏密码' : '显示密码');
+  $('loginPasswordToggle').setAttribute('aria-pressed', String(visible));
+});
+
 $('loginForm').addEventListener('submit', async event => {
-  event.preventDefault(); $('loginError').textContent = ''; $('loginBtn').disabled = true;
+  event.preventDefault();
+  if(loginInFlight) return;
+  loginInFlight = true;
+  $('loginError').textContent = ''; $('loginBtn').disabled = true;
+  $('loginBtn').setAttribute('aria-busy', 'true');
+  $('loginButtonLabel').textContent = '正在登录';
+  $('loginStatus').textContent = '正在打开你的小喵空间…';
   try {
     const grant = await api('/api/auth/login', {method:'POST', body:JSON.stringify({username:$('loginUsername').value.trim(), password:$('loginPassword').value})}, true);
     $('loginPassword').value = '';
     accountChannel?.postMessage({type:'changed'});
     await adoptSession(grant);
   } catch(error) { report('loginError', error); }
-  finally { $('loginBtn').disabled = false; }
+  finally {
+    loginInFlight = false; $('loginBtn').disabled = false;
+    $('loginBtn').removeAttribute('aria-busy');
+    $('loginButtonLabel').textContent = '登录我的小喵'; $('loginStatus').textContent = '';
+  }
 });
 
 $('logoutBtn').addEventListener('click', async () => {

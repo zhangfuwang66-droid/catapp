@@ -6,6 +6,8 @@
   <meta name="color-scheme" content="dark">
   <title>我的小喵 · Cyber Miao</title>
   <link rel="stylesheet" href="/web/portal.css">
+  <link rel="stylesheet" href="/web/motion.css">
+  <link rel="stylesheet" href="/web/portal-login.css">
   <script src="/web/portal.js" defer></script>
   <script src="/web/device_sharing.js" defer></script>
   <script src="/web/memory_policy.js" defer></script>
@@ -24,24 +26,46 @@
 
   <main>
     <section class="login-layout" id="loginView" hidden>
+      <div class="login-scene" aria-hidden="true">
+        <div class="login-halo login-halo-one"></div><div class="login-halo login-halo-two"></div>
+        <div class="login-scene-grid"></div>
+        <div class="login-orbit login-orbit-one"></div><div class="login-orbit login-orbit-two"></div>
+        <svg class="login-companion" viewBox="0 0 600 600" fill="none">
+          <path d="M129 374c-30-74-9-143 27-183l-9-91 91 50c41-12 85-12 124 1l92-48-10 91c40 45 57 115 25 186-28 62-99 96-171 96-74 0-143-35-169-102Z"/>
+          <path d="M213 305c10-17 29-17 40 0m91 0c10-17 29-17 40 0m-106 32 20 15 21-15m-21 15v12m-39-11c0 24 39 25 39 10 0 15 39 14 39-10M176 328l-58-7m61 28-52 10m294-31 58-7m-61 28 52 10"/>
+          <path d="m162 180 4-47 44 28m180 1 45-29-4 47"/>
+        </svg>
+        <span class="login-star login-star-one"></span><span class="login-star login-star-two"></span><span class="login-star login-star-three"></span>
+      </div>
       <div class="welcome">
-        <p class="eyebrow"><span class="live-dot"></span> YOUR LITTLE COMPANION</p>
+        <span class="login-caption-line" aria-hidden="true"></span>
+        <p class="eyebrow">YOUR LITTLE COMPANION</p>
         <h1>每一次见面，<br>都接着上次的故事。</h1>
         <p class="intro">连接你的小喵，让聊天里的小事，<br class="desktop-break">慢慢变成属于你们的记忆。</p>
-        <div class="cat-stage" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><svg class="hero-cat"><use href="#cat"/></svg><span class="spark spark-one">✧</span><span class="spark spark-two">✦</span><span class="stage-label">A LITTLE CAT. A LOT OF STORIES.</span></div>
-        <div class="welcome-notes"><span>独立设备</span><span>专属记忆</span><span>随时连接</span></div>
       </div>
-      <div class="login-card">
-        <span class="overline">WELCOME BACK</span><h2>你好，欢迎回来</h2><p class="muted">登录账号，看看你的小喵。</p>
+      <div class="login-card" aria-labelledby="portalLoginTitle">
+        <div class="login-emblem" aria-hidden="true"><svg><use href="#cat"/></svg><span></span></div>
+        <span class="overline">CYBER MIAO · 你的陪伴空间</span><h2 id="portalLoginTitle">你好，欢迎回来</h2><p class="muted">登录账号，接着聊聊你们的故事。</p>
         <form id="loginForm">
-          <label for="loginUsername">账号</label><input id="loginUsername" name="username" autocomplete="username" required maxlength="32" placeholder="请输入账号" spellcheck="false" autocapitalize="none">
-          <label for="loginPassword">密码</label><input id="loginPassword" name="password" type="password" autocomplete="current-password" required maxlength="128" placeholder="请输入密码">
+          <label for="loginUsername">账号</label>
+          <div class="login-input-wrap">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>
+            <input id="loginUsername" name="username" autocomplete="username" required maxlength="32" placeholder="请输入账号" spellcheck="false" autocapitalize="none">
+          </div>
+          <label for="loginPassword">密码</label>
+          <div class="login-input-wrap login-password-wrap">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" required maxlength="128" placeholder="请输入密码" aria-describedby="loginError">
+            <button class="login-password-toggle" id="loginPasswordToggle" type="button" aria-label="显示密码" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="login-eye-slash" d="m3 3 18 18"/></svg></button>
+          </div>
           <p class="form-error" id="loginError" role="alert"></p>
-          <button class="primary wide" id="loginBtn" type="submit">登录我的小喵 <svg><use href="#arrow"/></svg></button>
+          <button class="primary wide" id="loginBtn" type="submit"><span class="login-spinner" aria-hidden="true"></span><span id="loginButtonLabel">登录我的小喵</span><svg class="login-arrow" aria-hidden="true"><use href="#arrow"/></svg></button>
+          <p class="login-status" id="loginStatus" role="status" aria-live="polite"></p>
         </form>
-        <p class="login-help">请使用管理员为你创建的账号。<br>忘记密码时，请联系管理员重设。</p>
-        <p class="login-help"><a href="/admin/login">管理员登录 ↗</a></p>
+        <div class="login-card-foot"><p class="login-help">请使用管理员为你创建的账号。<br>忘记密码时，请联系管理员重设。</p><a class="login-admin-link" href="/admin/login">管理员登录 <span aria-hidden="true">↗</span></a></div>
       </div>
+      <div class="login-scene-badge" aria-hidden="true"><span class="login-badge-orbit"></span><span>小小身体，长长陪伴<br><strong>故事一直都在</strong></span></div>
+      <p class="login-footer">Cyber Miao <span>·</span> 陪伴，从一次连接开始</p>
     </section>
 
     <section class="workspace" id="devicesView" hidden>

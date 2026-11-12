@@ -1,0 +1,79 @@
+/* 用户空间的公共动效。隐藏和权限清理立即执行，只在显示时轻缓进入。 */
+:root {
+  --motion-fast: 180ms;
+  --motion-enter: 420ms;
+  --motion-ease: cubic-bezier(.2, .8, .2, 1);
+}
+
+.workspace:not([hidden]) .page-heading {
+  animation: space-arrive var(--motion-enter) var(--motion-ease) backwards;
+}
+.workspace:not([hidden]) .sidebar {
+  animation: space-fade 380ms ease-out backwards;
+}
+.workspace:not([hidden]) .summary-strip {
+  animation: space-arrive var(--motion-enter) var(--motion-ease) 50ms backwards;
+}
+.workspace:not([hidden]) .device-grid,
+.workspace:not([hidden]) .empty-state {
+  animation: space-arrive 480ms var(--motion-ease) 90ms backwards;
+}
+.workspace .device-card {
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast);
+}
+@media (hover: hover) and (pointer: fine) {
+  .workspace .device-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 28px #0002;
+  }
+}
+.side-item,
+.guide,
+.quiet,
+.primary,
+.secondary,
+.danger,
+.card-actions a {
+  transition: color var(--motion-fast), background-color var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast);
+}
+.side-item:hover { background-color: var(--panel-soft); }
+.side-item.active:hover { background-color: #26283c; }
+.guide:hover { border-color: #3b4358; }
+.card-actions a:hover:not([aria-disabled=true]) { box-shadow: 0 4px 18px #a3a0fc14; }
+button:focus-visible, a:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+input, select, textarea {
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast), background-color var(--motion-fast);
+}
+.dialog[open] {
+  animation: space-dialog-arrive 240ms var(--motion-ease) backwards;
+}
+.dialog[open]::backdrop {
+  animation: space-fade 200ms ease-out both;
+}
+.dialog .memory-content,
+.dialog .memory-policy,
+.dialog .dialog-actions {
+  animation: space-fade 260ms ease-out backwards;
+}
+.notice:not([hidden]) {
+  animation: space-notice-arrive 220ms var(--motion-ease) both;
+}
+.loading {
+  animation: space-fade 300ms ease-out backwards;
+}
+
+@keyframes space-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes space-arrive { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes space-dialog-arrive { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
+@keyframes space-notice-arrive { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translateX(-50%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

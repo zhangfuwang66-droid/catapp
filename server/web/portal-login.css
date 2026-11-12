@@ -1,0 +1,305 @@
+/* 用户登录的独立场景：沿用 portal 的深色、淡紫和薄荷色。 */
+#loginView {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  min-height: calc(100svh - 86px);
+  max-width: none;
+  margin: 0;
+  padding: 42px 24px 80px;
+  gap: 0;
+}
+
+#loginView .login-scene {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+#loginView .login-halo {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(85px);
+  opacity: .12;
+  animation: login-halo-drift 24s ease-in-out infinite alternate;
+}
+#loginView .login-halo-one {
+  width: 60vw;
+  height: 70vh;
+  top: 1vh;
+  left: -24vw;
+  background: var(--accent);
+}
+#loginView .login-halo-two {
+  width: 48vw;
+  height: 65vh;
+  bottom: -30vh;
+  right: -15vw;
+  background: var(--mint);
+  opacity: .075;
+  animation-delay: -12s;
+}
+#loginView .login-scene-grid {
+  position: absolute;
+  inset: 0;
+  opacity: .18;
+  background-image: radial-gradient(var(--muted) .65px, transparent .65px);
+  background-size: 30px 30px;
+  mask-image: linear-gradient(transparent 3%, #000 45%, transparent 95%);
+}
+#loginView .login-orbit {
+  position: absolute;
+  width: 880px;
+  height: 880px;
+  left: 50%;
+  top: 50%;
+  border: 1px solid #a3a0fc13;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) rotate(-25deg);
+  animation: login-orbit-turn 100s linear infinite;
+}
+#loginView .login-orbit::after {
+  content: "";
+  position: absolute;
+  inset: 24px;
+  border: 1px solid #a3a0fc0b;
+  border-radius: 50%;
+}
+#loginView .login-orbit-two {
+  width: 1160px;
+  height: 660px;
+  animation-duration: 120s;
+  animation-direction: reverse;
+}
+#loginView .login-companion {
+  position: absolute;
+  width: min(650px, 52vw);
+  height: auto;
+  right: -15px;
+  top: 47%;
+  transform: translateY(-50%) rotate(10deg);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: .09;
+}
+#loginView .login-star {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--mint);
+  opacity: .4;
+  box-shadow: 0 0 18px #9cdbbf30;
+  animation: login-star-breathe 5s ease-in-out infinite;
+}
+#loginView .login-star-one { top: 23%; left: 24%; }
+#loginView .login-star-two { top: 28%; right: 23%; width: 3px; height: 3px; animation-delay: -2s; }
+#loginView .login-star-three { bottom: 21%; left: 31%; width: 3px; height: 3px; animation-delay: -3s; }
+
+#loginView .welcome {
+  position: absolute;
+  left: max(5vw, 30px);
+  top: 46%;
+  width: 270px;
+  transform: translateY(-50%);
+  animation: login-caption-arrive .9s ease-out both;
+}
+#loginView .login-caption-line {
+  display: block;
+  width: 34px;
+  height: 2px;
+  margin-bottom: 28px;
+  background: var(--accent);
+  opacity: .65;
+}
+#loginView .welcome .eyebrow { font-size: 8px; letter-spacing: 2px; color: var(--muted); }
+#loginView .welcome h1 {
+  font-size: 27px;
+  font-weight: 350;
+  line-height: 1.85;
+  letter-spacing: 2px;
+  margin: 22px 0;
+}
+#loginView .intro { font-size: 11px; line-height: 2; color: var(--muted); }
+
+#loginView .login-card {
+  position: relative;
+  width: min(100%, 440px);
+  margin: 0;
+  padding: 36px 38px 29px;
+  border: 1px solid #a3a0fc27;
+  border-radius: 26px;
+  background: linear-gradient(145deg, #1b202ce8, #141821e8);
+  box-shadow: 0 30px 90px #0004, 0 3px 14px #0002, inset 0 1px 0 #eff2f805;
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  animation: login-card-arrive .65s cubic-bezier(.2, .8, .2, 1) both;
+}
+#loginView .login-emblem {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  margin-bottom: 26px;
+  border: 1px solid #a3a0fc2b;
+  border-radius: 17px;
+  background: #232635;
+  color: #bab7ff;
+}
+#loginView .login-emblem svg { width: 35px; height: 35px; }
+#loginView .login-emblem>span {
+  position: absolute;
+  right: -3px;
+  bottom: 3px;
+  width: 11px;
+  height: 11px;
+  border: 3px solid #1b202c;
+  border-radius: 50%;
+  background: var(--mint);
+}
+#loginView .overline { font-size: 9px; letter-spacing: 1.7px; color: var(--muted); }
+#loginView .login-card h2 { font-size: 28px; font-weight: 600; letter-spacing: -.5px; margin: 10px 0; line-height: 1.5; }
+#loginView .login-card .muted { margin: 0 0 28px; font-size: 12px; }
+#loginView label { color: #b3bacc; margin: 19px 0 9px; font-size: 12px; }
+#loginView .login-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 49px;
+  padding: 0 14px;
+  background: #10141cb3;
+  border: 1px solid #30394b;
+  border-radius: 11px;
+  color: var(--muted);
+  transition: border-color .2s, box-shadow .2s, background-color .2s;
+}
+#loginView .login-input-wrap:focus-within { border-color: var(--accent); background: #10141c; box-shadow: 0 0 0 3px #a3a0fc18; }
+#loginView .login-input-wrap svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#loginView .login-input-wrap input {
+  min-width: 0;
+  height: 47px;
+  padding: 12px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--fg);
+  font-size: 13px;
+  caret-color: var(--accent);
+}
+#loginView .login-input-wrap input:focus { outline: none; }
+#loginView .login-password-wrap { padding-right: 5px; }
+#loginView .login-password-toggle {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+}
+#loginView .login-password-toggle:hover { background: var(--panel-soft); color: var(--fg); }
+#loginView .login-password-toggle[aria-pressed=true] .login-eye-slash { display: none; }
+#loginView button:focus-visible, #loginView a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+#loginView .form-error { min-height: 18px; margin: 12px 0; line-height: 1.8; font-size: 11px; }
+#loginView #loginBtn { position: relative; min-height: 48px; border-radius: 11px; font-size: 12px; transition: transform .2s, background-color .2s, box-shadow .2s; }
+#loginView #loginBtn:not(:disabled):hover { transform: translateY(-2px); box-shadow: 0 8px 24px #a3a0fc25; }
+#loginView #loginBtn:not(:disabled):active { transform: translateY(0); }
+#loginView #loginBtn:disabled { opacity: .8; cursor: wait; }
+#loginView .login-arrow { position: absolute; right: 17px; width: 17px; height: 17px; transition: transform .2s; }
+#loginView #loginBtn:hover .login-arrow { transform: translateX(3px); }
+#loginView .login-spinner { display: none; width: 14px; height: 14px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: login-spin .8s linear infinite; }
+#loginView #loginBtn[aria-busy=true] .login-spinner { display: block; }
+#loginView #loginBtn[aria-busy=true] .login-arrow { display: none; }
+#loginView .login-status { min-height: 15px; margin: 9px 0 0; text-align: center; font-size: 10px; color: var(--muted); }
+#loginView .login-card-foot { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+#loginView .login-help { text-align: left; margin: 0; line-height: 1.9; font-size: 11px; color: var(--muted); }
+#loginView .login-admin-link { display: inline-flex; align-items: center; gap: 8px; margin-top: 18px; font-size: 10px; color: var(--muted); transition: color .2s; }
+#loginView .login-admin-link:hover { color: var(--accent); }
+#loginView .login-admin-link span { transition: transform .2s; }
+#loginView .login-admin-link:hover span { transform: translate(2px, -2px); }
+
+#loginView .login-scene-badge {
+  position: absolute;
+  right: max(5vw, 30px);
+  bottom: 24%;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 15px 20px;
+  border: 1px solid #a3a0fc22;
+  border-radius: 14px;
+  background: #191e2966;
+  backdrop-filter: blur(12px);
+  font-size: 10px;
+  line-height: 1.9;
+  color: var(--muted);
+  transform: rotate(-5deg);
+  animation: login-badge-arrive 1s ease-out both;
+}
+#loginView .login-scene-badge strong { color: var(--fg); font-size: 11px; font-weight: 500; }
+#loginView .login-badge-orbit { position: relative; width: 27px; height: 27px; border: 1px solid #a3a0fc60; border-radius: 50%; }
+#loginView .login-badge-orbit::after { content: ""; position: absolute; width: 8px; height: 8px; right: -2px; top: 0; border-radius: 50%; background: var(--accent); }
+#loginView .login-footer { position: absolute; bottom: 19px; margin: 0; font-size: 9px; letter-spacing: .5px; color: var(--muted); }
+#loginView .login-footer span { margin: 0 8px; color: var(--accent); }
+
+@keyframes login-card-arrive { from { opacity: 0; transform: translateY(18px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes login-caption-arrive { from { opacity: 0; transform: translate(-12px, -50%); } to { opacity: 1; transform: translateY(-50%); } }
+@keyframes login-badge-arrive { from { opacity: 0; transform: rotate(-5deg) translateY(10px); } to { opacity: 1; transform: rotate(-5deg); } }
+@keyframes login-star-breathe { 50% { opacity: .12; transform: scale(.65); } }
+@keyframes login-halo-drift { to { transform: translate(3vw, 4vh) scale(1.08); } }
+@keyframes login-orbit-turn { to { transform: translate(-50%, -50%) rotate(335deg); } }
+@keyframes login-spin { to { transform: rotate(360deg); } }
+
+@media (min-width: 1600px) {
+  #loginView .welcome { left: 11vw; }
+  #loginView .login-scene-badge { right: 10vw; }
+  #loginView .login-companion { right: 4vw; }
+}
+@media (max-width: 1120px) {
+  #loginView .welcome, #loginView .login-scene-badge { display: none; }
+  #loginView .login-companion { width: 640px; right: -260px; opacity: .065; }
+}
+@media (max-width: 760px) {
+  #loginView { min-height: calc(100svh - 72px); padding: 28px 20px 72px; }
+  #loginView .login-card { padding: 29px 26px 24px; border-radius: 22px; }
+  #loginView .login-emblem { width: 48px; height: 48px; margin-bottom: 23px; border-radius: 15px; }
+  #loginView .login-emblem svg { width: 31px; height: 31px; }
+  #loginView .login-card h2 { font-size: 26px; }
+  #loginView .login-card .muted { font-size: 11px; margin-bottom: 24px; }
+  #loginView .login-input-wrap input { font-size: 16px; }
+  #loginView .login-halo { filter: blur(55px); }
+  #loginView .login-halo-one { width: 110vw; left: -60vw; }
+  #loginView .login-halo-two { width: 100vw; right: -60vw; }
+  #loginView .login-orbit { width: 640px; height: 640px; }
+  #loginView .login-orbit-two { height: 460px; }
+  #loginView .login-companion { width: 540px; right: -250px; top: 68%; }
+  #loginView .login-footer { font-size: 8px; }
+}
+@media (max-height: 760px) and (min-width: 761px) {
+  #loginView { padding-top: 26px; padding-bottom: 64px; }
+  #loginView .login-card { padding-top: 28px; padding-bottom: 23px; }
+  #loginView .login-emblem { margin-bottom: 18px; width: 46px; height: 46px; }
+  #loginView .login-card .muted { margin-bottom: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #loginView, #loginView *, #loginView *::before, #loginView *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

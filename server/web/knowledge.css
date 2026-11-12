@@ -4,3 +4,176 @@
 .document-summary {font-size:13px;line-height:1.6;color:var(--muted);max-width:65ch;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .document-keywords {font-size:12px;color:#b7d7cc;line-height:1.6;overflow-wrap:anywhere}
 #profileDialog textarea {width:100%;box-sizing:border-box;resize:vertical;min-height:90px;border:1px solid var(--border,#334052);border-radius:10px;padding:12px;background:#101723;color:inherit;font:inherit}
+
+/* 文档列表每次轮询都会重建行；入场只给稳定区域，避免四秒一次的闪动。 */
+.knowledge-workspace {
+  --library-ease: var(--motion-ease, cubic-bezier(.22, .68, .22, 1));
+  --library-fast: var(--motion-fast, 180ms);
+  --library-soft: 280ms;
+}
+
+.knowledge-workspace .upload-zone {
+  transition: border-color var(--library-fast) ease,
+    background-color var(--library-soft) ease,
+    box-shadow var(--library-soft) ease;
+}
+
+.knowledge-workspace .upload-zone.dragging {
+  box-shadow: inset 0 0 0 1px #b8b1ff22, 0 0 24px #a3a0fc0d;
+}
+
+.knowledge-workspace .paper-icon {
+  transform-origin: 50% 70%;
+  transition: transform var(--library-soft) var(--library-ease),
+    color var(--library-fast) ease;
+}
+
+.knowledge-workspace .paper-icon span {
+  transition: transform var(--library-soft) var(--library-ease),
+    border-color var(--library-fast) ease;
+}
+
+.knowledge-workspace .upload-zone.dragging .paper-icon {
+  transform: translateY(-3px) rotate(-2deg);
+  color: #b8b1ff;
+}
+
+.knowledge-workspace .upload-zone.dragging .paper-icon span {
+  transform: rotate(90deg);
+  border-color: #a39be0;
+}
+
+.knowledge-workspace .file-button {
+  transition: background-color var(--library-fast) ease,
+    box-shadow var(--library-fast) ease,
+    transform var(--library-fast) var(--library-ease);
+}
+
+.knowledge-workspace .file-button:active {
+  transform: translateY(1px);
+}
+
+.knowledge-workspace .document-row,
+.knowledge-workspace .search-hit {
+  transition: border-color var(--library-fast) ease,
+    background-color var(--library-soft) ease,
+    box-shadow var(--library-soft) ease;
+}
+
+.knowledge-workspace .document-row:focus-within,
+.knowledge-workspace .search-hit:focus-within {
+  border-color: #77749f;
+  box-shadow: 0 0 0 2px #a3a0fc10;
+}
+
+.knowledge-workspace .document-actions a,
+.knowledge-workspace .search-hit a,
+.knowledge-workspace .mobile-nav a {
+  transition: color var(--library-fast) ease,
+    background-color var(--library-fast) ease;
+}
+
+.knowledge-workspace .search-section input,
+#profileDialog input,
+#profileDialog textarea {
+  transition: border-color 180ms ease, background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+#profileDialog textarea:focus-visible {
+  outline: 2px solid #9f9bf455;
+  outline-offset: 3px;
+  border-color: #a3a0fc;
+}
+
+.knowledge-workspace progress::-webkit-progress-value {
+  transition: width 240ms var(--library-ease);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .knowledge-workspace .upload-zone:hover:not(.dragging) {
+    border-color: #777292;
+    box-shadow: inset 0 0 0 1px #a3a0fc08;
+  }
+
+  .knowledge-workspace .upload-zone:hover .paper-icon {
+    transform: translateY(-2px) rotate(-4deg);
+  }
+
+  .knowledge-workspace .upload-zone.dragging:hover .paper-icon {
+    transform: translateY(-3px) rotate(-2deg);
+  }
+
+  .knowledge-workspace .file-button:hover {
+    box-shadow: 0 5px 18px #9290f028;
+    transform: translateY(-1px);
+  }
+
+  .knowledge-workspace .file-button:active {
+    transform: translateY(1px);
+  }
+
+  .knowledge-workspace .document-row:hover,
+  .knowledge-workspace .search-hit:hover {
+    border-color: #434960;
+    background-color: #181e2a;
+  }
+}
+
+@keyframes library-section-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes library-result-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .knowledge-workspace #privateView:not([hidden]) > .library-hero {
+    animation: library-section-enter 380ms var(--library-ease) backwards;
+  }
+
+  .knowledge-workspace #privateView:not([hidden]) > .documents-section {
+    animation: library-section-enter 400ms 45ms var(--library-ease) backwards;
+  }
+
+  .knowledge-workspace #privateView:not([hidden]) > .search-section {
+    animation: library-section-enter 420ms 85ms var(--library-ease) backwards;
+  }
+
+  .knowledge-workspace #searchResults > .search-hit {
+    animation: library-result-enter 240ms var(--library-ease) backwards;
+  }
+
+  .knowledge-workspace .upload-progress:not([hidden]) {
+    animation: library-result-enter 200ms var(--library-ease) backwards;
+  }
+}
+
+/* 隐藏/退出登录必须当帧清除私密内容，不对 display 或关闭状态做退场过渡。 */
+.knowledge-workspace [hidden],
+#profileDialog:not([open]),
+#deleteDialog:not([open]) {
+  display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-workspace *,
+  .knowledge-workspace *::before,
+  .knowledge-workspace *::after,
+  #profileDialog,
+  #profileDialog *,
+  #deleteDialog,
+  #deleteDialog * {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .knowledge-workspace .paper-icon,
+  .knowledge-workspace .paper-icon span,
+  .knowledge-workspace .file-button {
+    transform: none !important;
+  }
+}

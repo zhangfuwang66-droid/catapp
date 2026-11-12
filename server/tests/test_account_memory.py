@@ -49,6 +49,8 @@ class AccountMemoryTests(unittest.TestCase):
             credential = identities.register_device("cat-" + name, name)
             pairing = identities.request_pairing(credential.device_id, credential.token)
             identities.claim_pairing(pairing.code, self.users[name].id, client_key="local")
+            # 记忆链路夹具模拟主人已主动开启语音；新绑定默认暂停另有专项测试。
+            identities.save_voice_preference(self.users[name].id, credential.device_id, False)
             self.devices[name] = {"Authorization": "Bearer " + credential.token}
         MemorySession.instances.clear()
 

@@ -2266,7 +2266,7 @@ class DeviceRuntime:
                 log_event(f"[MEMORY] UI user message save failed: {type(exc).__name__}", flush=True)
         await self.reset_hand_tracking_state(send_idle=False)
 
-        async def _runner():
+        async def _run_turn():
             text_buf: List[str] = []
             emotion_sent = False
             content_list: List[Dict[str, Any]] = []
@@ -2354,6 +2354,12 @@ class DeviceRuntime:
                         await self.send_esp32_command("EXPR:neutral")
                     except Exception:
                         pass
+
+        async def _runner():
+            # 准备资料/天气/摄像头同样可能等待；暂停或取消任何阶段都必须清理优先级。
+            try:
+                await _run_turn()
+            finally:
                 await self.set_esp32_audio_priority(False, reason="start_ai_with_text_done")
 
         await self.audio.hard_reset_audio("start_ai_with_text")

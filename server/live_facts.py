@@ -21,9 +21,42 @@ GEOCODING_URL = 'https://geocoding-api.open-meteo.com/v1/search'
 FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
 WEATHER_INTENT = re.compile(r'天气|气温|温度|几度|多少度|下雨|下雪|降雨|冷不冷|热不热|带伞|穿什么|阴天|晴天|台风|闷热|降温|\bweather\b|\bforecast\b|\brain\b', re.I)
 DOCUMENT_CONTEXT = re.compile(r'知识库|文档|资料|制度|手册|规定|报销流程')
-CITY_NAMES = tuple('北京 上海 广州 深圳 杭州 成都 武汉 西安 重庆 南京 天津 苏州 中山 大连 哈尔滨 长沙 郑州 济南 昆明 青岛 沈阳 福州 厦门 海口 三亚 合肥 南昌 南宁 贵阳 兰州 太原 石家庄 长春 呼和浩特 乌鲁木齐 银川 西宁 拉萨 香港 澳门 台北'.split())
-ENGLISH_CITIES = ('London', 'Paris', 'New York', 'Tokyo', 'Seoul', 'Sydney', 'Singapore', 'Beijing', 'Shanghai')
-NOT_CITY = {'今天', '明天', '后天', '现在', '外面', '室外', '当地', '这里', '我们', '这边', '那里', '那边', '本地', '所在城市', '全国', '全世界', '最近', '目前'}
+# 仅维护可信地点目录；不能把看起来像地名的用户原话交给外部地理编码服务。
+_REGIONS = (
+    ('北京', 'Beijing', '北京'), ('上海', 'Shanghai', '上海'), ('广东', 'Guangdong', '广州 深圳 中山 珠海 佛山 东莞 惠州'),
+    ('浙江', 'Zhejiang', '杭州 宁波 温州'), ('四川', 'Sichuan', '成都'), ('湖北', 'Hubei', '武汉'),
+    ('陕西', 'Shaanxi', '西安'), ('重庆', 'Chongqing', '重庆'), ('江苏', 'Jiangsu', '南京 苏州 无锡 常州'),
+    ('天津', 'Tianjin', '天津'), ('辽宁', 'Liaoning', '大连 沈阳'), ('黑龙江', 'Heilongjiang', '哈尔滨'),
+    ('湖南', 'Hunan', '长沙'), ('河南', 'Henan', '郑州'), ('山东', 'Shandong', '济南 青岛'),
+    ('云南', 'Yunnan', '昆明'), ('福建', 'Fujian', '福州 厦门'), ('海南', 'Hainan', '海口 三亚'),
+    ('安徽', 'Anhui', '合肥'), ('江西', 'Jiangxi', '南昌'), ('广西', 'Guangxi', '南宁'),
+    ('贵州', 'Guizhou', '贵阳'), ('甘肃', 'Gansu', '兰州'), ('山西', 'Shanxi', '太原'),
+    ('河北', 'Hebei', '石家庄'), ('吉林', 'Jilin', '长春'), ('内蒙古', 'Inner Mongolia', '呼和浩特'),
+    ('新疆', 'Xinjiang', '乌鲁木齐'), ('宁夏', 'Ningxia', '银川'), ('青海', 'Qinghai', '西宁'), ('西藏', 'Tibet', '拉萨'),
+)
+TRUSTED_PLACES = {city: ('CN', (region, english)) for region, english, cities in _REGIONS for city in cities.split()}
+TRUSTED_PLACES.update({'香港': ('HK', ()), '澳门': ('MO', ()), '台北': ('TW', ('台北', 'Taipei')),
+    'London': ('GB', ('英格兰', 'England')), 'Paris': ('FR', ('法兰西岛', 'Île-de-France', 'Ile-de-France')),
+    'New York': ('US', ('纽约', 'New York')), 'Tokyo': ('JP', ('东京', '東京', 'Tokyo')),
+    'Seoul': ('KR', ('首尔', '서울', 'Seoul')), 'Sydney': ('AU', ('新南威尔士', 'New South Wales')),
+    'Singapore': ('SG', ())})
+CITY_NAMES = tuple(city for city in TRUSTED_PLACES if re.fullmatch(r'[一-鿿]+', city))
+ENGLISH_ALIASES = {city.casefold(): city for city in TRUSTED_PLACES if city not in CITY_NAMES}
+ENGLISH_ALIASES.update(beijing='北京', shanghai='上海')
+CITY_ALIASES = {city: city for city in CITY_NAMES}
+CITY_ALIASES.update({city + '市': city for city in CITY_NAMES})
+NON_WEATHER_TOPIC = re.compile(r'体温|人体|身体|发烧|发热|口腔|腋下|额头|水温|杯水|水壶|烧水|热水|温水|开水|冰箱|空调|烤箱|烘焙|CPU|显卡|电池|发动机', re.I)
+CREATIVE_TOPIC = re.compile(r'故事|童话|小说|笑话|作文|造句|什么意思|怎么说|怎么翻译|这个词|单词')
+LIVE_REQUEST = re.compile(r'查一下|查询|查查|帮我查|预报|weather forecast', re.I)
+_NUMBER = r'(?:\d+|[零〇一二两三四五六七八九十百千万几半]+)'
+UNSUPPORTED_DATE = re.compile(
+    r'昨天|前天|大后天|历史|上周|下周|本周|这周|周末|上个月|下个月|这个月|本月|下月|去年|今年|明年|后年|明早|明晚|明日|今夜|今晚|今早|昨晚|后日|前日|'
+    r'(?:星期|礼拜|周)[一二三四五六日天]|'
+    + _NUMBER + r'(?:个)?(?:天|日|星期|周|礼拜|月|年)|'
+    + _NUMBER + r'(?:年|月|日|号)|\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,2})?|'
+    r'\b(?:yesterday|(?:before|after)\s+tomorrow|next\s+(?:day|week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|'
+    r'(?:in\s+)?\d+\s+(?:days?|weeks?|months?|years?)(?:\s+later)?|'
+    r'january|february|march|april|may|june|july|august|september|october|november|december)\b', re.I)
 WMO = {0: '晴', 1: '晴间多云', 2: '多云', 3: '阴', 45: '有雾', 48: '雾凇',
        51: '小毛毛雨', 53: '毛毛雨', 55: '大毛毛雨', 56: '轻微冻毛毛雨', 57: '强冻毛毛雨',
        61: '小雨', 63: '中雨', 65: '大雨', 66: '轻微冻雨', 67: '强冻雨',
@@ -33,36 +66,59 @@ WMO = {0: '晴', 1: '晴间多云', 2: '多云', 3: '阴', 45: '有雾', 48: '�
 
 def weather_clause(text):
     clauses = [value.strip() for value in re.split(r'[，。？！?,!；;\n]', (text or '')[:4096]) if value.strip()]
+    document_request = bool(DOCUMENT_CONTEXT.search(text or ''))
+    creative_request = bool(CREATIVE_TOPIC.search(text or ''))
     for index, clause in enumerate(clauses):
         if WEATHER_INTENT.search(clause) and not DOCUMENT_CONTEXT.search(clause):
+            # 文档、创作、身体/物品温度不是天气查询；不能因带“今天”或“几度”就改问城市。
+            if CREATIVE_TOPIC.search(clause) or NON_WEATHER_TOPIC.search(clause):
+                continue
+            if (creative_request or document_request) and not LIVE_REQUEST.search(clause):
+                continue
             if (re.search(r'喜欢|讨厌|记住|作文|什么意思|怎么说|怎么翻译|这个词|故事', clause)
                     and not re.search(r'今天|明天|后天|现在|查一下|查询|预报|怎么样|几度|多少度', clause)):
+                continue
+            if (not re.search(r'天气|气温|下雨|下雪|降雨|阴天|晴天|台风|\bweather\b|\bforecast\b|\brain\b', clause, re.I)
+                    and not re.search(r'外面|室外|今天|明天|后天|现在', clause)
+                    and explicit_city(clause) is None):
                 continue
             return clause, clauses[index - 1] if index else ''
     return None
 
 
 def explicit_city(clause, previous=''):
-    """只提取地点短语，原始语音及其余个人内容不会发送给天气提供商。"""
+    """只返回目录中的固定名称；绝不将任意前缀或上一分句原文外发。"""
     names = {city for city in CITY_NAMES if city in clause}
-    names.update(city for city in ENGLISH_CITIES if re.search(r'\b' + re.escape(city) + r'\b', clause, re.I))
+    names.update(city for alias, city in ENGLISH_ALIASES.items()
+                 if re.search(r'\b' + re.escape(alias) + r'\b', clause, re.I))
+    if not names and previous:
+        known = CITY_ALIASES.get(previous.strip()) or ENGLISH_ALIASES.get(previous.strip().casefold())
+        if known:
+            names.add(known)
     if len(names) == 1:
         return next(iter(names))
-    if len(names) > 1:
-        return None
-    match = WEATHER_INTENT.search(clause)
-    if not match:
-        return None
-    candidates = [clause[:match.start()], previous]
-    for prefix in candidates:
-        city = re.sub(r'^.*(?:告诉我|我想知道|帮我查一下|帮我查|查一下|查询|查查|帮我看看|看一下|看看|请问)', '', prefix)
-        city = re.sub(r'今天|明天|后天|现在|这会儿|早上|晚上|中午', '', city)
-        city = re.sub(r'^(?:我们在|我住在|我在|在|请)', '', city)
-        city = re.sub(r'(?:会不会|会|需不需要|要不要|的|要|得)$', '', city).strip()
-        if (re.fullmatch(r'[一-鿿]{2,12}', city) and city not in NOT_CITY
-                and not re.search(r'我|你|他|什么|多少|几[点号天]|星期|时候|文档|资料|制度|报销|出差|年假|怎么|如何|说|问|喜欢|觉得|帮|请|查', city)):
-            return city
     return None
+
+
+def weather_day_offset(text):
+    english = re.sub(r'\b(?:the\s+)?day\s+after\s+tomorrow\b', '', text, flags=re.I)
+    if UNSUPPORTED_DATE.search(english):
+        return None
+    relative = set()
+    if '后天' in text or re.search(r'\b(?:the\s+)?day\s+after\s+tomorrow\b', text, re.I):
+        relative.add(2)
+    if '明天' in text or re.search(r'\btomorrow\b', english, re.I):
+        relative.add(1)
+    if '今天' in text or re.search(r'\btoday\b', text, re.I):
+        relative.add(0)
+    return next(iter(relative)) if len(relative) == 1 else None if relative else 0
+
+
+def weather_date_context(clause, previous):
+    # 仅把独立日期分句视为时间上下文；口令里的“三号门”等内容不是日期。
+    standalone = re.fullmatch(r'[零〇一二两三四五六七八九十百千万几半\d年月日号天前后个星期周礼拜本这上下去年明早晚\s./:-]+', previous)
+    english = re.fullmatch(r'(?:today|tomorrow|(?:the )?day after tomorrow)', previous, re.I)
+    return previous + ' ' + clause if standalone or english else clause
 
 
 def current_time_fact(clock=time.time):
@@ -119,6 +175,8 @@ class LiveFacts:
         return value
 
     async def _place(self, city):
+        if city not in TRUSTED_PLACES:
+            return {'status': 'needs_city', 'message': '请提供目前支持的明确城市，例如北京、上海、广州或深圳。'}
         cached = self._get(self._places, city, 86400)
         if cached is not None:
             return cached
@@ -136,19 +194,17 @@ class LiveFacts:
                 matches.append({**hit, 'latitude': lat, 'longitude': lon})
         if not matches:
             return {'status': 'city_not_found', 'city': city, 'message': '没有找到这个城市，请主人补充省份或准确城市名称。'}
-        # 同名行政区不根据服务器IP或某个默认城市猜位置；请主人明确省份/城市。
-        locations = {(hit.get('country_code'), hit.get('admin1')) for hit in matches}
-        if len(locations) > 1:
-            exact = [hit for hit in matches if str(hit.get('name', '')).removesuffix('市') == city.removesuffix('市')]
-            locations = {(hit.get('country_code'), hit.get('admin1')) for hit in exact}
-            if len(exact) == 1:
-                matches = exact
-            elif len(locations) > 1 or not exact:
-                return {'status': 'ambiguous_city', 'city': city, 'message': '存在不同地区的同名地点，请主人补充省份或更明确的城市，不选取任意一个结果。'}
-            else:
-                matches = exact
-        hit = max(matches, key=lambda item: item.get('population') if isinstance(item.get('population'), (int, float)) else 0)
-        place = {'status': 'ok', 'city': city, 'name': hit['name'],
+        # 目录明确了行政范围；北京/上海的同名村落不能覆盖对应直辖市。
+        country, regions = TRUSTED_PLACES[city]
+        matches = [hit for hit in matches if hit.get('country_code') == country and
+                   (not regions or any(region.casefold() in str(hit.get('admin1') or '').casefold() for region in regions))]
+        administrative = [hit for hit in matches if hit.get('feature_code') in ('PPLC', 'PPLA', 'PPLA2')]
+        if len(administrative) == 1:
+            matches = administrative
+        if not matches or len({(hit['latitude'], hit['longitude']) for hit in matches}) != 1:
+            return {'status': 'ambiguous_city', 'city': city, 'message': '返回地点无法唯一匹配可信城市行政范围，本次不查询天气，也不任取同名地点。'}
+        hit = matches[0]
+        place = {'status': 'ok', 'city': city, 'name': city,
                  'latitude': hit['latitude'], 'longitude': hit['longitude']}
         return self._save(self._places, city, place)
 
@@ -196,17 +252,18 @@ class LiveFacts:
         fact = current_time_fact(self.clock)
         sections = ['\n\n【实时信息·时间】' + json.dumps(fact, ensure_ascii=False)
                     + '\n以上是当前北京时间、日期和星期；按本轮事实回答，不使用训练资料猜当前时间。'
-                    + '没有成功的实时天气数据时，不能编造天气、温度或新闻，也不能声称已联网查询。']
+                    + '现实天气或新闻的事实问答必须有可靠实时数据，不能编造现实天气、气温或新闻，也不能声称执行了未发生的联网查询。'
+                    + '身体/物品温度、创作故事和资料讨论不是实时天气请求，按原问题回答，不为这些话题追问城市。']
         requested = weather_clause(text)
         if requested:
             clause, previous = requested
             city = explicit_city(clause, previous)
-            if not city:
-                weather = {'status': 'needs_city', 'message': '请主人明确要查询的一个城市；不使用IP、资料或聊天历史推测位置。'}
-            elif re.search(r'昨天|前天|上周|去年|历史|下周|周末|下个月|星期[一二三四五六日天]|后[三四五六七八九十]|[3-9]天后|next week|yesterday', clause, re.I):
+            offset = weather_day_offset(weather_date_context(clause, previous))
+            if offset is None:
                 weather = {'status': 'unsupported_date', 'message': '目前只支持今天、明天、后天的天气；请确认日期，不用当前天气代替。'}
+            elif not city:
+                weather = {'status': 'needs_city', 'message': '请明确一个受支持城市，例如北京、上海、广州或深圳；不能确认的地名不会外发，不使用IP或聊天历史推测位置。'}
             else:
-                offset = 2 if '后天' in clause else 1 if '明天' in clause or 'tomorrow' in clause.lower() else 0
                 try:
                     weather = await asyncio.wait_for(self._lookup_weather(city, offset), timeout=3.0)
                 except asyncio.CancelledError:

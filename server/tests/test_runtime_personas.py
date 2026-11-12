@@ -134,6 +134,31 @@ class RuntimePersonaTests(unittest.IsolatedAsyncioTestCase):
         release.set()
         self.assertIs(await task, False)
 
+    async def test_text_pause_without_audio_socket_releases_priority_during_every_preparation_stage(self):
+        for stage in ('knowledge_context', 'facts', 'capture_camera_frame_on_demand'):
+            with self.subTest(stage=stage):
+                entered = asyncio.Event()
+                async def wait_for_preparation(*_args, **_kwargs):
+                    entered.set()
+                    await asyncio.Event().wait()
+                self.deer.voice_paused = False
+                self.assertIsNone(self.deer.esp32_audio_ws)
+                target, name = (self.deer.live_facts, 'context_for') if stage == 'facts' else (self.deer, stage)
+                with patch.object(self.deer, 'knowledge_context', AsyncMock(return_value='')), \
+                        patch.object(self.deer.live_facts, 'context_for', AsyncMock(return_value='')), \
+                        patch.object(self.deer, 'capture_camera_frame_on_demand', AsyncMock(return_value=b'')), \
+                        patch.object(target, name, wait_for_preparation), \
+                        patch.object(runtime_module, 'stream_chat', AsyncMock()) as model:
+                    await self.deer.start_ai_with_text('北京天气怎么样')
+                    await asyncio.wait_for(entered.wait(), 1)
+                    task = self.deer.audio.current_ai_task
+                    self.assertTrue(self.deer.esp32_audio_priority_active)
+                    await self.deer.set_voice_paused(True)
+                    self.assertTrue(task.done())
+                    self.assertTrue(task.cancelled())
+                    self.assertFalse(self.deer.esp32_audio_priority_active)
+                    model.assert_not_called()
+
     async def test_text_chat_uses_deer_snapshot_and_current_facts(self):
         prompts = []
         async def fake_chat(_content, **kwargs):

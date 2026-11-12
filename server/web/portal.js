@@ -2,6 +2,7 @@
 
 const $ = id => document.getElementById(id);
 const state = {user:null, csrf:'', epoch:0, devices:[], memoryId:null, revokeId:null};
+let pairInFlight = false, pairSubmitted = false, revokeInFlight = false, revokeSubmitted = false;
 let shareDevice = null;
 let noticeTimer = null;
 let refreshRequest = null;
@@ -27,8 +28,17 @@ async function api(path, options={}, allowUnauthorized=false) {
   if(options.body) headers.set('Content-Type', 'application/json');
   if(options.method && !['GET','HEAD'].includes(options.method.toUpperCase()) && state.csrf)
     headers.set('X-CSRF-Token', state.csrf);
-  const response = await fetch(path, {...options, headers, credentials:'same-origin', cache:'no-store'});
-  const data = await response.json().catch(() => ({}));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  let response, data;
+  try {
+    response = await fetch(path, {...options, headers, signal:controller.signal, credentials:'same-origin', cache:'no-store'});
+    try { data = await response.json(); }
+    catch(error) { if(response.ok || error.name === 'AbortError') throw error; data = {}; }
+  } catch(error) {
+    if(epoch !== state.epoch) throw new StaleRequest();
+    throw new RequestError(error.name === 'AbortError' ? '请求超时，请刷新核对结果；提交操作请勿直接重复发送。' : '网络连接中断，请刷新核对结果。');
+  } finally { clearTimeout(timeout); }
   if(epoch !== state.epoch) throw new StaleRequest();
   if(!response.ok) {
     if(response.status === 401 && !allowUnauthorized) {
@@ -124,7 +134,7 @@ function renderDevices() {
     const top = element('div', 'device-top');
     const portrait = element('div', 'device-portrait');
     portrait.innerHTML = '<svg aria-hidden="true"><use href="#cat"/></svg>';
-    top.append(portrait, element('span', 'state' + (disabled ? ' disabled' : online ? ' online' : ''), disabled ? '已停用' : online ? '● 在线' : '离线'));
+    top.append(portrait, element('span', 'state' + (disabled ? ' disabled' : online ? ' online' : ''), disabled ? '凭证已撤销' : online ? '● 在线' : '离线'));
     const channels = element('div', 'channels');
     channels.append(element('span', 'channel' + (device.audio_online ? ' active' : ''), device.audio_online ? '语音已连接' : '语音未连接'),
                     element('span', 'channel' + (device.camera_online ? ' active' : ''), device.camera_online ? '画面已连接' : '画面未连接'));
@@ -138,18 +148,28 @@ function renderDevices() {
     const bottom = element('div', 'card-bottom');
     const boundDate = device.bound_at ? new Date(device.bound_at * 1000).toLocaleDateString('zh-CN') + ' 已相识' : '已绑定到你的账号';
     bottom.append(element('span', '', boundDate));
-    const revoke = element('button', 'quiet', disabled ? '已停用' : '停用设备');
-    revoke.type = 'button'; revoke.disabled = disabled;
-    revoke.addEventListener('click', () => openRevoke(device)); if(device.role !== 'guest') bottom.append(revoke);
-    const share = element('button','quiet',device.role === 'guest' ? '归还小喵' : '转交与借用');
-    share.disabled = disabled; share.addEventListener('click',() => openShare(device)); bottom.append(share);
+    const share = element('button','quiet',device.role === 'guest' ? '归还设备' : '解绑 / 转交');
+    share.type = 'button'; share.disabled = disabled;
+    share.addEventListener('click',() => openShare(device, 'unbind')); bottom.append(share);
+    if(device.role !== 'guest' && !disabled) {
+      const loan = element('button','quiet','临时借用'); loan.type = 'button';
+      loan.addEventListener('click',() => openShare(device, 'loan')); bottom.append(loan);
+    }
     card.append(top, element('h2', '', device.display_name), element('div', 'device-id', device.id), channels, actions, bottom);
+    if(disabled) card.append(element('p','muted','设备凭证已撤销，不能重新领配对码。请联系管理员签发新凭证，经 USB 恢复；Wi-Fi 和你的历史记忆保留。'));
+    else if(device.role !== 'guest') {
+      const security = element('details', 'guide'); security.append(element('summary','','安全操作'));
+      security.append(element('p','muted','交给别人使用请选择“解绑 / 转交”。仅在设备遗失或凭证泄露时撤销凭证，恢复需要 USB。'));
+      const revoke = element('button', 'quiet', '撤销凭证（遗失设备）'); revoke.type = 'button';
+      revoke.addEventListener('click', () => openRevoke(device)); security.append(revoke); card.append(security);
+    }
     $('deviceGrid').append(card);
   });
 }
 
 function openPair() {
-  if(!state.user) return;
+  if(!state.user || pairInFlight) return;
+  pairSubmitted = false;
   $('pairError').textContent = ''; $('pairCode').value = ''; $('pairKind').value = 'pair'; $('pairBtn').disabled = false;
   $('pairDialog').showModal(); $('pairCode').focus();
 }
@@ -189,9 +209,11 @@ async function openMemory(device) {
 }
 
 function openRevoke(device) {
+  if(revokeInFlight) return;
+  revokeSubmitted = false;
   state.revokeId = device.id;
   $('revokeDeviceId').value = ''; $('revokeBtn').disabled = true; $('revokeError').textContent = '';
-  $('revokeLabel').textContent = '输入 ' + device.id + ' 以确认停用';
+  $('revokeLabel').textContent = '输入 ' + device.id + ' 以确认撤销凭证';
   $('revokeDialog').showModal();
 }
 
@@ -216,12 +238,23 @@ $('logoutBtn').addEventListener('click', async () => {
 });
 
 $('pairForm').addEventListener('submit', async event => {
-  event.preventDefault(); $('pairError').textContent = ''; $('pairBtn').disabled = true;
+  event.preventDefault();
+  if(pairInFlight || pairSubmitted || !state.user) return;
+  const epoch = state.epoch;
+  pairInFlight = true; pairSubmitted = true; $('pairDialog').dataset.busy = 'true';
+  $('pairError').textContent = '正在绑定…'; $('pairBtn').disabled = true;
   try {
-    await api('/api/devices/' + $('pairKind').value, {method:'POST', body:JSON.stringify({code:$('pairCode').value.trim().toUpperCase()})});
-    $('pairDialog').close(); notice('配对成功，欢迎你的小喵。'); await refreshDevices();
-  } catch(error) { report('pairError', error); }
-  finally { $('pairBtn').disabled = false; }
+    const result = await api('/api/devices/' + $('pairKind').value, {method:'POST', body:JSON.stringify({code:$('pairCode').value.trim().toUpperCase()})});
+    if(epoch !== state.epoch) return;
+    $('pairDialog').close(); notice(result.message || '配对成功。请在控制台确认自己的 Key，再开启语音。'); await refreshDevices();
+  } catch(error) {
+    if(epoch === state.epoch && !(error instanceof StaleRequest)) {
+      pairSubmitted = ![400,404,409,422,429].includes(error.status);
+      report('pairError', error);
+      if(pairSubmitted) { $('pairError').textContent += ' 请关闭后刷新设备列表核对，不会自动重试。'; await refreshDevices(); }
+    }
+  }
+  finally { pairInFlight = false; $('pairDialog').dataset.busy = 'false'; $('pairBtn').disabled = pairSubmitted; }
 });
 
 $('clearDeviceId').addEventListener('input', () => { $('clearBtn').disabled = !state.memoryId || $('clearDeviceId').value !== state.memoryId; });
@@ -239,22 +272,37 @@ $('clearForm').addEventListener('submit', async event => {
   finally { $('clearDeviceId').disabled = false; $('clearBtn').disabled = !state.memoryId || $('clearDeviceId').value !== state.memoryId; }
 });
 
-$('revokeDeviceId').addEventListener('input', () => { $('revokeBtn').disabled = !state.revokeId || $('revokeDeviceId').value !== state.revokeId; });
+$('revokeDeviceId').addEventListener('input', () => { $('revokeBtn').disabled = revokeInFlight || revokeSubmitted || !state.revokeId || $('revokeDeviceId').value !== state.revokeId; });
 $('revokeForm').addEventListener('submit', async event => {
   event.preventDefault();
   const id = state.revokeId;
-  if(!id || $('revokeDeviceId').value !== id) return;
+  if(revokeInFlight || revokeSubmitted || !id || $('revokeDeviceId').value !== id) return;
+  const epoch = state.epoch;
+  revokeInFlight = true; revokeSubmitted = true; $('revokeDialog').dataset.busy = 'true';
   $('revokeBtn').disabled = true; $('revokeDeviceId').disabled = true;
   try {
     await api('/api/devices/' + encodeURIComponent(id) + '/revoke', {method:'POST'});
-    $('revokeDialog').close(); notice('设备已停用。'); await refreshDevices();
-  } catch(error) { report('revokeError', error); }
-  finally { $('revokeDeviceId').disabled = false; $('revokeBtn').disabled = !state.revokeId || $('revokeDeviceId').value !== state.revokeId; }
+    if(epoch !== state.epoch || state.revokeId !== id) return;
+    $('revokeDialog').close(); notice('凭证已撤销。恢复使用需要管理员经 USB 配发新凭证。'); await refreshDevices();
+  } catch(error) {
+    if(epoch === state.epoch && state.revokeId === id && !(error instanceof StaleRequest)) {
+      revokeSubmitted = ![400,422].includes(error.status);
+      report('revokeError', error);
+      if(revokeSubmitted) { $('revokeError').textContent += ' 请关闭后刷新核对，不会自动重试。'; await refreshDevices(); }
+    }
+  }
+  finally { revokeInFlight = false; $('revokeDialog').dataset.busy = 'false'; $('revokeDeviceId').disabled = false; $('revokeBtn').disabled = revokeSubmitted || !state.revokeId || $('revokeDeviceId').value !== state.revokeId; }
 });
+for(const [id,busy] of [['pairDialog',() => pairInFlight],['revokeDialog',() => revokeInFlight]]) {
+  $(id).addEventListener('cancel',event => { if(busy()) event.preventDefault(); });
+}
 
 ['addDeviceBtn','emptyAddBtn'].forEach(id => $(id).addEventListener('click', openPair));
 $('refreshBtn').addEventListener('click', refreshDevices);
-document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => $(button.dataset.close).close()));
+document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => {
+  const dialog = $(button.dataset.close);
+  if(dialog.dataset.busy !== 'true') dialog.close();
+}));
 $('memoryDialog').addEventListener('close', () => { state.memoryId = null; $('memoryContent').replaceChildren(); $('clearDeviceId').value = ''; });
 $('revokeDialog').addEventListener('close', () => { state.revokeId = null; $('revokeDeviceId').value = ''; });
 accountChannel?.addEventListener('message', () => { showLogin(); restoreSession(); });

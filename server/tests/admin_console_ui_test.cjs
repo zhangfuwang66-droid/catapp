@@ -114,6 +114,17 @@ const fixture=createFixture();
     await page.getByRole('button',{name:'永久删除空设备',exact:true}).waitFor(); assert.equal(await page.getByRole('button',{name:'永久删除空设备',exact:true}).isDisabled(),true);
     assert.equal(await page.getByRole('button',{name:'轮换凭证',exact:true}).count(),0,'已绑定设备不提供轮换');
     await page.screenshot({path:path.join(output,'console-device-drawer.png')}); await page.click('#detailClose');
+    // 用户端安全停用保留主人时，后台仍可明确签发恢复凭证；签发不代表已写入USB。
+    const historyDevice=state.devices.find(device => device.id === 'cat-history'); historyDevice.revoked=true;
+    await page.locator('#devicesBody tr').filter({hasText:'cat-history'}).getByRole('button',{name:'详情',exact:true}).click();
+    await page.getByRole('button',{name:'恢复设备（USB）',exact:true}).click();
+    assert.match(await page.locator('#confirmDescription').innerText(),/USB.*配发/);
+    assert.match(await page.locator('#confirmDescription').innerText(),/历史记忆保留/);
+    await confirm('cat-history'); await page.locator('#credentialDialog').waitFor();
+    assert.match(await page.locator('#credentialDialog').innerText(),/尚未写入实体设备/);
+    assert.equal(historyDevice.owner_user_id,null); assert.equal(historyDevice.revoked,false);
+    await page.click('#credentialClose'); assert.equal(await page.locator('#credentialValue').inputValue(),'');
+    await page.click('#detailClose');
     await page.getByRole('button',{name:'登记设备',exact:true}).click(); await page.fill('#editor-id','cat-lost-response'); await page.fill('#editor-display_name','结果不确定样例'); await page.fill('#editor-confirm','cat-lost-response');
     state.fail={path:'/api/admin/devices',method:'POST',status:503}; const beforeLost=state.writes.length;
     await page.click('#editorSubmit'); await page.locator('#editorError').getByText(/不能直接重发/).waitFor();

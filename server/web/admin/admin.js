@@ -772,14 +772,17 @@ function renderDeviceDetail(data,body) {
   text('detailTitle',device.display_name || device.id);
   const actions=node('div','','detail-actions row-actions');
   actionButton(actions,'修改名称',() => editDevice(device));
-  if(device.owner_user_id == null) actionButton(actions,'轮换凭证',() => confirmAction({title:'轮换设备凭证',expected:device.id,buttonLabel:'确认轮换',
-    description:`将使 ${device.id} 的旧凭证立即失效，并生成仅此次展示的新凭证。已撤销设备将重新启用。请先准备安全配发工具；响应丢失时不要重复提交。`,
+  if(data.lifecycle?.can_rotate_credential === true || device.revoked || device.owner_user_id == null) actionButton(actions,device.revoked ? '恢复设备（USB）' : '轮换凭证',() => confirmAction({title:device.revoked ? '签发恢复凭证' : '轮换设备凭证',expected:device.id,buttonLabel:'确认签发新凭证',
+    description:`将使 ${device.id} 的旧凭证立即失效，生成仅此次展示的新凭证。${device.revoked ? '同时结束旧绑定和借用，历史记忆保留在原账号。' : ''}请下载新凭证，经 USB 配发到设备后，联网屏幕才会显示配对码。Wi-Fi 保留；新绑定后语音默认暂停。响应丢失时不要重复提交，请先核对审计。`,
     run:() => api(`/api/admin/devices/${encodeURIComponent(device.id)}/rotate-credential`,{method:'POST',body:{confirm_device_id:device.id}})}),true);
   actionButton(actions,device.revoked ? '核对并重试撤销收尾' : '撤销凭证',() => confirmAction({title:device.revoked ? '核对并重试撤销收尾' : '撤销设备凭证',expected:device.id,buttonLabel:device.revoked ? '确认重试收尾' : '确认撤销',
     description:device.revoked ? `设备 ${device.id} 的凭证已撤销。该状态不代表连接清理已完成；请核对审计后，明确确认是否手动重试收尾。历史数据保留，不会自动重复执行。` :
       `将撤销 ${device.id} 的全部硬件凭证、配对码和绑定/借用关系，并关闭旧连接。历史数据与记忆保留。`,
     run:() => api(`/api/admin/devices/${encodeURIComponent(device.id)}/revoke`,{method:'POST',body:{confirm_device_id:device.id}})}),true);
-  body.append(actions,detailSection('设备信息',[
+  body.append(actions);
+  if(data.lifecycle?.message) body.append(node('p',data.lifecycle.message,'feedback'));
+  else if(device.revoked) body.append(node('p','凭证已撤销，设备不能自行重新配对。请签发新凭证并经 USB 配发，不能通过删除记录或重配 Wi-Fi 恢复。','feedback'));
+  body.append(detailSection('设备信息',[
     ['设备 ID',device.id],['类型',deviceTypes.get(device.device_type) || '未知类型'],['创建时间',date(device.created_at)],
     ['凭证状态',knownBoolean(device.revoked,'已撤销','未撤销')],['主人',device.owner_username || (device.owner_user_id == null ? '未绑定' : device.owner_user_id)],
     ['连接',knownBoolean(device.online,'已连接','未连接')],['语音',device.voice_paused == null ? '未接入' : device.voice_paused ? '已暂停' : '可用'],

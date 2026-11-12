@@ -52,6 +52,8 @@ def main():
             device = identities.register_device("cat-" + name, name.title() + "的小喵")
             code = identities.request_pairing(device.device_id, device.token)
             identities.claim_pairing(code.code, user.id, client_key="local")
+            # 这两台模拟设备代表主人已主动开启语音；新绑定仍由产品默认暂停。
+            identities.save_voice_preference(user.id, device.device_id, False)
             conversation = store.create_conversation(user.id, device.device_id)
             message = store.append_message(conversation, "user", name.title() + "的私有消息")
             store.save_summary(conversation, message, name.title() + "的私有摘要", [name.title() + "的专属记忆"])

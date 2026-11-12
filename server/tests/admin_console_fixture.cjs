@@ -84,7 +84,12 @@ function createFixture() {
     if(action === 'status') { target.disabled=body.disabled; audit(body.disabled ? 'disable-user' : 'enable-user','user',id); }
     if(action === 'revoke-sessions') audit('revoke-sessions','user',id);
     if(action === 'revoke' || action === 'unbind') { target.owner_user_id=null; target.active_user_id=null; target.owner_username=null; if(action === 'revoke') target.revoked=true; audit(action === 'revoke' ? 'revoke-device' : 'unbind-device','device',id); }
-    if(action === 'rotate-credential') { target.revoked=false; audit('rotate-device-credential','device',id); return reply(res,200,{ok:true,device_id:id,credential_once:true,credential:{device_id:id,token:'fictional-device-token-'+(++state.rotation)}}); }
+    if(action === 'rotate-credential') {
+      if(target.owner_user_id != null && !target.revoked) return reply(res,409,{detail:'请先解绑设备'});
+      target.revoked=false; target.owner_user_id=null; target.owner_username=null; target.active_user_id=null; target.active_username=null;
+      audit('rotate-device-credential','device',id);
+      return reply(res,200,{ok:true,device_id:id,credential_once:true,binding_cleared:true,requires_usb_provisioning:true,credential:{device_id:id,token:'fictional-device-token-'+(++state.rotation)}});
+    }
     return reply(res,200,{ok:true});
   });
   return {state,server,start:async() => { server.listen(0,'127.0.0.1'); await once(server,'listening'); return `http://127.0.0.1:${server.address().port}`; },

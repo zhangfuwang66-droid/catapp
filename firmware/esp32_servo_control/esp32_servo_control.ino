@@ -22,6 +22,7 @@
 #include "DeviceTlsMemory.h"
 #include "HttpAudioBody.h"
 #include "PcmPlaybackBuffer.h"
+#include "ConnectionScreenRenderer.h"
 #include <esp_heap_caps.h>
 
 // 串口日志总开关。播放 TTS 期间，Serial.print 在 USB-CDC / UART 上是同步写入，
@@ -927,56 +928,16 @@ bool displayAnimJPEG(const char* filename, uint16_t* targetBuffer, bool drawIfBu
   return true;
 }
 
-void drawConnectionBanner(const String& line1, const String& line2, const String& detail) {
-  // 采用和表情帧完全一样的"占满屏"套路：
-  //   1. 在 PSRAM 里拿一块 pageW x pageH 的横向画布，先按人眼正方向画 banner；
-  //   2. 把画布做 CCW 90° 旋转到 240 x 284 的输出 buffer；
-  //   3. setTftRotationIfNeeded(0) 下 drawRGBBitmap 推全屏。
-  // 这样完全绕过 rotation=2/3 的 offset 问题，一定能像表情动画一样占满整块屏。
-  const int pageW = 284;
-  const int pageH = 240;
-
+void drawConnectionBanner(const ConnectionScreen::View& view) {
+  // 保留实机验证过的画布方向、旋转和面板 offset；不触碰原表情资源。
+  const int pageW = ConnectionScreen::Width;
+  const int pageH = ConnectionScreen::Height;
   if (frameBuffer == nullptr || crossfadeOldBuf == nullptr) {
-    // PSRAM 不可用时的兜底：直接竖屏铺一个背景，至少不花屏。
     setTftRotationIfNeeded(0);
-    tft.fillScreen(tft.color565(10, 14, 22));
+    tft.fillScreen(ConnectionScreen::Background);
     return;
   }
-
-  ExternalBufferCanvas canvas(pageW, pageH, frameBuffer);
-
-  const uint16_t COLOR_BG      = tft.color565(10, 14, 22);
-  const uint16_t COLOR_PRIMARY = tft.color565(90, 210, 240);
-  const uint16_t COLOR_ACCENT  = tft.color565(170, 240, 255);
-  const uint16_t COLOR_MUTED   = tft.color565(70, 120, 160);
-
-  canvas.fillScreen(COLOR_BG);
-  canvas.fillRect(0, 0, pageW, 3, COLOR_PRIMARY);
-  canvas.fillRect(0, pageH - 3, pageW, 3, COLOR_PRIMARY);
-  canvas.fillRect(14, 14, 6, 22, COLOR_PRIMARY);
-  canvas.fillRect(pageW - 20, pageH - 36, 6, 22, COLOR_PRIMARY);
-
-  auto printCentered = [&](const String& s, int y, uint16_t color, uint8_t size) {
-    int16_t bx, by;
-    uint16_t bw, bh;
-    canvas.setTextSize(size);
-    canvas.getTextBounds(s.c_str(), 0, 0, &bx, &by, &bw, &bh);
-    int x = (pageW - static_cast<int>(bw)) / 2;
-    canvas.setCursor(max(0, x), y);
-    canvas.setTextColor(color);
-    canvas.print(s);
-  };
-
-  printCentered(DeviceProfile::brand, 54, COLOR_ACCENT, 3);
-  canvas.drawFastHLine((pageW - 120) / 2, 98, 120, COLOR_MUTED);
-  printCentered(line1, 114, COLOR_PRIMARY, 2);
-  printCentered(line2, 148, COLOR_MUTED, 1);
-  printCentered(detail, 172, COLOR_ACCENT, 1);
-
-  int barW = pageW - 60;
-  int barX = (pageW - barW) / 2;
-  canvas.drawRoundRect(barX, pageH - 46, barW, 26, 8, COLOR_PRIMARY);
-  printCentered(ipToString(setupPortal.active() ? WiFi.softAPIP() : WiFi.localIP()), pageH - 38, COLOR_ACCENT, 1);
+  ConnectionScreen::render(frameBuffer, view);
 
   // CCW 90° 把 pageW x pageH 的画布旋转到 TFT_W x TFT_H（240 x 284）输出 buffer：
   //   dst[pageW-1 - x][y] = src[y][x]
@@ -1676,7 +1637,9 @@ void initScreen() {
   uint8_t bri = 255;
   tft.sendCommand(0x53, &ctrl, 1);
   tft.sendCommand(0x51, &bri, 1);
-  drawConnectionBanner("BOOT", "init screen", "");
+  ConnectionScreen::View bootView;
+  bootView.deer = CYBERMIAO_DEVICE_DEER;
+  drawConnectionBanner(bootView);
 }
 
 void initI2SIn() {
@@ -2779,38 +2742,56 @@ void maintainWiFi() {
 }
 
 bool refreshConnectionScreen() {
+  using namespace ConnectionScreen;
   DeviceLinkSnapshot link = deviceLink.snapshot();
-  bool online = WiFi.status() == WL_CONNECTED;
-  bool needed = setupPortal.active() || !online || (deviceConfig.network().accounts && link.needsAttention())
-      || (deviceConfig.network().tls && !DeviceLink::clockReady());
+  Input input;
+  input.online = WiFi.status() == WL_CONNECTED;
+  input.portal = setupPortal.active();
+  input.accounts = deviceConfig.network().accounts;
+  input.tls = deviceConfig.network().tls;
+  input.clockReady = DeviceLink::clockReady();
+  input.link = link;
+  input.hasPairingCode = link.pairingCode.length() > 0;
+  input.expiresIn = link.expiresIn;
+  Stage stage = selectStage(input);
+  static SuccessFeedback feedback;
   static bool wasVisible = false;
   static uint32_t lastDrawAt = 0;
   static String previous;
-  if (!needed) {
+  uint32_t now = millis();
+  bool successVisible = feedback.visible(stage, now);
+  if (stage == Stage::Ready && !successVisible) {
     if (wasVisible) { expressionDirty = true; crossfadeActive = false; previous = ""; }
-    wasVisible = false; return false;
+    wasVisible = false;
+    return false;
   }
-  String title;
-  if (!online) title = setupPortal.active() ? "WI-FI SETUP" : "CONNECTING WI-FI";
-  else if (link.pairingCode.length()) title = link.pairingCode;
-  else switch (link.status) {
-    case DeviceLinkStatus::NeedCredential: title = "USB ID REQUIRED"; break;
-    case DeviceLinkStatus::CredentialInvalid: title = "USB ID RECOVERY"; break;
-    case DeviceLinkStatus::WaitingClock: title = "SYNCING TIME"; break;
-    case DeviceLinkStatus::ServerOffline: title = "SERVER OFFLINE"; break;
-    case DeviceLinkStatus::Unbound: title = "GETTING PAIR CODE"; break;
-    case DeviceLinkStatus::Bound: title = "CHECKING ACCOUNT"; break;
-    default: title = setupPortal.active() ? "DEVICE SETUP" : "CONNECTING";
-  }
-  String subtitle = setupPortal.active() ? "AP " + deviceConfig.setupSsid() : deviceConfig.deviceId();
-  if (link.pairingCode.length()) subtitle += " / " + String(link.expiresIn) + "s";
-  String detail = setupPortal.active() ? "KEY " + deviceConfig.setupPassword() : deviceConfig.serverUrl();
-  if (!setupPortal.active() && link.status == DeviceLinkStatus::CredentialInvalid) detail = "ADMIN RESTORE + USB ID";
-  if (!setupPortal.active() && link.status == DeviceLinkStatus::NeedCredential) detail = "CONTACT DEVICE PROVIDER";
-  String key = title + subtitle + detail;
-  if (!wasVisible || key != previous || millis() - lastDrawAt >= 2000) {
-    drawConnectionBanner(title, subtitle, detail);
-    previous = key; lastDrawAt = millis();
+
+  // 展示层省略默认 HTTPS 端口；连接与 USB 协议继续使用原配置。
+  char serverDisplay[280];
+  String serverUrl = deviceConfig.serverUrl();
+  if (!formatDisplayUrl(serverUrl.c_str(), serverDisplay, sizeof(serverDisplay))) serverDisplay[0] = 0;
+  String setupSsid = input.portal ? deviceConfig.setupSsid() : String();
+  String setupPassword = input.portal ? deviceConfig.setupPassword() : String();
+  View view;
+  view.stage = stage;
+  view.deer = CYBERMIAO_DEVICE_DEER;
+  view.online = input.online;
+  view.accounts = input.accounts;
+  view.server = serverDisplay;
+  view.deviceId = deviceConfig.deviceId().c_str();
+  view.setupSsid = setupSsid.c_str();
+  view.setupPassword = setupPassword.c_str();
+  view.pairingCode = stage == Stage::PairingReady ? link.pairingCode.c_str() : "";
+  view.expiresIn = stage == Stage::PairingReady ? link.expiresIn : 0;
+  view.frame = static_cast<uint8_t>((now / 500) % 30);
+  String key = String(static_cast<int>(stage)) + "|" + view.deviceId + "|" + view.pairingCode
+      + "|" + String(view.expiresIn) + "|" + serverDisplay + "|" + setupSsid + "|" + setupPassword
+      + "|" + String(input.online);
+  // 状态变化立即刷新；轻动画最多 2 帧/秒，播放音频时不为动画刷新全屏。
+  if (!wasVisible || key != previous || (!audioPriorityModeActive() && now - lastDrawAt >= 500)) {
+    drawConnectionBanner(view);
+    previous = key;
+    lastDrawAt = now;
   }
   wasVisible = true;
   return true;

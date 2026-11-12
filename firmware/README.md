@@ -47,6 +47,22 @@ arduino-cli compile --fqbn 'esp32:esp32:esp32s3:FlashSize=8M,PSRAM=opi,Partition
 
 用户选择稍后绑定，随后完成了未绑定状态的只读检查：健康、数据库就绪、凭证验证及访问限制共 8 项云端检查通过，HTTPS 验证证书与 IP 匹配；未绑定设备的播放请求返回 409，音频和摄像头 WebSocket 握手返回 403。约 31 秒的 4 次 USB 采样中，设备保持联网、未重启，摄像头采集计数持续增长且无失败，I2S、任务及资源状态正常，空闲内存读数一致，音视频上传和播放计数均为 0。本轮未绑定、未改配置或调用模型；实际收音、扬声器听感、云端画面、模型对话与长期稳定性仍待后续验收。
 
+## 连接状态屏
+
+猫、鹿使用各自的名称和线条图标，保留深色青蓝主题。屏幕区分配网、连接 Wi-Fi、校时、服务器重连、等待配对码、等待绑定、核对账号与凭证异常；联网状态与账号绑定状态分别显示。有效配对码放大展示，附网页操作提示和剩余秒数。离线、过期或凭证异常时不显示旧码；核验连接成功后短暂提示，再回到原表情。
+
+屏幕保留服务器访问地址，展示时省略 HTTPS 默认端口 `:443`，其他端口保留；实际连接配置、TLS 校验与 USB 状态协议不变。配网页显示设备热点名称、密码和 `http://192.168.4.1`，与云端绑定入口区分。不含二维码。
+
+图标低频眨眼和状态点动画最多每秒刷新两次；音频播放期间不为动画刷新全屏。绘制复用原 PSRAM 缓冲区和屏幕方向，不驱动舵机、不替换表情。中文使用 Noto Sans CJK SC 的精简位图，授权见 [字体许可证](esp32_servo_control/licenses/NotoSansCJK-OFL.txt)。
+
+修改文案后，可使用 Pillow 和指定的 [NotoSansCJKsc-Regular.otf](https://github.com/notofonts/noto-cjk/blob/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf) 重新生成字形；生成器校验字体 SHA-256：
+
+```powershell
+python firmware/tools/generate_screen_font.py --font <字体文件路径>
+```
+
+`tools/preview_connection_screen.cpp` 使用与固件相同的绘制代码输出 PPM 预览，可由原生 C++11 编译器构建，再传入已存在的输出目录运行。预览中的热点密码、设备编号和配对码均为虚构样例。状态与默认端口逻辑测试见 `tests/connection_screen_state_test.cpp`。离线预览与编译不代表实机验收，更新屏幕需要升级主固件。
+
 ## 设备身份与网络
 
 主草图中的 `DeviceConfig` 与 `DeviceProvisioning` 提供芯片派生的稳定编号、独立 NVS 身份、服务器协议/主机/端口配置、旧 Wi-Fi 配置兼容，以及 USB 状态查询和凭证配发。工具和模拟串口测试位于 `tools/`、`tests/`，操作说明见 [USB 配置说明](tools/README.md)。

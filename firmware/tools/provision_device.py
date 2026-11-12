@@ -17,7 +17,7 @@ DEVICE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 TOKEN = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
 PUBLIC_FIELDS = {"protocol", "device_id", "credential_configured", "pending_reboot", "identity_saved",
                  "has_wifi", "server_url", "mode", "setup_ssid", "device_type", "product_name", "ok"}
-DIAGNOSTIC_BOOLEANS = {"wifi_connected", "clock_ready", "tls_psram_preferred", "bound", "i2s_input_ready", "i2s_output_ready",
+DIAGNOSTIC_BOOLEANS = {"wifi_connected", "clock_ready", "tls_psram_preferred", "bound", "binding_verified", "i2s_input_ready", "i2s_output_ready",
                        "camera_ws_ready", "audio_ws_ready", "audio_stream_enabled", "microphone_enabled",
                        "tts_playing", "queues_ready", "filesystem_ready"}
 DIAGNOSTIC_INTEGERS = {"uptime_ms", "rssi_dbm", "free_heap_bytes", "largest_internal_block_bytes",
@@ -28,7 +28,8 @@ DIAGNOSTIC_INTEGERS = {"uptime_ms", "rssi_dbm", "free_heap_bytes", "largest_inte
                        "minimum_free_heap_bytes", "free_psram_bytes", "camera_init_error", "captured_frames",
                        "capture_failures", "sent_frames", "camera_send_failures", "camera_fps",
                        "captured_audio_chunks", "sent_audio_chunks", "audio_send_failures",
-                       "task_start_failures", "socket_heartbeat_ms", "psram_bytes", "animation_sets", "animation_frames"}
+                       "task_start_failures", "socket_heartbeat_ms", "psram_bytes", "animation_sets", "animation_frames",
+                       "device_link_http_status", "pairing_expires_in"}
 DIAGNOSTIC_ENUMS = {
     "link_state": {"local", "wifi_offline", "need_credential", "waiting_clock", "server_offline",
                    "unbound", "bound", "credential_invalid", "unknown"},

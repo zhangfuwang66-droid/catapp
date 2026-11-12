@@ -53,3 +53,5 @@ artifacts/
 # 账号模型凭证的独立加密主密钥
 provider.key
 *.provider-key
+# Per-device immutable runtime personality snapshots (not source templates)
+personas/

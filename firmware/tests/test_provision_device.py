@@ -115,7 +115,8 @@ class ProvisionDeviceTests(unittest.TestCase):
     def test_diagnostics_cli_is_read_only_and_filters_nested_private_fields(self):
         stream = FakeSerial(diagnostics={
             "filesystem_ready": True, "animation_sets": 4, "animation_frames": 120, "psram_bytes": 8388608,
-            "wifi_connected": True, "camera_init_error": 0, "link_state": "bound",
+            "wifi_connected": True, "camera_init_error": 0, "link_state": "bound", "binding_verified": True,
+            "device_link_http_status": 200, "pairing_expires_in": 0, "pairing_code": "private-pairing-code",
             "socket_phase": "audio_connect", "free_heap_bytes": 32000, "tls_psram_preferred": True,
             "speaker_volume_percent": 78, "playback_pcm_bytes": 48000, "playback_body_errors": 0,
             "playback_buffered_bytes": 12000, "playback_buffer_capacity_bytes": 65536,
@@ -133,6 +134,7 @@ class ProvisionDeviceTests(unittest.TestCase):
         self.assertTrue(stream.closed)
         self.assertEqual([request["op"] for request in stream.writes], ["diagnostics"])
         self.assertNotIn("diagnostic-secret", output.getvalue())
+        self.assertNotIn("private-pairing-code", output.getvalue())
         self.assertNotIn("unexpected-private-field", output.getvalue())
         diagnostics = json.loads(output.getvalue())["diagnostics"]
         self.assertIs(diagnostics["filesystem_ready"], True)
@@ -140,6 +142,9 @@ class ProvisionDeviceTests(unittest.TestCase):
         self.assertEqual(diagnostics["animation_frames"], 120)
         self.assertEqual(diagnostics["psram_bytes"], 8388608)
         self.assertIs(diagnostics["tls_psram_preferred"], True)
+        self.assertIs(diagnostics["binding_verified"], True)
+        self.assertEqual(diagnostics["device_link_http_status"], 200)
+        self.assertEqual(diagnostics["pairing_expires_in"], 0)
         self.assertEqual(diagnostics["playback_pcm_bytes"], 48000)
         self.assertEqual(diagnostics["playback_body_errors"], 0)
         self.assertEqual(diagnostics["playback_buffered_bytes"], 12000)

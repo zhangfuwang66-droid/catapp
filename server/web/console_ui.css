@@ -153,9 +153,6 @@ button, a, input, textarea, summary { -webkit-tap-highlight-color:transparent; }
   .footer { gap:12px; }
   .toasts { right:16px; bottom:16px; }
 }
-@media (prefers-reduced-motion:reduce) {
-  *,*::before,*::after { animation:none!important; transition:none!important; }
-}
 .model-dialog {width:min(520px,calc(100vw - 32px));max-height:calc(100dvh - 32px);margin:auto;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line,#344052);border-radius:22px;padding:26px;background:var(--panel,#151c29);color:var(--text,#edf2fa);box-shadow:0 24px 100px #0008}
 .model-dialog::backdrop {background:#060b16bb;backdrop-filter:blur(5px)}
 .model-heading {display:flex;align-items:center;justify-content:space-between;gap:18px}
@@ -164,3 +161,130 @@ button, a, input, textarea, summary { -webkit-tap-highlight-color:transparent; }
 .model-dialog .btn-row {flex-wrap:wrap}.model-dialog p {line-height:1.7;overflow-wrap:anywhere}
 .model-dialog select,.model-dialog textarea {display:block;width:100%;box-sizing:border-box;background:#0c1320;color:inherit;border:1px solid #43516b;border-radius:10px;padding:12px;font:inherit}
 .model-dialog textarea {resize:vertical;min-height:85px}
+
+/* 柔和的工作台动效：页面容器只淡入，不改变画面、滑杆或固定浮层的坐标。 */
+:root {
+  --console-ease:cubic-bezier(.2,.8,.2,1);
+  --console-duration:220ms;
+}
+body:not(.auth-pending) .console-account,
+body:not(.auth-pending) .nav {
+  animation:console-fade-in .45s ease-out;
+}
+body:not(.auth-pending) .workspace-head {
+  animation:console-heading-in .6s var(--console-ease);
+}
+body:not(.auth-pending) .workspace-panel:not([hidden]) {
+  animation:console-fade-in .42s ease-out;
+}
+.card {
+  transition:border-color .3s ease,box-shadow .3s ease;
+}
+.card:focus-within {
+  border-color:rgba(124,140,255,.24);
+  box-shadow:0 14px 42px rgba(0,0,0,.2),0 0 0 1px rgba(124,140,255,.04);
+}
+.nav-links a {
+  position:relative;
+  transition:background-color var(--console-duration) ease,color var(--console-duration) ease,box-shadow var(--console-duration) ease;
+}
+.nav-links a::after {
+  content:"";
+  position:absolute;
+  height:2px;
+  left:14px;
+  right:14px;
+  bottom:4px;
+  border-radius:2px;
+  background:var(--accent-1);
+  opacity:0;
+  transform:scaleX(.4);
+  transition:transform .3s var(--console-ease),opacity .25s ease;
+  pointer-events:none;
+}
+.nav-links a.active::after,
+.nav-links a:focus-visible::after {
+  opacity:.7;
+  transform:scaleX(1);
+}
+.nav-links a:focus-visible {
+  background:rgba(124,140,255,.1);
+}
+.btn,.icon-btn,.resource-link,.text-button,.nav-actions .pill {
+  transition:background-color var(--console-duration) ease,border-color var(--console-duration) ease,
+    color var(--console-duration) ease,box-shadow var(--console-duration) ease,
+    transform var(--console-duration) var(--console-ease),filter var(--console-duration) ease;
+}
+.btn:active:not(:disabled),.icon-btn:active:not(:disabled) {
+  transform:translateY(1px);
+}
+.btn:disabled,.icon-btn:disabled {
+  transform:none;
+}
+.resource-link:focus-visible {
+  border-color:rgba(124,140,255,.4);
+  background:rgba(124,140,255,.05);
+}
+.resource-link>span:last-child {
+  transition:transform var(--console-duration) var(--console-ease);
+}
+.resource-link:focus-visible>span:last-child {
+  transform:translate(2px,-2px);
+}
+.input,.textarea,.model-dialog input,.model-dialog textarea,.model-dialog select {
+  transition:border-color var(--console-duration) ease,background-color var(--console-duration) ease,
+    box-shadow var(--console-duration) ease;
+}
+.model-dialog input:focus-visible,.model-dialog textarea:focus-visible,.model-dialog select:focus-visible {
+  border-color:var(--accent-1);
+  box-shadow:0 0 0 4px rgba(124,140,255,.08);
+}
+.tool-details summary {
+  transition:color var(--console-duration) ease;
+}
+.tool-details[open]>.hint,.tool-details[open]>.btn-row {
+  animation:console-fade-in .25s ease-out;
+}
+.action-feedback:not([hidden]):not(:empty) {
+  animation:console-fade-in .25s ease-out;
+}
+.model-dialog[open] {
+  animation:console-dialog-in .34s var(--console-ease);
+}
+.model-dialog[open]::backdrop {
+  animation:console-fade-in .3s ease-out;
+}
+.lightbox.on img {
+  animation:console-fade-in .3s ease-out;
+}
+.toast {
+  transition:border-color var(--console-duration) ease,box-shadow var(--console-duration) ease;
+}
+@media (hover:hover) and (pointer:fine) {
+  .card:hover { border-color:rgba(255,255,255,.15); }
+  .card:focus-within:hover { border-color:rgba(124,140,255,.28); }
+  .nav-links a:hover::after { opacity:.45;transform:scaleX(.7); }
+  .nav-links a.active:hover::after { opacity:.85;transform:scaleX(1); }
+  .resource-link:hover>span:last-child { transform:translate(2px,-2px); }
+  .icon-btn:hover:not(:disabled) { transform:translateY(-1px); }
+  .text-button:hover:not(:disabled) { color:var(--fg); }
+  .nav-actions a.pill:hover { border-color:rgba(124,140,255,.3);background:rgba(124,140,255,.06); }
+}
+/* 终点使用元素自身透明度，保留极速模式等状态已有的暗化提示。 */
+@keyframes console-fade-in { from { opacity:0; } }
+@keyframes console-heading-in {
+  from { opacity:0;transform:translateY(8px); }
+  to { opacity:1;transform:none; }
+}
+@keyframes console-dialog-in {
+  from { opacity:0;transform:translateY(10px) scale(.99); }
+  to { opacity:1;transform:none; }
+}
+/* 同时覆盖 index_html.py 中的状态脉冲、扫描、译文光泽和 toast 等既有动效。 */
+@media (prefers-reduced-motion:reduce) {
+  *,*::before,*::after {
+    animation:none!important;
+    transition:none!important;
+    scroll-behavior:auto!important;
+  }
+}

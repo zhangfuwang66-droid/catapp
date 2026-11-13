@@ -25,6 +25,7 @@
 #include "HttpAudioBody.h"
 #include "PcmPlaybackBuffer.h"
 #include "ConnectionScreenRenderer.h"
+#include "OtaScreenRenderer.h"
 #include <esp_heap_caps.h>
 
 // 串口日志总开关。播放 TTS 期间，Serial.print 在 USB-CDC / UART 上是同步写入，
@@ -932,7 +933,7 @@ bool displayAnimJPEG(const char* filename, uint16_t* targetBuffer, bool drawIfBu
   return true;
 }
 
-void drawConnectionBanner(const ConnectionScreen::View& view) {
+void drawStatusCanvas() {
   // 保留实机验证过的画布方向、旋转和面板 offset；不触碰原表情资源。
   const int pageW = ConnectionScreen::Width;
   const int pageH = ConnectionScreen::Height;
@@ -941,8 +942,6 @@ void drawConnectionBanner(const ConnectionScreen::View& view) {
     tft.fillScreen(ConnectionScreen::Background);
     return;
   }
-  ConnectionScreen::render(frameBuffer, view);
-
   // CCW 90° 把 pageW x pageH 的画布旋转到 TFT_W x TFT_H（240 x 284）输出 buffer：
   //   dst[pageW-1 - x][y] = src[y][x]
   for (int y = 0; y < pageH; ++y) {
@@ -957,6 +956,11 @@ void drawConnectionBanner(const ConnectionScreen::View& view) {
 
   setTftRotationIfNeeded(0);
   tft.drawRGBBitmap(0, 0, crossfadeOldBuf, TFT_W, TFT_H);
+}
+
+void drawConnectionBanner(const ConnectionScreen::View& view) {
+  if (frameBuffer != nullptr) ConnectionScreen::render(frameBuffer, view);
+  drawStatusCanvas();
 }
 
 void drawRemoteScreenWaiting(const char* title, const char* subtitle) {
@@ -1103,6 +1107,7 @@ int jpegDrawCallback(JPEGDRAW* draw) {
   }
 
   if (jpegDecodeTarget == nullptr && !jpegDecodeRotateCCW90) {
+    if (deviceOta.screenActive()) return 1;
     tft.drawRGBBitmap(draw->x, draw->y, reinterpret_cast<uint16_t*>(draw->pPixels), draw->iWidth, draw->iHeight);
     return 1;
   }
@@ -1161,7 +1166,7 @@ bool decodeJpegBytes(const uint8_t* data, size_t len, uint16_t* targetBuffer, bo
   jpegDecodeTarget = nullptr;
   jpegDecodeRotateCCW90 = false;
   unlockJpegDecoder();
-  if (targetBuffer != nullptr && drawIfBuffered) {
+  if (targetBuffer != nullptr && drawIfBuffered && !deviceOta.screenActive()) {
     tft.drawRGBBitmap(0, 0, targetBuffer, TFT_W, TFT_H);
   }
   return true;
@@ -1206,12 +1211,14 @@ void compositeVisionPreviewIntoFrameBuffer() {
 uint32_t lastRemoteScreenFrameMs = 0;
 
 void updateRemoteScreenFrame(const uint8_t* data, size_t len) {
+  if (deviceOta.screenActive()) return;
   if (screenPageMode == SCREEN_PAGE_EXPRESSION) return;
   uint32_t now = millis();
   if (now - lastRemoteScreenFrameMs < REMOTE_SCREEN_FRAME_MIN_INTERVAL_MS) return;
   lastRemoteScreenFrameMs = now;
   if (screenPageMode == SCREEN_PAGE_VISION_DIALOG && frameBuffer != nullptr) {
     if (decodeJpegBytes(data, len, frameBuffer, false, false)) {
+      if (deviceOta.screenActive()) return;
       compositeVisionPreviewIntoFrameBuffer();
       tft.drawRGBBitmap(0, 0, frameBuffer, TFT_W, TFT_H);
     }
@@ -1221,6 +1228,7 @@ void updateRemoteScreenFrame(const uint8_t* data, size_t len) {
 }
 
 void drawLocalVisionCameraPreview(camera_fb_t* fb) {
+  if (deviceOta.screenActive()) return;
   if (screenPageMode != SCREEN_PAGE_VISION_DIALOG || fb == nullptr || fb->format != PIXFORMAT_JPEG ||
       visionPreviewBuffer == nullptr || visionPreviewDecodeBuffer == nullptr) {
     return;
@@ -1263,7 +1271,7 @@ void drawLocalVisionCameraPreview(camera_fb_t* fb) {
     jpeg.decode(0, 0, 0);
     jpeg.close();
     memcpy(visionPreviewBuffer, visionPreviewDecodeBuffer, previewPixels * sizeof(uint16_t));
-    tft.drawRGBBitmap(
+    if (!deviceOta.screenActive()) tft.drawRGBBitmap(
         VISION_LOCAL_PREVIEW_X, VISION_LOCAL_PREVIEW_Y,
         visionPreviewBuffer, VISION_LOCAL_PREVIEW_W, VISION_LOCAL_PREVIEW_H
     );
@@ -1525,6 +1533,8 @@ void scanAnimationFolders() {
 
 void setScreenPageMode(ScreenPageMode mode) {
   screenPageMode = mode;
+  // 更新期间记住用户页面选择，但不让远程页面覆盖本机升级状态。
+  if (deviceOta.screenActive()) { expressionDirty = true; return; }
   if (mode == SCREEN_PAGE_EXPRESSION) {
     visionPreviewValid = false;
     expressionDirty = true;
@@ -2751,6 +2761,34 @@ void maintainWiFi() {
   }
 }
 
+bool refreshOtaScreen() {
+  const OtaScreen::Snapshot state = deviceOta.screen();
+  static bool wasVisible = false;
+  static uint32_t lastDrawAt = 0;
+  static OtaScreen::Phase previousPhase = OtaScreen::Phase::Hidden;
+  if (state.phase == OtaScreen::Phase::Hidden) {
+    if (wasVisible) {
+      expressionDirty = true; crossfadeActive = false; visionPreviewValid = false;
+      if (screenPageMode != SCREEN_PAGE_EXPRESSION) setScreenPageMode(screenPageMode);
+    }
+    wasVisible = false;
+    return false;
+  }
+  const uint32_t now = millis();
+  // 状态立即更新；进度与轻动画最多每秒四帧，复用既有 PSRAM 画布。
+  if (!wasVisible || state.phase != previousPhase || now - lastDrawAt >= 250) {
+    // 等待已开始的 JPEG 解码结束，避免共用画布被另一核心写花。
+    if (!lockJpegDecoder(pdMS_TO_TICKS(10))) return true;
+    if (frameBuffer != nullptr)
+      OtaScreen::render(frameBuffer, state, static_cast<uint8_t>((now / 250) % 32), CYBERMIAO_FIRMWARE_VERSION);
+    drawStatusCanvas();
+    unlockJpegDecoder();
+    previousPhase = state.phase; lastDrawAt = now;
+  }
+  wasVisible = true;
+  return true;
+}
+
 bool refreshConnectionScreen() {
   using namespace ConnectionScreen;
   DeviceLinkSnapshot link = deviceLink.snapshot();
@@ -3066,6 +3104,6 @@ void loop() {
   maintainWiFi();
   serviceDirectPoseControl();
   scheduleIdleActionIfNeeded();
-  if (!refreshConnectionScreen()) refreshExpressionScreenIfNeeded();
+  if (!refreshOtaScreen() && !refreshConnectionScreen()) refreshExpressionScreenIfNeeded();
   delay(5);
 }

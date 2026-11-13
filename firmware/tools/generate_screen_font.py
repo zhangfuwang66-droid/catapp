@@ -16,7 +16,8 @@ def generate(font_path: Path, output: Path):
     if hashlib.sha256(font_path.read_bytes()).hexdigest() != FONT_SHA256:
         raise ValueError("请使用指定版本的开源 NotoSansCJKsc-Regular.otf 字体")
     # 仅保留界面文案里的中文。可变热点名为产品生成的 ASCII 名称。
-    source = (ROOT / "ConnectionScreenRenderer.h").read_text(encoding="utf-8")
+    source = "\n".join((ROOT / name).read_text(encoding="utf-8")
+                       for name in ("ConnectionScreenRenderer.h", "OtaScreenRenderer.h"))
     literals = "".join(re.findall(r'"([^"\n]*)"', source))
     codes = sorted(set(range(32, 127)) | {ord(c) for c in literals if ord(c) >= 128})
     fonts = {11: ImageFont.truetype(str(font_path), 11), 14: ImageFont.truetype(str(font_path), 14)}

@@ -87,10 +87,10 @@ void DeviceOta::begin() {
   previousVersion_ = slotVersions_[1 - slotIndex(running)];
   returning_ = operation_ == "rollback" || (targetVersion_.length() && targetVersion_ != CYBERMIAO_FIRMWARE_VERSION);
   switch (recoverOtaBoot(state_.c_str(), targetVersion_ == CYBERMIAO_FIRMWARE_VERSION, pending_, operation_ == "rollback")) {
-    case OtaRecovery::Validate: state_ = "pending_validation"; break;
-    case OtaRecovery::Updated: state_ = "updated"; progress_ = 100; break;
-    case OtaRecovery::RolledBack: state_ = "rolled_back"; progress_ = 100; break;
-    case OtaRecovery::Interrupted: state_ = "failed"; error_ = "power_interrupted"; break;
+    case OtaRecovery::Validate: setState("pending_validation", 98); break;
+    case OtaRecovery::Updated: setState("updated", 100); break;
+    case OtaRecovery::RolledBack: setState("rolled_back", 100); break;
+    case OtaRecovery::Interrupted: setState("failed", 0); error_ = "power_interrupted"; break;
     default: if (!state_.length()) state_ = "idle"; break;
   }
   if (pending_) {
@@ -133,8 +133,18 @@ bool DeviceOta::persist() {
   saved.end(); cJSON_free(record); return ok;
 }
 void DeviceOta::fail(const char* error) {
-  state_ = "failed"; error_ = error; updating_ = false; persist();
+  setState("failed"); error_ = error; updating_ = false; persist();
   nextCheck_ = millis() + 3000;
+}
+void DeviceOta::showScreen(OtaScreen::Phase phase, int progress) {
+  const uint32_t next = OtaScreen::encode(phase, progress);
+  if ((screenState_.load() & 255U) != static_cast<uint32_t>(phase)) screenChangedAt_ = millis();
+  screenState_ = next;
+}
+void DeviceOta::setState(const char* state, int progress) {
+  state_ = state;
+  if (progress >= 0) progress_ = progress;
+  showScreen(OtaScreen::phaseFor(state, operation_ == "rollback"), progress_.load());
 }
 
 void DeviceOta::tick() {
@@ -142,7 +152,11 @@ void DeviceOta::tick() {
     if (!healthy_) healthySince_ = 0;
     else if (!healthySince_) healthySince_ = millis();
     // 包括配网、外设初始化或 HTTPS 无法通过的情况，均不能无限待确认。
-    if (millis() > 180000) esp_ota_mark_app_invalid_rollback_and_reboot();
+    if (millis() > 180000) {
+      showScreen(OtaScreen::Phase::RollingBack, 0);
+      vTaskDelay(pdMS_TO_TICKS(700));
+      esp_ota_mark_app_invalid_rollback_and_reboot();
+    }
   }
   if (!activityReady_ || !compatibleLayout() || !config_.hasCredential() || !config_.network().accounts) return;
   if (WiFi.status() != WL_CONNECTED || !DeviceLink::clockReady()) return;
@@ -188,7 +202,7 @@ bool DeviceOta::exchange() {
   if (pending_ && healthySince_ && millis() - healthySince_ >= 30000) {
     if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
       esp_task_wdt_delete(nullptr); pending_ = false; confirmed_ = true;
-      state_ = returning_ ? "rolled_back" : "updated"; progress_ = 100; persist(); nextCheck_ = millis() + 1000;
+      setState(returning_ ? "rolled_back" : "updated", 100); persist(); nextCheck_ = millis() + 1000;
     }
     cJSON_Delete(root); return true;
   }
@@ -199,6 +213,7 @@ bool DeviceOta::exchange() {
   if (id == command_ && (state_ == "updated" || state_ == "failed" || state_ == "rolled_back")) { cJSON_Delete(root); return true; }
   command_ = id; operation_ = action; error_ = ""; progress_ = 0;
   updating_ = true; state_ = "downloading";
+  showScreen(action == "rollback" ? OtaScreen::Phase::RollingBack : OtaScreen::Phase::Preparing, 0);
   vTaskDelay(pdMS_TO_TICKS(700)); // 让业务任务先关闭 WS 与音频。
   bool ok = action == "rollback" ? rollback() : action == "install" ? install(cJSON_GetObjectItemCaseSensitive(command, "manifest")) : false;
   if (!ok && state_ != "failed") fail("invalid_command");
@@ -241,6 +256,7 @@ bool DeviceOta::install(cJSON* manifest) {
       http.end(); mbedtls_sha256_free(&digest); fail("flash_begin_failed"); return false;
     }
     started = true;
+    setState("downloading", 0);
     uint8_t buffer[4096]; uint32_t progressAt = millis(), reportedAt = millis();
     while (received < size) {
       NetworkClient* stream = http.getStreamPtr(); int available = stream->available();
@@ -254,6 +270,7 @@ bool DeviceOta::install(cJSON* manifest) {
       if (esp_ota_write(handle, buffer, count) != ESP_OK) break;
       mbedtls_sha256_update(&digest, buffer, count); received += count;
       progress_ = received * 95 / size; progressAt = millis();
+      showScreen(OtaScreen::Phase::Downloading, progress_.load());
       // 进度上报失败不阻断下载；写启动槽前必须再次成功核验授权。
       if (millis() - reportedAt >= 5000) { exchange(); reportedAt = millis(); }
       vTaskDelay(pdMS_TO_TICKS(1));
@@ -262,15 +279,15 @@ bool DeviceOta::install(cJSON* manifest) {
   }
   mbedtls_sha256_finish(&digest, hash); mbedtls_sha256_free(&digest);
   if (!started || received != size || memcmp(expected, hash, 32)) { if (started) esp_ota_abort(handle); fail("download_integrity_failed"); return false; }
-  state_ = "verifying";
+  setState("verifying", 96);
   if (esp_ota_end(handle) != ESP_OK) { fail("image_invalid"); return false; }
   if (!exchange() || !authorized_) { fail("authorization_lost"); return false; }
   slotVersions_[slotIndex(destination)] = version;
-  state_ = "rebooting"; progress_ = 98;
+  setState("rebooting", 98);
   // 先原子保存启动意图。任何一步失败都不切换启动槽。
   if (!persist()) { fail("nvs_failed"); return false; }
   if (esp_ota_set_boot_partition(destination) != ESP_OK) { fail("boot_select_failed"); return false; }
-  exchange(); ESP.restart(); return true;
+  exchange(); vTaskDelay(pdMS_TO_TICKS(700)); ESP.restart(); return true;
 }
 
 bool DeviceOta::rollback() {
@@ -278,11 +295,11 @@ bool DeviceOta::rollback() {
   if (!rollbackReady() || !previous || !previousVersion_.length() || previousVersion_ == CYBERMIAO_FIRMWARE_VERSION) { fail("rollback_unavailable"); return false; }
   esp_app_desc_t description;
   if (esp_ota_get_partition_description(previous, &description) != ESP_OK) { fail("rollback_invalid"); return false; }
-  targetVersion_ = previousVersion_; state_ = "rebooting"; progress_ = 98;
+  targetVersion_ = previousVersion_; setState("rebooting", 98);
   if (!exchange() || !authorized_) { fail("authorization_lost"); return false; }
   if (!persist()) { fail("nvs_failed"); return false; }
   if (esp_ota_set_boot_partition(previous) != ESP_OK) { fail("rollback_failed"); return false; }
-  ESP.restart(); return true;
+  vTaskDelay(pdMS_TO_TICKS(700)); ESP.restart(); return true;
 }
 
 void DeviceOta::diagnostics(cJSON* object) const {
@@ -291,6 +308,9 @@ void DeviceOta::diagnostics(cJSON* object) const {
   cJSON_AddNumberToObject(object, "ota_progress", progress_.load());
   cJSON_AddStringToObject(object, "firmware_version", CYBERMIAO_FIRMWARE_VERSION);
   cJSON_AddNumberToObject(object, "firmware_sequence", CYBERMIAO_FIRMWARE_SEQUENCE);
+  const OtaScreen::Snapshot visible = screen();
+  cJSON_AddBoolToObject(object, "ota_screen_visible", visible.phase != OtaScreen::Phase::Hidden);
+  cJSON_AddNumberToObject(object, "ota_screen_phase", static_cast<unsigned>(visible.phase));
 }
 #else
 void DeviceOta::begin() {}

@@ -226,6 +226,10 @@ bool DeviceOta::install(cJSON* manifest) {
   targetVersion_ = version;
   if (!persist()) { fail("nvs_failed"); return false; }
   const esp_partition_t* destination = esp_ota_get_next_update_partition(nullptr);
+  if (!destination) { fail("flash_begin_failed"); return false; }
+  // 新下载将覆盖备用槽，先撤下其旧版本标记。中途掉电不能把半份镜像显示为可回退版。
+  slotVersions_[slotIndex(destination)] = ""; previousVersion_ = "";
+  if (!persist()) { fail("nvs_failed"); return false; }
   esp_ota_handle_t handle = 0; bool started = false; int received = 0;
   mbedtls_sha256_context digest; mbedtls_sha256_init(&digest); mbedtls_sha256_starts(&digest, 0);
   {

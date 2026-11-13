@@ -15,7 +15,7 @@ function clearFirmware() {
   document.getElementById('firmwareDetail').textContent = '请重新登录后查看设备更新。';
   document.getElementById('firmwareNotes').textContent = '';
   document.getElementById('firmwareProgressWrap').hidden = true;
-  document.getElementById('firmwareFeedback').textContent = '';
+  feedback('firmwareFeedback','', '');
   document.getElementById('firmwareAuto').checked = false;
   ['firmwareInstall','firmwareRollback','firmwareAuto'].forEach(id => { document.getElementById(id).disabled = true; });
 }
@@ -28,7 +28,7 @@ function renderFirmware(state) {
   document.getElementById('firmwareCurrent').textContent = current?.version || '需要首次 USB 升级';
   document.getElementById('firmwareAvailable').textContent = state.available?.version || '已是当前发布版本';
   document.getElementById('firmwareOnline').textContent = state.online ? '设备在线' : '设备离线或尚未上报';
-  document.getElementById('firmwareHeadline').textContent = active ? firmwarePhases[command.state] : !state.supported ? '开启小鹿的下一段旅程' : state.available ? '新版本已准备好' : '你的设备已准备就绪';
+  document.getElementById('firmwareHeadline').textContent = active ? firmwarePhases[command.state] : state.borrowed ? '结束借用后即可更新' : !state.supported ? '开启小鹿的下一段旅程' : command?.state === 'failed' ? '这次更新需要再检查' : command?.state === 'rolled_back' ? '已恢复到上一版' : state.available ? '新版本已准备好' : '你的设备已准备就绪';
   document.getElementById('firmwareDetail').textContent = state.borrowed ? '设备正在借用中。请先结束借用，再安排升级或回退。' : !state.supported ? '目前先支持小鹿，首次启用需要通过 USB 安装双分区版本。' : state.automatic_blocked ? '上一轮升级未完成或已回退；已暂停此版本的自动重试，你仍可手动升级。' : state.online ? '保持供电，更新期间会短暂暂停对话，完成后自动重连。' : '离线时也能安排更新，下次开机联网后会继续。';
   document.getElementById('firmwareNotes').textContent = state.available?.notes || '当前没有可用的新版本。';
   document.getElementById('firmwareAuto').checked = state.auto_update;

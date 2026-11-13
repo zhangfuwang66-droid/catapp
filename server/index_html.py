@@ -666,11 +666,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
             <div class="card-head"><div class="tag"><svg><use href="#i-bot"/></svg></div><div><div class="title">让陪伴持续进化</div><div class="subtitle">小鹿固件更新 · 无需连接电脑</div></div><button id="firmwareRefresh" class="btn sm">检查更新</button></div>
             <div class="card-body">
               <div class="firmware-hero"><div><span class="firmware-eyebrow">FIRMWARE / OTA</span><h2 id="firmwareHeadline">正在读取设备版本</h2><p id="firmwareDetail">新版会在这里与你见面。更新时请保持设备供电和网络稳定。</p></div><span class="firmware-orbit" aria-hidden="true"><svg><use href="#i-sparkles"/></svg></span></div>
-              <div class="firmware-versions"><div><small>当前版本</small><strong id="firmwareCurrent">等待设备上报</strong><span id="firmwareOnline">正在同步</span></div><div><small>可用版本</small><strong id="firmwareAvailable">检查中</strong><span>先向小鹿开放</span></div><div><small>升级保护</small><strong>双分区 · 签名校验</strong><span>新版本自检失败自动回退</span></div></div>
+              <div class="firmware-versions"><div><small id="firmwareCurrentLabel">当前版本</small><strong id="firmwareCurrent">等待设备上报</strong><span id="firmwareOnline">正在同步</span><span id="firmwareReported"></span></div><div><small>可用版本</small><strong id="firmwareAvailable">检查中</strong><span>先向小鹿开放</span></div><div><small>升级保护</small><strong>双分区 · 签名校验</strong><span>新版本自检失败自动回退</span></div></div>
               <div class="firmware-notes"><h3>这次有什么新变化</h3><p id="firmwareNotes">正在读取更新说明…</p></div>
               <div id="firmwareProgressWrap" hidden><div class="firmware-progress-label"><span id="firmwarePhase">等待设备</span><span id="firmwarePercent">0%</span></div><progress id="firmwareProgress" max="100" value="0" aria-label="固件更新进度"></progress><ol class="firmware-steps"><li>下载新版</li><li>校验固件</li><li>重启自检</li><li>完成更新</li></ol></div>
               <div class="firmware-actions"><button id="firmwareInstall" class="btn primary" disabled>升级到新版本</button><button id="firmwareRollback" class="btn" disabled>回退上一版</button><label class="firmware-policy" for="firmwareAuto"><input id="firmwareAuto" type="checkbox">空闲 5 分钟后自动升级</label></div>
-              <p class="hint">默认由你手动升级。离线时任务会保留，设备下次联网再领取；首次启用 OTA 需要 USB 安装。更新不转移账号，也不清除记忆和表情。</p><p id="firmwareFeedback" class="action-feedback" role="status" aria-live="polite"></p>
+              <p class="hint">默认由你手动升级。离线时任务会保留，设备下次联网再领取；首次启用 OTA 需要 USB 安装。更新不转移账号，也不清除记忆和表情。</p><p id="firmwareFeedback" class="action-feedback" role="status" aria-live="polite" hidden></p>
             </div>
           </div>
           <div class="card workspace-panel" id="vision" hidden>

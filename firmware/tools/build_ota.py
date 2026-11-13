@@ -29,7 +29,7 @@ def build(args):
     names = run_git(ROOT, 'ls-tree', '-r', '--name-only', 'HEAD', 'firmware/esp32_servo_control').decode().splitlines()
     expected = set()
     for name in names:
-        if Path(name).suffix not in {'.ino', '.h', '.cpp', '.csv'}:
+        if Path(name).suffix not in {'.ino', '.h', '.cpp', '.csv', '.txt'}:
             continue
         target = source / Path(name).relative_to('firmware/esp32_servo_control')
         expected.add(target.resolve()); write_changed(target, run_git(ROOT, 'show', 'HEAD:' + name))

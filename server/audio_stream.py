@@ -14,7 +14,9 @@ STREAM_CH = 1
 STREAM_SW = 2
 BYTES_PER_20MS_16K = STREAM_SR * STREAM_SW * 20 // 1000
 STREAM_QUEUE_MAX = 3000
-STREAM_PREBUFFER_CHUNKS = 80
+# 保留当前回复完整开头，覆盖设备建立 HTTPS 播放连接的延迟。
+# 原来的 80 块滑动窗口仅 1.6 秒，连接慢时会悄悄丢掉句首。
+STREAM_PREBUFFER_CHUNKS = STREAM_QUEUE_MAX
 STREAM_IDLE_GRACE_SEC = 3.0
 
 
@@ -37,6 +39,7 @@ class AudioStream:
         self.current_ai_task: Optional[asyncio.Task] = None
         self.stream_clients: Set[StreamClient] = set()
         self.recent_pcm_chunks: Deque[bytes] = deque(maxlen=STREAM_PREBUFFER_CHUNKS)
+        self.response_complete = False
 
     async def cancel_current_ai(self):
         task = self.current_ai_task
@@ -67,24 +70,44 @@ class AudioStream:
             client.abort_event.set()
         self.stream_clients.clear()
         self.recent_pcm_chunks.clear()
+        self.response_complete = False
         await self.cancel_current_ai()
         if reason:
             log_event("[HARD-RESET] audio_state_cleared", flush=True)
 
     def clear_stream_prebuffer(self):
+        for client in tuple(self.stream_clients):
+            client.abort_event.set()
+        self.stream_clients.clear()
         self.recent_pcm_chunks.clear()
+        self.response_complete = False
+
+    def finish_response(self):
+        if self.response_complete:
+            return
+        self.response_complete = True
+        for client in tuple(self.stream_clients):
+            if not client.abort_event.is_set():
+                # 队列额外保留一个 EOF 位置，绝不为结束标记丢弃真实 PCM。
+                client.q.put_nowait(None)
 
     async def broadcast_pcm16_realtime(self, pcm16: bytes):
         # 不阻塞模型回调；队列满时仅丢弃该播放客户端最旧的音频块。
         for offset in range(0, len(pcm16), BYTES_PER_20MS_16K):
             piece = pcm16[offset:offset + BYTES_PER_20MS_16K]
+            if len(self.recent_pcm_chunks) == STREAM_PREBUFFER_CHUNKS:
+                # 有界内存；超长回复明确失败，不能悄悄变成“只播放后半句”。
+                raise BufferError('单次语音回复超过播放缓冲上限')
             self.recent_pcm_chunks.append(piece)
             for client in tuple(self.stream_clients):
                 if client.abort_event.is_set():
                     self.stream_clients.discard(client)
                     continue
-                if client.q.full():
-                    client.q.get_nowait()
+                if client.q.qsize() >= STREAM_QUEUE_MAX:
+                    client.abort_event.set()
+                    self.stream_clients.discard(client)
+                    log_event('[AUDIO] playback client too slow; stream aborted without dropping samples', flush=True)
+                    continue
                 client.q.put_nowait(piece)
         await asyncio.sleep(0)
 
@@ -94,10 +117,12 @@ class AudioStream:
             for old in tuple(self.stream_clients):
                 old.abort_event.set()
             self.stream_clients.clear()
-            client = StreamClient(asyncio.Queue(maxsize=STREAM_QUEUE_MAX), asyncio.Event())
+            client = StreamClient(asyncio.Queue(maxsize=STREAM_QUEUE_MAX + 1), asyncio.Event())
             self.stream_clients.add(client)
             for chunk in self.recent_pcm_chunks:
                 client.q.put_nowait(chunk)
+            if self.response_complete:
+                client.q.put_nowait(None)
             loop = asyncio.get_running_loop()
             last_emit_at = loop.time()
             try:

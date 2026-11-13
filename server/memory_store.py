@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import sqlite3
 import threading
+import time
 from typing import Awaitable, Callable, Dict, Iterable, List, Optional, Set
 from async_helpers import run_blocking
 from database_schema import MEMORY_COLUMNS, MEMORY_SCHEMA_VERSION, validate_columns, validate_versions
@@ -475,12 +476,17 @@ class MemoryManager:
         idle_seconds: float = 300.0,
         poll_seconds: float = 15.0,
         on_error: Optional[Callable[[Exception], None]] = None,
+        clock=time.monotonic,
     ):
         self.store = store
         self.summarize = summarize
         self.idle_seconds = max(0.0, float(idle_seconds))
         self.poll_seconds = max(0.1, float(poll_seconds))
         self.on_error = on_error
+        self.clock = clock
+        self._retry_after = {}
+        self._retry_attempts = {}
+        self._user_summary_locks = {}
         self._summary_tasks: Dict[int, asyncio.Task] = {}
         self._summarizing: Set[int] = set()
         self._active_summaries: Dict[int, asyncio.Task] = {}
@@ -560,6 +566,41 @@ class MemoryManager:
         return message_id
 
     async def summarize_now(self, conversation_id: int) -> bool:
+        owner = await run_blocking(self.store.conversation_owner, conversation_id)
+        if owner is None:
+            return False
+        user_id = owner['user_id']
+        lock = self._user_summary_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            revision = getattr(self, 'retry_revision', None)
+            key = (user_id, await run_blocking(revision, user_id) if revision else None)
+            if self.clock() < self._retry_after.get(key, 0):
+                return False
+            try:
+                result = await self._summarize_conversation(conversation_id)
+                if result:
+                    self._retry_after.pop(key, None)
+                    self._retry_attempts.pop(key, None)
+                elif await run_blocking(self.store.pending_messages, conversation_id, 1):
+                    self._defer_summary(key, 300)
+                return result
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # 同一账号的所有待总结会话共用退避，避免每 15 秒乘以会话数打上游。
+                status = getattr(exc, 'status_code', None)
+                base = 3600 if status in (401, 403) else 120 if status == 429 else 60
+                self._defer_summary(key, base)
+                if self.on_error is not None:
+                    self.on_error(exc)
+                return False
+
+    def _defer_summary(self, key, base):
+        attempts = min(8, self._retry_attempts.get(key, 0) + 1)
+        self._retry_attempts[key] = attempts
+        self._retry_after[key] = self.clock() + min(21600, base * 2 ** (attempts - 1))
+
+    async def _summarize_conversation(self, conversation_id: int) -> bool:
         enabled = getattr(self, 'user_enabled', None)
         owner = await run_blocking(self.store.conversation_owner, conversation_id) if enabled else None
         if enabled and (not owner or not await run_blocking(enabled, owner['user_id'])):

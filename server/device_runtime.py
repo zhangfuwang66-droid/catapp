@@ -192,7 +192,8 @@ async def summarize_memory_messages(messages: List[Dict[str, object]], *, api_ke
         )
     except Exception as exc:
         log_event(f"[MEMORY] summary failed: {type(exc).__name__}", flush=True)
-        return SummaryResult(summary="")
+        # 交给账号级调度器退避；返回空结果会隐藏 403/429 并触发持续扫描重试。
+        raise
     parsed = _parse_memory_summary(response)
     if parsed is None:
         # 模型偶尔没有遵守 JSON 格式时仍保存纯文本摘要，不凭空生成长期事实。
@@ -2692,12 +2693,7 @@ class DeviceRuntime:
         worker_task = asyncio.create_task(upload_worker())
 
         async def finish_pcm_stream():
-            for client in list(self.audio.stream_clients):
-                if not client.abort_event.is_set():
-                    try:
-                        client.q.put_nowait(None)
-                    except Exception:
-                        pass
+            self.audio.finish_response()
 
         async def stop_session(send_notice: Optional[str] = None):
             nonlocal session, streaming, playback_release_event, response_text_parts, response_emotion_sent, session_generation

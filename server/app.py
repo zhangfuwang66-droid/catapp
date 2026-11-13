@@ -372,6 +372,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     manager.store.retention_enabled = True
     knowledge = knowledge_service if knowledge_service is not None else KnowledgeService(KnowledgeStore(manager.store.path))
     provider_settings = ProviderSettings(manager.store.path)
+    manager.retry_revision = lambda user_id: provider_settings.status(user_id)['revision']
     import device_runtime
     providers = ModelCredentials(provider_settings, account_mode=access.mode == "accounts", local_key=lambda: device_runtime.API_KEY)
     knowledge.providers = providers

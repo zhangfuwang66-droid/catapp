@@ -7,6 +7,33 @@ from audio_stream import AudioStream
 
 
 class AudioStreamTests(unittest.IsolatedAsyncioTestCase):
+    async def test_late_https_connection_receives_entire_sentence_including_prefix(self):
+        audio = AudioStream()
+        # 在播放端连接前，模型已突发产生 8 秒语音，明显超过旧 1.6 秒窗口。
+        pcm = b''.join(i.to_bytes(2, 'little') * 480 for i in range(400))
+        await audio.broadcast_pcm16_realtime(pcm)
+        audio.finish_response()
+        response = audio.response().body_iterator
+        self.assertTrue((await anext(response)).startswith(b'RIFF'))
+        self.assertEqual(b''.join([chunk async for chunk in response]), pcm)
+        await response.aclose()
+
+    async def test_new_response_aborts_old_sink_without_replaying_previous_sentence(self):
+        audio = AudioStream()
+        old = audio.response().body_iterator
+        await anext(old)
+        previous = next(iter(audio.stream_clients))
+        await audio.broadcast_pcm16_realtime(b'\x01\x00' * 480)
+        audio.clear_stream_prebuffer()
+        self.assertTrue(previous.abort_event.is_set())
+        await audio.broadcast_pcm16_realtime(b'\x02\x00' * 240)
+        audio.finish_response()
+        new = audio.response().body_iterator
+        await anext(new)
+        self.assertEqual(b''.join([chunk async for chunk in new]), b'\x02\x00' * 240)
+        await old.aclose()
+        await new.aclose()
+
     async def test_streams_prebuffer_and_reset_are_isolated(self):
         first, second = AudioStream(), AudioStream()
         a, b = b"\x12\x34" * 20, b"\x56\x78" * 20

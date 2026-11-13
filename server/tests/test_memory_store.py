@@ -58,6 +58,51 @@ class MemoryStoreTests(unittest.TestCase):
 
 
 class MemoryManagerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_provider_failure_cools_down_all_conversations_of_only_that_account(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = MemoryStore(Path(directory) / 'memory.sqlite3')
+            conversations = [store.create_conversation(user, 'deer-test') for user in ('a', 'a', 'b')]
+            for conversation in conversations:
+                store.append_message(conversation, 'user', '模拟消息')
+            now, calls, revision = [0.0], [], ['first-key']
+            class Denied(Exception):
+                status_code = 403
+            async def summarize(messages):
+                calls.append(messages[0]['conversation_id'])
+                if messages[0]['conversation_id'] in conversations[:2]:
+                    raise Denied('do not log sensitive provider body')
+                return SummaryResult(summary='成功的模拟摘要')
+            manager = MemoryManager(store, summarize, clock=lambda: now[0])
+            manager.retry_revision = lambda user_id: revision[0]
+            self.assertFalse(await manager.summarize_now(conversations[0]))
+            self.assertFalse(await manager.summarize_now(conversations[1]))
+            self.assertTrue(await manager.summarize_now(conversations[2]))
+            self.assertEqual(calls, [conversations[0], conversations[2]])
+            self.assertTrue(store.pending_messages(conversations[0]))
+            now[0] = 3599
+            self.assertFalse(await manager.summarize_now(conversations[0]))
+            revision[0] = 'new-key'
+            self.assertFalse(await manager.summarize_now(conversations[1]))
+            self.assertEqual(len(calls), 3, '更新凭证后应允许立即重新尝试')
+            await manager.close()
+
+    async def test_concurrent_failed_summaries_make_only_one_provider_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = MemoryStore(Path(directory) / 'memory.sqlite3')
+            ids = [store.create_conversation('a', 'deer-test') for _ in range(6)]
+            for conversation in ids:
+                store.append_message(conversation, 'user', '模拟消息')
+            calls = []
+            async def summarize(messages):
+                calls.append(1)
+                await asyncio.sleep(0)
+                return SummaryResult(summary='')
+            manager = MemoryManager(store, summarize)
+            await asyncio.gather(*(manager.summarize_now(i) for i in ids))
+            self.assertEqual(len(calls), 1)
+            self.assertTrue(all(store.pending_messages(i) for i in ids))
+            await manager.close()
+
     async def test_close_waits_for_database_write_already_in_progress(self):
         with tempfile.TemporaryDirectory() as directory:
             store = MemoryStore(Path(directory) / "memory.sqlite3")

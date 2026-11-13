@@ -1,4 +1,19 @@
 /* 日常工作台：清晰的状态、独立页签和移动端操作。 */
+.firmware-hero { display:flex; justify-content:space-between; align-items:center; gap:24px; padding:20px 0 30px; }
+.firmware-panel { --muted:var(--fg-dim); --line:var(--border); --accent:var(--accent-1); }
+.firmware-eyebrow { font:11px var(--mono); letter-spacing:.16em; color:var(--muted); }
+.firmware-hero h2 { font-size:25px; margin:12px 0; font-weight:600; }
+.firmware-hero p { max-width:580px; color:var(--muted); line-height:1.8; }
+.firmware-orbit { display:grid; place-items:center; width:88px; height:88px; border:1px solid var(--line); border-radius:30%; flex-shrink:0; background:rgba(124,140,255,.08); }
+.firmware-orbit svg { width:34px; height:34px; color:var(--accent); }
+.firmware-orbit.is-updating svg { animation:firmware-turn 5s linear infinite; }
+@keyframes firmware-turn { to { transform:rotate(360deg); } }
+.firmware-versions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:24px; padding:24px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+.firmware-versions div { display:flex; flex-direction:column; gap:9px; }.firmware-versions strong { font-size:17px; }.firmware-versions small,.firmware-versions span { color:var(--muted); font-size:12px; }
+.firmware-notes { padding:24px 0; }.firmware-notes h3 { font-size:13px; }.firmware-notes p { white-space:pre-wrap; line-height:1.9; color:var(--muted); }
+.firmware-actions { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:24px 0 12px; }.firmware-policy { display:flex; align-items:center; gap:8px; margin-left:auto; font-size:12px; color:var(--muted); }
+.firmware-progress-label { display:flex; justify-content:space-between; font-size:12px; margin:12px 0; }.firmware-panel progress { width:100%; height:7px; accent-color:var(--accent); }.firmware-steps { display:flex; padding:0; justify-content:space-between; list-style:none; color:var(--muted); font-size:11px; }
+@media(max-width:640px) { .firmware-hero { gap:12px; }.firmware-orbit { width:56px; height:56px; }.firmware-versions { grid-template-columns:1fr; gap:20px; }.firmware-hero h2 { font-size:21px; }.firmware-policy { margin-left:0; width:100%; } }
 :root { --fg-dim:#a0a8bb; --fg-muted:#7d879e; }
 html { scroll-behavior:auto; }
 body::after { opacity:.15; }

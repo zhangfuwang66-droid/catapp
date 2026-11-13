@@ -6,6 +6,12 @@ KNOWLEDGE_SCHEMA_VERSION = 2
 PROVIDER_SCHEMA_VERSION = 1
 RETENTION_SCHEMA_VERSION = 1
 SPEECH_SCHEMA_VERSION = 1
+FIRMWARE_SCHEMA_VERSION = 1
+FIRMWARE_COLUMNS = {
+    'firmware_devices': {'device_id', 'report_json', 'reported_at'},
+    'firmware_preferences': {'device_id', 'owner_user_id', 'auto_update', 'excluded_release'},
+    'firmware_commands': {'id', 'device_id', 'owner_user_id', 'access_epoch', 'action', 'release_id', 'state', 'progress', 'error_code', 'created_at', 'updated_at'},
+}
 ADMIN_SCHEMA_VERSION = 1
 ADMIN_COLUMNS = {
     "admin_schema": {"version"},
@@ -85,7 +91,8 @@ def validate_versions(connection):
     versions = schema_versions(connection)
     for component, supported in (("memory", MEMORY_SCHEMA_VERSION), ("identity", IDENTITY_SCHEMA_VERSION),
                                  ("knowledge", KNOWLEDGE_SCHEMA_VERSION), ("provider", PROVIDER_SCHEMA_VERSION),
-                                 ("retention", RETENTION_SCHEMA_VERSION), ("speech", SPEECH_SCHEMA_VERSION)):
+                                 ("retention", RETENTION_SCHEMA_VERSION), ("speech", SPEECH_SCHEMA_VERSION),
+                                 ('firmware', FIRMWARE_SCHEMA_VERSION)):
         version = versions.get(component, 0)
         if not isinstance(version, int) or not 0 <= version <= supported:
             raise ValueError("数据库组件版本高于当前程序或无效，不能降级写入，请使用匹配版本")

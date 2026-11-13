@@ -70,6 +70,7 @@ function deviceFetch(path, options={}) { return deviceRequest(path, options); }
 function deviceJson(path, options={}) { return deviceRequest(path, options, true); }
 
 function clearConsoleData() {
+  if(typeof clearFirmware === 'function') clearFirmware();
   if(typeof modelInput !== 'undefined') {
     modelInput.value = ''; modelDialog.close(); modelFeedback.textContent = '';
     document.getElementById('modelStatus').textContent = '';

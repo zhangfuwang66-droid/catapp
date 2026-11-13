@@ -215,6 +215,7 @@ function selectConsolePanel() {
     record:['记录与分析', '查看小猫观察到的片段，回顾这段时间的活动。'],
     translate:['同声传译', '开启中英互译，让小猫帮你传达。'],
     hardware:['设备设置', '调整声音、屏幕和姿态，调试工具集中在这里。'],
+    firmware:['设备更新', '新功能、安全校验与版本回退，集中在这里。'],
   };
   const requested = location.hash.slice(1);
   const key = Object.prototype.hasOwnProperty.call(panels, requested) ? requested : 'dialog';
@@ -228,6 +229,7 @@ function selectConsolePanel() {
   document.getElementById('workspaceTitle').textContent = panels[key][0];
   document.getElementById('workspaceDescription').textContent = panels[key][1];
   document.title = panels[key][0] + ' · 小喵控制台';
+  if(key === 'firmware' && typeof refreshFirmware === 'function') refreshFirmware();
 }
 
 function initializeConsoleControls() {

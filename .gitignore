@@ -13,6 +13,7 @@ env/
 *.local
 *.secret.*
 *.pem
+!server/ota-public.pem
 *.key
 
 # macOS and editor files

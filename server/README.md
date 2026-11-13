@@ -264,3 +264,11 @@ python -m uvicorn app:app --app-dir server --host 127.0.0.1 --port 8081 --worker
 后端测试：从仓库根目录设置 `PYTHONPATH=server`，运行 `python -m unittest discover -s server/tests -v`。浏览器测试为 `node server/tests/web_ui_test.cjs`，需要可用的 Playwright、浏览器与服务器 Python 依赖；可通过 `PYTHON_EXECUTABLE` 指定解释器，`BROWSER_EXECUTABLE` 指定浏览器，`NODE_PATH` 指向 Playwright 所在的 `node_modules`。测试只启动回环地址的临时服务，用模拟账号和数据库验证页面操作，不调用真实模型或写入硬件；截图存入已忽略的 `artifacts/web-tests/`。
 
 新版固件通过设备 Bearer 查询 `GET /api/devices/{device_id}/binding`，未绑定时调用 `POST /api/devices/{device_id}/pairing` 申请配对码。响应包含原来的 `expires_at` 和新增的 `expires_in`（服务器计算的剩余秒数，最大 300），便于尚未同步时钟的本地调试设备倒计时。配对码只在设备屏幕及受保护的设备热点页显示，长期凭证仅通过 USB 配发。固件与工具见 [USB 配置说明](../firmware/tools/README.md)；单台实物已完成凭证配发、重启持久化与公网账号绑定，语音失真修复及端到端记忆、资料问答仍需单独验收。
+
+## 小鹿远程固件更新
+
+账号控制台新增“设备更新”，显示设备上报的版本、更新说明、下载与自检进度。默认手动升级，可选连续空闲 5 分钟自动升级；离线任务持久保存，设备联网后领取。首次启用需要 USB 迁移为双分区，仅先开放小鹿。借用期间不能安排升级，解绑、转交或撤销凭证使旧任务失效。
+
+程序从持久数据目录 `firmware/`（或 `CYBERMIAO_FIRMWARE_DIR`）读取经 P-256 签名的发布包，不保存发布私钥。校验硬件、分区、递增版本序号和 SHA-256；完成回执必须匹配目标版本。失败或回退后暂停该版自动重试，仍可手动重试。更新页使用独立轮询，退出或权限失效时清除状态。
+
+详细构建、首次迁移、发布、回退边界和验收见 [小鹿 OTA 说明](../firmware/OTA.md)。这些代码需部署至服务器并升级设备后才能使用；本地测试不代表已完成真实 OTA 与回退验收。

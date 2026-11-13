@@ -17,6 +17,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from memory_store import MemoryStore
 from database_schema import ADMIN_COLUMNS, validate_admin_schema
+from database_schema import FIRMWARE_COLUMNS
 from database_schema import MEMORY_COLUMNS, IDENTITY_COLUMNS, IDENTITY_SHARING_COLUMNS, KNOWLEDGE_COLUMNS, KNOWLEDGE_PROFILE_COLUMNS, PROVIDER_COLUMNS, RETENTION_COLUMNS, SPEECH_COLUMNS, validate_columns, validate_versions
 
 
@@ -68,6 +69,8 @@ def check_database_ready(database: Path):
             validate_columns(connection, RETENTION_COLUMNS)
         if versions.get("speech"):
             validate_columns(connection, SPEECH_COLUMNS)
+        if versions.get('firmware'):
+            validate_columns(connection, FIRMWARE_COLUMNS)
         for table in (*MEMORY_COLUMNS, *IDENTITY_COLUMNS):
             connection.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone()
     finally:
@@ -86,6 +89,8 @@ def inspect_database(database: Path) -> dict:
         if not set(TABLES).issubset(names):
             raise ValueError("数据库缺少聊天记忆所需的数据表")
         versions = validate_versions(connection)
+        if versions.get('firmware'):
+            validate_columns(connection, FIRMWARE_COLUMNS)
         if versions.get("provider"):
             validate_columns(connection, PROVIDER_COLUMNS)
         if versions.get("retention"):

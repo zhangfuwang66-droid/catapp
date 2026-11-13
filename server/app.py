@@ -28,6 +28,9 @@ from device_registry import DeviceRegistry
 from web_pages import WEB_ROOT, console_html, portal_html
 from web_static import PublicWebStaticFiles
 from memory_store import MemoryManager, MemoryStore
+import os
+from firmware_store import FirmwareStore
+from firmware_routes import router as firmware_router
 from database_backups import BackupSettings, DatabaseBackups
 from runtime_storage import RuntimeStorage, StorageSettings
 from runtime_logging import log_event
@@ -372,6 +375,10 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     manager.store.retention_enabled = True
     knowledge = knowledge_service if knowledge_service is not None else KnowledgeService(KnowledgeStore(manager.store.path))
     provider_settings = ProviderSettings(manager.store.path)
+    from runtime_paths import SERVER_ROOT
+    firmware = FirmwareStore(manager.store.path,
+        Path(os.getenv('CYBERMIAO_FIRMWARE_DIR', str(manager.store.path.parent / 'firmware'))),
+        SERVER_ROOT / 'ota-public.pem')
     manager.retry_revision = lambda user_id: provider_settings.status(user_id)['revision']
     import device_runtime
     providers = ModelCredentials(provider_settings, account_mode=access.mode == "accounts", local_key=lambda: device_runtime.API_KEY)
@@ -463,6 +470,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
 
     application.state.memory_manager = manager
     application.state.devices = devices
+    application.state.firmware = firmware
     application.state.access = access
     application.state.identities = identities
     application.state.admin_store = admins
@@ -484,6 +492,7 @@ def create_app(*, store: Optional[MemoryStore] = None, summarizer=summarize_memo
     application.include_router(auth_router)
     application.include_router(admin_auth_router)
     application.include_router(devices_router)
+    application.include_router(firmware_router)
     application.include_router(knowledge_router)
     application.include_router(provider_router)
     application.include_router(account_memory_router)

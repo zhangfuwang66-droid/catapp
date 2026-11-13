@@ -3057,7 +3057,8 @@ void loop() {
       && runtimeDiagnostics.cameraInitError == 0 && runtimeDiagnostics.microphoneReady
       && runtimeDiagnostics.speakerReady && runtimeDiagnostics.taskStartFailures == 0;
   const uint32_t quietMs = min<uint32_t>(millis() - lastInteractionMs, millis() - lastVoiceActivityMs.load());
-  deviceOta.activity(ttsPlaying || ttsPlayback.available() || poseMotionActive || quietMs < 1500,
+  deviceOta.activity(ttsPlaying || ttsPlayback.available() || poseMotionActive || setupPortal.active()
+      || provisioning.shouldReboot() || quietMs < 1500,
       quietMs / 1000, otaHealthy);
   provisioning.poll();
   if (provisioning.shouldReboot() || setupPortal.shouldReboot()) ESP.restart();

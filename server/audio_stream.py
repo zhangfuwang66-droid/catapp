@@ -92,7 +92,7 @@ class AudioStream:
                 client.q.put_nowait(None)
 
     async def broadcast_pcm16_realtime(self, pcm16: bytes):
-        # 不阻塞模型回调；队列满时仅丢弃该播放客户端最旧的音频块。
+        # 不阻塞模型回调；队列满时明确中止慢客户端，保留回复开头。
         for offset in range(0, len(pcm16), BYTES_PER_20MS_16K):
             piece = pcm16[offset:offset + BYTES_PER_20MS_16K]
             if len(self.recent_pcm_chunks) == STREAM_PREBUFFER_CHUNKS:

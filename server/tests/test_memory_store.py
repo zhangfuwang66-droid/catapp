@@ -163,8 +163,18 @@ class MemoryManagerTests(unittest.IsolatedAsyncioTestCase):
                 calls += 1
                 return SummaryResult(summary="第一批完成" if calls == 1 else "")
 
-            manager = MemoryManager(store, summarize)
+            now = [0.0]
+            manager = MemoryManager(store, summarize, clock=lambda: now[0])
             self.assertTrue(await manager.summarize_now(conversation))
+            self.assertEqual([m["id"] for m in store.pending_messages(conversation)], ids[40:])
+            # 已保存第一批也必须为未完成的后续批次退避，不能每轮扫描重试。
+            self.assertFalse(await manager.summarize_now(conversation))
+            now[0] = 299
+            self.assertFalse(await manager.summarize_now(conversation))
+            self.assertEqual(calls, 2)
+            now[0] = 300
+            self.assertFalse(await manager.summarize_now(conversation))
+            self.assertEqual(calls, 3)
             self.assertEqual([m["id"] for m in store.pending_messages(conversation)], ids[40:])
             await manager.close()
 

@@ -578,11 +578,12 @@ class MemoryManager:
                 return False
             try:
                 result = await self._summarize_conversation(conversation_id)
-                if result:
+                # 某个较早批次成功不代表整段已总结；空结果留下的尾批仍需退避。
+                if await run_blocking(self.store.pending_messages, conversation_id, 1):
+                    self._defer_summary(key, 300)
+                elif result:
                     self._retry_after.pop(key, None)
                     self._retry_attempts.pop(key, None)
-                elif await run_blocking(self.store.pending_messages, conversation_id, 1):
-                    self._defer_summary(key, 300)
                 return result
             except asyncio.CancelledError:
                 raise

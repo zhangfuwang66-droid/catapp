@@ -98,6 +98,7 @@ class KnowledgeStore:
     def __init__(self, path, *, limits=None):
         self.path = Path(path).resolve()
         self.limits = limits or KnowledgeLimits()
+        self._routing_cache = {}
         with self.connection(write=True) as db:
             version = validate_versions(db).get("knowledge", 0)
             if not version:
@@ -264,7 +265,20 @@ class KnowledgeStore:
                 if not row["profile_version"]:
                     text = "\n".join(r[0] for r in db.execute("SELECT content FROM knowledge_chunks WHERE user_id=? AND document_id=? ORDER BY ordinal LIMIT 18", (user_id,row["id"])))
                     self._save_profile(db, user_id, row["id"], local_profile(row["filename"], text), overwrite_manual=False)
-            return [public_document(row) for row in db.execute(f"SELECT {PUBLIC_FIELDS} FROM knowledge_documents WHERE user_id=? AND status IN ('ready','keyword')", (user_id,))]
+            result = [public_document(row) for row in db.execute(f"SELECT {PUBLIC_FIELDS} FROM knowledge_documents WHERE user_id=? AND status IN ('ready','keyword')", (user_id,))]
+            for profile in result:
+                if profile['profile_source'] != 'local':
+                    continue
+                key = (user_id, profile['id'], profile['updated_at'], profile['profile_version'])
+                if key not in self._routing_cache:
+                    text = '\n'.join(row[0] for row in db.execute('SELECT content FROM knowledge_chunks WHERE user_id=? AND document_id=? ORDER BY ordinal', (user_id, profile['id'])))
+                    headings = re.findall(r'(?m)^\s{0,3}#{1,6}\s+(.+)$', text)
+                    values = [re.sub(r'^[\d一二三四五六七八九十.、（()）\s]+', '', value).strip('* #')[:40] for value in headings]
+                    if len(self._routing_cache) >= 128:
+                        self._routing_cache.clear()
+                    self._routing_cache[key] = list(dict.fromkeys(value for value in values if 2 <= len(value) <= 40))[:512]
+                profile['routing_terms'] = self._routing_cache[key]
+            return result
 
     def has_documents(self, user_id):
         with self.connection() as db:

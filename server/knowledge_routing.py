@@ -13,6 +13,7 @@ GROUPS = (
     ("入职", "离职", "人事", "交接"),
 )
 STOP = {"这个", "那个", "什么", "怎么", "一下", "我们", "你们", "可以", "需要", "知道", "文档", "资料", "内容", "文件", "小猫", "小喵"}
+GENERIC = STOP | {"如何", "有何", "哪些", "多少", "是否", "请问", "你好", "谢谢", "今天", "现在", "一下", "有点", "问题", "应该", "时候", "一下", "办法", "途径", "流程", "介绍", "相关", "关于", "办理", "服务", "信息"}
 EXPLICIT = re.compile(r"知识库|资料库|我(?:的|上传的)(?:资料|文档|文件)|查(?:一下|下)?(?:资料|文档|文件)|(?:根据|查阅|查询|检索|查看).{0,6}(?:资料|文档|文件|手册)")
 FOLLOWUP = re.compile(r"^(?:(?:那么|那|这个|那个|它|然后)[，,\s]*)?(?:要(?:等|多|几|不)|多(?:久|长|少)|谁|哪|怎么|需不需要|需要|能不能|是否|还有|有(?:没有|哪些)|会不会|怎么办)|^(?:继续说|然后呢)[？?。！!\s]*$")
 SMALLTALK = re.compile(r"^(?:你好|嗨|早上好|晚上好|晚安|谢谢|再见|没事|好[的啊吧呀]?|嗯[嗯哼]?|你是谁|你叫什么|讲个笑话|唱首歌|我喜欢你)[呀啊呢吧嘛喵！!。，,.？?\s]*$")
@@ -35,13 +36,17 @@ def terms(values, *, limit=24):
 
 def local_profile(filename, text):
     title = Path(filename).stem
-    keywords = re.findall(r"[A-Za-z][A-Za-z0-9_.-]{1,30}", title + " " + text[:12000])
+    # 全文标题优先，避免 YAML 字段、网址和医学英文缩写挤掉中文就医主题。
+    headings = re.findall(r"(?m)^\s{0,3}#{1,6}\s+(.+)$", text)
+    headings = [re.sub(r"^[\d一二三四五六七八九十.、（()）\s]+", "", value).strip('* #') for value in headings]
+    keywords = [title] + headings
     for group in GROUPS:
         keywords.extend(word for word in group if word.casefold() in (title + text).casefold())
     keywords.extend(re.split(r"[\s，,。；;：:、/|_\-]+", title))
     # 重复的短语仅用作离线兜底；语义简介优先由账号模型生成，也可手动修正。
     phrases = Counter(re.findall(r"[\u3400-\u9fff]{2,8}(?=[：:\n])", text[:20000]))
     keywords.extend(value for value, _ in phrases.most_common(8))
+    keywords.extend(re.findall(r"[A-Za-z][A-Za-z0-9_.-]{1,30}", title + " " + text[:12000]))
     return {"summary": re.sub(r"\s+", " ", text).strip()[:280], "keywords": terms(keywords), "aliases": [], "profile_source": "local"}
 
 
@@ -59,7 +64,8 @@ def metadata_terms(profile):
     for group in GROUPS:
         if any(word.casefold() in " ".join(values).casefold() for word in group):
             expanded.extend(group)
-    return terms(expanded, limit=64)
+    expanded.extend(profile.get('routing_terms', []))
+    return terms(expanded, limit=512)
 
 
 def route_documents(query, profiles, *, previous=None, now=None):
@@ -71,8 +77,18 @@ def route_documents(query, profiles, *, previous=None, now=None):
     scored = []
     lower = query.casefold()
     for doc in profiles:
-        matched = [term for term in metadata_terms(doc) if (re.search(r"(?<![a-z0-9])" + re.escape(term.casefold()) + r"(?![a-z0-9])", lower)
+        candidates = metadata_terms(doc)
+        matched = [term for term in candidates if (re.search(r"(?<![a-z0-9])" + re.escape(term.casefold()) + r"(?![a-z0-9])", lower)
                    if term.isascii() else term.casefold() in lower)]
+        # 离线长标题支持口语拆分（“参保患者如何转院”），仍只用具体主题触发。
+        if doc.get('routing_terms'):
+            vocabulary = ' '.join(doc['routing_terms']).casefold()
+            for run in re.findall(r"[\u3400-\u9fff]+", query):
+                for width in (4, 3, 2):
+                    for i in range(len(run) - width + 1):
+                        fragment = run[i:i+width]
+                        if fragment not in GENERIC and not any(word in fragment for word in STOP) and fragment in vocabulary:
+                            matched.append(fragment)
         # 旧文档的离线简介也可发现具体话题；至少四个连续汉字，避免「怎么」「需要」这类泛词触发。
         summary = doc.get("summary", "").casefold()
         for run in re.findall(r"[\u3400-\u9fff]+", query):

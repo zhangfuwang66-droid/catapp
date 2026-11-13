@@ -25,6 +25,20 @@ class CountingEmbeddings(FakeEmbeddings):
 
 
 class RoutingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_legacy_local_profile_routes_late_chinese_heading_without_reindexing(self):
+        title = '医院知识库_全本.md'
+        text = '# 医院知识库\n' + ('普通科室介绍。' * 2700) + '\n## 大连市参保患者转院\n需先由转出医院办理转诊手续。'
+        doc, _ = self.store.add_document('alice', title, text.encode())
+        self.store.finish(self.store.claim_next(), split_text(text), profile={'summary':text[:280], 'keywords':['title','version','CT'], 'aliases':[], 'profile_source':'local'})
+        hits, _, reason = await self.service.chat_search('alice', '大连市参保患者如何转院？')
+        self.assertEqual(reason, 'keyword')
+        self.assertIn(doc['id'], {hit['document_id'] for hit in hits})
+        self.assertIn('转诊手续', ' '.join(hit['text'] for hit in hits))
+        before = len(self.embedder.calls)
+        self.assertEqual((await self.service.chat_search('alice', '你好，今天心情怎么样'))[0], [])
+        self.assertEqual(len(self.embedder.calls), before)
+        self.assertFalse((await self.service.chat_search('bob', '参保患者转院'))[0])
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.path = Path(self.temp.name) / 'memory.sqlite3'

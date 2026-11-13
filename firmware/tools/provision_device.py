@@ -19,7 +19,7 @@ PUBLIC_FIELDS = {"protocol", "device_id", "credential_configured", "pending_rebo
                  "has_wifi", "server_url", "mode", "setup_ssid", "device_type", "product_name", "ok"}
 DIAGNOSTIC_BOOLEANS = {"wifi_connected", "clock_ready", "tls_psram_preferred", "bound", "binding_verified", "i2s_input_ready", "i2s_output_ready",
                        "camera_ws_ready", "audio_ws_ready", "audio_stream_enabled", "microphone_enabled",
-                       "tts_playing", "queues_ready", "filesystem_ready"}
+                       "tts_playing", "queues_ready", "filesystem_ready", "ota_capable", "ota_updating"}
 DIAGNOSTIC_INTEGERS = {"uptime_ms", "rssi_dbm", "free_heap_bytes", "largest_internal_block_bytes",
                        "speaker_volume_percent", "playback_pcm_bytes", "playback_read_timeouts",
                        "playback_body_errors", "playback_write_retries",
@@ -29,7 +29,7 @@ DIAGNOSTIC_INTEGERS = {"uptime_ms", "rssi_dbm", "free_heap_bytes", "largest_inte
                        "capture_failures", "sent_frames", "camera_send_failures", "camera_fps",
                        "captured_audio_chunks", "sent_audio_chunks", "audio_send_failures",
                        "task_start_failures", "socket_heartbeat_ms", "psram_bytes", "animation_sets", "animation_frames",
-                       "device_link_http_status", "pairing_expires_in"}
+                       "device_link_http_status", "pairing_expires_in", "firmware_sequence", "ota_progress"}
 DIAGNOSTIC_ENUMS = {
     "link_state": {"local", "wifi_offline", "need_credential", "waiting_clock", "server_offline",
                    "unbound", "bound", "credential_invalid", "unknown"},
@@ -55,6 +55,8 @@ def public_diagnostics(value):
         elif key in DIAGNOSTIC_INTEGERS and type(item) is int and -(2**31) <= item < 2**32:
             result[key] = item
         elif key in DIAGNOSTIC_ENUMS and isinstance(item, str) and item in DIAGNOSTIC_ENUMS[key]:
+            result[key] = item
+        elif key == 'firmware_version' and isinstance(item, str) and re.fullmatch(r'[0-9A-Za-z._-]{1,48}', item):
             result[key] = item
         elif key in {"camera_transport", "audio_transport"} and isinstance(item, dict):
             result[key] = {

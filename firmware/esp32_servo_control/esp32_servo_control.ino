@@ -17,6 +17,8 @@
 #include "DeviceProvisioning.h"
 #include "DeviceSocket.h"
 #include "DeviceLink.h"
+#include "DeviceOta.h"
+#include "TtsPlaybackState.h"
 #include "DeviceSetup.h"
 #include "DeviceDiagnostics.h"
 #include "DeviceTlsMemory.h"
@@ -257,6 +259,7 @@ I2SClass i2sOut;
 DeviceConfig deviceConfig;
 DeviceProvisioning provisioning(Serial, deviceConfig);
 DeviceLink deviceLink(deviceConfig);
+DeviceOta deviceOta(deviceConfig);
 DeviceSetup setupPortal(deviceConfig, deviceLink);
 DeviceSocket wsCam(deviceConfig);
 DeviceSocket wsAud(deviceConfig);
@@ -276,7 +279,7 @@ volatile bool camWsReady = false;
 volatile bool audWsReady = false;
 volatile bool runAudioStream = false;
 volatile bool micEnabled = true;
-volatile bool ttsAudioAvailable = false;
+TtsPlaybackState ttsPlayback;
 volatile bool ttsPlaying = false;
 volatile int gTargetFps = DEFAULT_CAMERA_FPS;
 volatile ScreenPageMode screenPageMode = SCREEN_PAGE_EXPRESSION;
@@ -341,6 +344,7 @@ volatile int directTargetYaw = 90;
 volatile int directTargetPitch = 90;
 volatile int directTargetEar = 90;
 uint32_t lastInteractionMs = 0;
+std::atomic<uint32_t> lastVoiceActivityMs{0};
 uint32_t nextIdleActionMs = 0;
 uint32_t lastDirectServoUpdateMs = 0;
 int currentAnim = 0;
@@ -1282,14 +1286,14 @@ constexpr int TTS_CAMERA_KEEPALIVE_FPS = 6;
 int effectiveCameraFps() {
   int fps = gTargetFps;
   if (fps <= 0) return 0;
-  if (ttsPlaying || ttsAudioAvailable) {
+  if (ttsPlaying || ttsPlayback.available()) {
     return min(fps, TTS_CAMERA_KEEPALIVE_FPS);
   }
   return fps;
 }
 
 bool audioPriorityModeActive() {
-  return ttsPlaying || ttsAudioAvailable;
+  return ttsPlaying || ttsPlayback.available();
 }
 
 int countAnimFrames(const char* animPath) {
@@ -1701,16 +1705,21 @@ void taskHttpPlay(void*) {
   }
 
   while (true) {
-    if (!ttsAudioAvailable || WiFi.status() != WL_CONNECTED || !deviceLink.allowBusiness()) {
-      ttsAudioAvailable = false;
+    if (WiFi.status() != WL_CONNECTED || !deviceLink.allowBusiness() || deviceOta.updating()) {
+      ttsPlayback.cancel();
       vTaskDelay(pdMS_TO_TICKS(80));
       continue;
     }
 
+    if (!ttsPlayback.available()) { vTaskDelay(pdMS_TO_TICKS(40)); continue; }
+    const uint32_t playbackToken = ttsPlayback.token();
+    auto finishAttempt = [&]() {
+      ttsPlayback.finish(playbackToken);
+      if (!ttsPlayback.available()) micEnabled = true;
+    };
     ttsClient->stop();
     if (!ttsClient->connect(cfgServerHost.c_str(), deviceConfig.network().port, 4000)) {
-      ttsAudioAvailable = false;
-      micEnabled = true;
+      finishAttempt();
       delay(300);
       continue;
     }
@@ -1740,8 +1749,7 @@ void taskHttpPlay(void*) {
     }
     if (!headerOk) {
       ttsClient->stop();
-      ttsAudioAvailable = false;
-      micEnabled = true;
+      finishAttempt();
       continue;
     }
 
@@ -1754,8 +1762,7 @@ void taskHttpPlay(void*) {
     uint8_t riff[12];
     if (!readBody(riff, 12, 1200) || memcmp(riff, "RIFF", 4) != 0 || memcmp(riff + 8, "WAVE", 4) != 0) {
       ttsClient->stop();
-      ttsAudioAvailable = false;
-      micEnabled = true;
+      finishAttempt();
       continue;
     }
 
@@ -1824,8 +1831,7 @@ void taskHttpPlay(void*) {
     }
 
     if (!gotData) {
-      ttsAudioAvailable = false;
-      micEnabled = true;
+      finishAttempt();
       continue;
     }
 
@@ -1833,8 +1839,7 @@ void taskHttpPlay(void*) {
           (sampleRate == 8000 || sampleRate == 12000 || sampleRate == 16000 || sampleRate == 24000))) {
       LOGF("[TTS] unsupported fmt ch=%u bits=%u sr=%u\n", numChannels, bitsPerSample, sampleRate);
       ttsClient->stop();
-      ttsAudioAvailable = false;
-      micEnabled = true;
+      finishAttempt();
       continue;
     }
 
@@ -1849,13 +1854,12 @@ void taskHttpPlay(void*) {
       if (!pcmStorage) {
         ++runtimeDiagnostics.playbackBufferAllocationFailures;
         ttsClient->stop();
-        ttsAudioAvailable = false;
-        micEnabled = true;
+        finishAttempt();
         continue;
       }
       runtimeDiagnostics.playbackBufferCapacity = pcmCapacity;
     }
-    PcmPlaybackBuffer pcm(pcmStorage, pcmCapacity, sampleRate);
+    PcmPlaybackBuffer pcm(pcmStorage, pcmCapacity, sampleRate, 480);
     initI2SOut(static_cast<int>(sampleRate));
     ttsPlaying = true;
     micEnabled = false;
@@ -1865,7 +1869,7 @@ void taskHttpPlay(void*) {
     uint32_t lastProgressMs = millis(), lastFeedMs = 0, countedRebuffers = 0;
     bool sourceFinished = false, fedAudio = false;
 
-    while (ttsAudioAvailable && deviceLink.allowBusiness()) {
+    while (ttsPlayback.current(playbackToken) && deviceLink.allowBusiness() && !deviceOta.updating()) {
       if (!sourceFinished) {
         const uint32_t readStarted = millis();
         const size_t received = pcm.receive(body);
@@ -1874,7 +1878,7 @@ void taskHttpPlay(void*) {
         if (received) lastProgressMs = millis();
         sourceFinished = body.done();
         // 缓冲背压期间没有新网络字节是正常现象；仍在播放时不算读超时。
-        if (!sourceFinished && millis() - lastProgressMs >= 1500) {
+        if (!sourceFinished && millis() - lastProgressMs >= 6000) {
           ++runtimeDiagnostics.playbackReadTimeouts;
           sourceFinished = true;
         }
@@ -1900,7 +1904,7 @@ void taskHttpPlay(void*) {
         size_t wrote = i2sOut.write(reinterpret_cast<uint8_t*>(outLR) + offset, totalBytes - offset);
         if (wrote == 0) {
           ++runtimeDiagnostics.playbackWriteRetries;
-          if (!ttsAudioAvailable || !deviceLink.allowBusiness() || millis() - lastWriteProgress > 500) break;
+          if (!ttsPlayback.current(playbackToken) || !deviceLink.allowBusiness() || millis() - lastWriteProgress > 500) break;
           vTaskDelay(pdMS_TO_TICKS(1));
         } else {
           offset += wrote;
@@ -1922,8 +1926,7 @@ void taskHttpPlay(void*) {
 
     ttsPlaying = false;
     resetMouthState();
-    ttsAudioAvailable = false;
-    micEnabled = true;
+    finishAttempt();
     ttsClient->stop();
     initI2SOut(TTS_RATE);
   }
@@ -2091,6 +2094,7 @@ void updateCameraCoverState(camera_fb_t* fb) {
 void taskCamCapture(void*) {
   uint32_t lastCaptureMs = 0;
   for (;;) {
+    if (deviceOta.updating()) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
     int uploadFps = camWsReady ? effectiveCameraFps() : 0;
     bool localVisionPreview = screenPageMode == SCREEN_PAGE_VISION_DIALOG && visionPreviewBuffer != nullptr;
     int activeFps = camWsReady ? uploadFps : COVER_DETECTION_FPS;
@@ -2172,6 +2176,11 @@ void taskMicCapture(void*) {
       }
       if (i == samplesPerChunk) {
         ++runtimeDiagnostics.capturedAudioChunks;
+        // 保守声音活动门限只用于避免交谈中自动升级，不上传或保存音频。
+        int64_t sum = 0, energy = 0;
+        for (int n = 0; n < samplesPerChunk; ++n) { sum += out[n]; energy += static_cast<int32_t>(out[n]) * out[n]; }
+        if (energy - sum * sum / samplesPerChunk > static_cast<int64_t>(550) * 550 * samplesPerChunk)
+          lastVoiceActivityMs = millis();
         if (xQueueSend(qAudio, &chunk, 0) != pdPASS) {
           AudioChunk dump;
           xQueueReceive(qAudio, &dump, 0);
@@ -2200,11 +2209,12 @@ void taskMicUpload(void*) {
 }
 
 bool autoIdleAllowed() {
+  if (deviceOta.updating()) return false;
   if (rawPwmTestMode) return false;
   if (coverInfoMode) return false;
   // 允许表情页和同声传译页都触发 idle 动作，让猫在等译文的间隙也"活着"。
   if (screenPageMode != SCREEN_PAGE_EXPRESSION && screenPageMode != SCREEN_PAGE_TRANSLATE) return false;
-  if (ttsPlaying || ttsAudioAvailable) return false;
+  if (ttsPlaying || ttsPlayback.available()) return false;
   if (poseMotionActive) return false;
   if (qCatPoses != nullptr && uxQueueMessagesWaiting(qCatPoses) > 0) return false;
   return true;
@@ -2349,7 +2359,7 @@ void setupWebSocketCallbacks() {
     } else if (event == WebsocketsEvent::ConnectionClosed) {
       audWsReady = false;
       runAudioStream = false;
-      ttsAudioAvailable = false;
+      ttsPlayback.cancel();
       deviceLink.refreshBinding();
       LOGLN("[WS-AUD] disconnected");
     }
@@ -2385,7 +2395,7 @@ void setupWebSocketCallbacks() {
     if (s == "RESET") {
       runAudioStream = false;
       micEnabled = false;
-      ttsAudioAvailable = false;
+      ttsPlayback.cancel();
       ttsPlaying = false;
       // 异常/复位路径也确保 WiFi TX 功率恢复到正常档位，避免卡在低功率
       WiFi.setTxPower(static_cast<wifi_power_t>(WIFI_TX_POWER_NORMAL_DBM * 4));
@@ -2413,7 +2423,7 @@ void setupWebSocketCallbacks() {
       // 不影响音频延迟感知。
       delay(2);
       WiFi.setTxPower(static_cast<wifi_power_t>(WIFI_TX_POWER_TTS_DBM * 4));
-      ttsAudioAvailable = true;
+      ttsPlayback.request();
       expressionAnimNotifyPending = false;
       expressionAnimNotifyToken = "";
       startTalkingAnimationLoop();
@@ -2422,7 +2432,7 @@ void setupWebSocketCallbacks() {
     }
     if (s == "TTS_STOP") {
       ttsPlaying = false;
-      ttsAudioAvailable = false;
+      ttsPlayback.cancel();
       // 恢复 WiFi 发射功率到正常档位
       WiFi.setTxPower(static_cast<wifi_power_t>(WIFI_TX_POWER_NORMAL_DBM * 4));
       micEnabled = true;
@@ -2699,7 +2709,7 @@ bool playConfigPrompt() {
 void startApConfigMode(bool manual) {
   bool wasActive = setupPortal.active();
   if (!setupPortal.start(manual)) { LOGLN("[SETUP] protected AP unavailable"); return; }
-  if (!wasActive && WiFi.status() != WL_CONNECTED && !ttsPlaying && !ttsAudioAvailable) {
+  if (!wasActive && WiFi.status() != WL_CONNECTED && !ttsPlaying && !ttsPlayback.available()) {
     if (!playConfigPrompt()) startTone(988, 160, 30);
   }
   expressionDirty = true;
@@ -2801,8 +2811,8 @@ void maintainSockets() {
   runtimeDiagnostics.socketHeartbeatMs = millis();
   runtimeDiagnostics.socketPhase = SocketServicePhase::Gate;
   uint32_t now = millis();
-  if (WiFi.status() != WL_CONNECTED || !deviceLink.allowBusiness()) {
-    camWsReady = false; audWsReady = false; runAudioStream = false; ttsAudioAvailable = false;
+  if (WiFi.status() != WL_CONNECTED || !deviceLink.allowBusiness() || deviceOta.updating()) {
+    camWsReady = false; audWsReady = false; runAudioStream = false; ttsPlayback.cancel();
     if (wsCam.available()) wsCam.close();
     if (wsAud.available()) wsAud.close();
     return;
@@ -2883,6 +2893,7 @@ void refreshExpressionScreenIfNeeded() {
 }
 
 void addRuntimeDiagnostics(cJSON* object) {
+  deviceOta.diagnostics(object);
   DeviceLinkSnapshot link = deviceLink.snapshot();
   cJSON_AddNumberToObject(object, "uptime_ms", millis());
   cJSON_AddBoolToObject(object, "wifi_connected", WiFi.status() == WL_CONNECTED);
@@ -2949,6 +2960,7 @@ void setup() {
   Serial.setRxBufferSize(2048);
   Serial.begin(115200);
   delay(300);
+  deviceOta.begin(); // 候选槽从外设初始化开始就受到启动自检超时保护。
   randomSeed(esp_random());
 
   runtimeDiagnostics.tlsPsramPreferred = DeviceTlsMemory::begin();
@@ -3036,9 +3048,17 @@ void setup() {
   if (xTaskCreatePinnedToCore(taskCatPoseDriver, "cat_pose", 4096, nullptr, 1, nullptr, 1) != pdPASS) runtimeDiagnostics.taskStartFailures |= 1U << 6;
 
   LOGLN("[BOOT] cat robot ready");
+  // 使用标记使离线发布器可核对类型、版本与递增序号。
+  if (CYBERMIAO_OTA_ENABLED) Serial.println(CYBERMIAO_OTA_MARKER);
 }
 
 void loop() {
+  const bool otaHealthy = filesystemReady && maxAnimIndex > 0 && psramFound()
+      && runtimeDiagnostics.cameraInitError == 0 && runtimeDiagnostics.microphoneReady
+      && runtimeDiagnostics.speakerReady && runtimeDiagnostics.taskStartFailures == 0;
+  const uint32_t quietMs = min<uint32_t>(millis() - lastInteractionMs, millis() - lastVoiceActivityMs.load());
+  deviceOta.activity(ttsPlaying || ttsPlayback.available() || poseMotionActive || quietMs < 1500,
+      quietMs / 1000, otaHealthy);
   provisioning.poll();
   if (provisioning.shouldReboot() || setupPortal.shouldReboot()) ESP.restart();
   if (provisioning.takeSetupRequest()) startApConfigMode(true);

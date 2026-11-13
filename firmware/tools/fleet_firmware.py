@@ -89,7 +89,7 @@ def validate_image(data: bytes):
         raise FleetError("ESP 应用内置 SHA-256 不符")
 
 
-def partition_sector(data: bytes) -> bytes:
+def partition_sector(data: bytes, *, expected_partitions=None) -> bytes:
     """只接受仓库已知分区和有效 MD5 结尾；拒绝未知分区与加密标志。"""
     if not 160 <= len(data) <= TABLE_BYTES or len(data) % 32:
         raise FleetError("分区表长度无效")
@@ -112,7 +112,7 @@ def partition_sector(data: bytes) -> bytes:
         entries.append((name, kind, subtype, start, size))
     else:
         raise FleetError("分区表缺少 MD5 记录")
-    if tuple(entries) != PARTITIONS:
+    if tuple(entries) != (PARTITIONS if expected_partitions is None else expected_partitions):
         raise FleetError("分区布局不兼容；必须单独审查，不能自动升级")
     return data.ljust(TABLE_BYTES, b"\xff")
 

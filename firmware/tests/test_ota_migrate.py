@@ -5,7 +5,7 @@ import struct
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import zlib
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
@@ -109,6 +109,33 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual((sequence,state,crc),(1,2,0x4743989A))
         self.assertEqual(crc,zlib.crc32(struct.pack('<I',sequence),0xFFFFFFFF)&0xFFFFFFFF)
         self.assertEqual(data[32:],b'\xff'*(8192-32))
+
+    def test_historical_snapshot_requires_verified_later_upgrade_receipt(self):
+        from test_fleet_firmware import image
+        backup=self.root/'history';backup.mkdir()
+        candidate=image(b'newer-approved-application')
+        old=self.root/'candidate.bin';old.write_bytes(candidate)
+        (backup/'full-flash.secret.bin').write_bytes(self.old)
+        write_json(backup/'backup.secret.json',{'device_id':DEVICE,'backup_verified':True,'full_backup_sha256':digest(self.old)})
+        receipt={'device_id':DEVICE,'application_sha256':digest(candidate),'backup_sha256':digest(self.old),
+                 'ok':True,'application_verified':True,'usb_after_boot_verified':True,
+                 'protected_regions_verified_before_first_boot':True,'manifest_sha256':'f'*64}
+        acceptance={'device_id':DEVICE,'screen_acceptance_complete':True,'manifest_sha256':'f'*64}
+        write_json(backup/'upgrade-receipt.json',receipt)
+        write_json(backup/'screen-acceptance.json',acceptance)
+        args=dict(backup=backup,old_image=old,release=self.root,public_key=self.root/'public.pem',
+                  build=self.root,littlefs=Path('fake-tool'),output=self.root/'output',device_id=DEVICE)
+        args['public_key'].write_bytes(b'public-test')
+        sentinel=RuntimeError('reached-signed-package-validation')
+        with patch.object(ota,'read_package',side_effect=sentinel) as signed:
+            with self.assertRaisesRegex(RuntimeError,'reached-signed-package'): ota.prepare(**args)
+            signed.assert_called_once()
+        receipt['protected_regions_verified_before_first_boot']=False
+        write_json(backup/'upgrade-receipt.json',receipt)
+        with patch.object(ota,'read_package') as signed:
+            with self.assertRaises(FleetError): ota.prepare(**args)
+            signed.assert_not_called()
+        self.assertFalse((self.root/'output').exists())
 
 
 if __name__=='__main__': unittest.main()

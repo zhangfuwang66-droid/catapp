@@ -73,8 +73,20 @@ def prepare(*, backup, old_image, release, public_key, build, littlefs, output, 
         raise FleetError('原始整机备份未通过来源或摘要校验')
     partition_sector(full[TABLE_OFFSET:TABLE_OFFSET+TABLE_BYTES])
     old=old_image.read_bytes(); validate_image(old)
-    if full[0x10000:0x10000+len(old)]!=old or any(byte!=255 for byte in full[OLD_FS_START+OLD_FS_SIZE:]):
-        raise FleetError('原应用白名单或原保留尾区不匹配，不能制作通用迁移包')
+    if full[0x10000:0x10000+len(old)]!=old:
+        # 旧主程序升级的整机备份发生在写入前；必须结合明确的写后保护回执，
+        # 才能用同一份已验证资源配上现装的 candidate 主程序白名单。
+        receipt=read_json(backup/'upgrade-receipt.json')
+        acceptance=read_json(backup/'screen-acceptance.json')
+        if not (receipt.get('device_id')==device_id and receipt.get('application_sha256')==digest(old)
+                and receipt.get('backup_sha256')==digest(full) and receipt.get('ok') is True
+                and receipt.get('application_verified') is True and receipt.get('usb_after_boot_verified') is True
+                and receipt.get('protected_regions_verified_before_first_boot') is True
+                and acceptance.get('device_id')==device_id and acceptance.get('screen_acceptance_complete') is True
+                and acceptance.get('manifest_sha256')==receipt.get('manifest_sha256')):
+            raise FleetError('历史升级回执不能证明当前应用和资源来源')
+    if any(byte!=255 for byte in full[OLD_FS_START+OLD_FS_SIZE:]):
+        raise FleetError('原保留尾区含数据，需单独审查')
     manifest=read_package(release,public_key.read_bytes())
     if public_key.read_text(encoding='ascii').strip() not in (ROOT/'firmware/esp32_servo_control/OtaPublicKey.h').read_text(encoding='utf-8'):
         raise FleetError('发布公钥与设备内置公钥不一致')
